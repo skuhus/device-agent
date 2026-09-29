@@ -42,7 +42,7 @@ Everything runs in Docker; nothing installs a toolchain on the host.
 ```
 make              # the target list, with one line each
 make build        # dist/skuhus-device-agent for this platform
-make test         # go test -race across all packages
+make test         # go test -race across the agent's packages
 make check        # gofmt, go vet, go mod tidy and the tests; what CI runs
 make cross        # all release targets: linux amd64/arm64/armv7/armv6, darwin amd64/arm64
 make image        # the container image, tagged with the version in source
@@ -397,3 +397,7 @@ spike/mqtt5/               M0 broker property verification, not part of the agen
 docs/scanners/             per-model scanner measurements
 docs/spikes/               spike results
 ```
+
+dev/ and spike/ are Go modules of their own, so `go vet ./...` and `go test
+./...` in the repository root, and with them `make check` and CI, cover only
+the agent. gofmt still checks every file.

@@ -42,7 +42,7 @@ help:
 	@echo "cross      build every release target into dist/"
 	@echo "image      build the container image, tagged $(IMAGE):$(VERSION)"
 	@echo "check      gofmt, go vet, go mod tidy and the tests (what CI runs)"
-	@echo "test       go test -race across all packages"
+	@echo "test       go test -race across the agent's packages"
 	@echo "fmt        rewrite files with gofmt"
 	@echo "clean      remove dist/ and coverage.out"
 	@echo "version    print the version compiled into the binary"
@@ -202,18 +202,20 @@ MQTT_PASS ?= pack-03-dev
 TOPIC     ?= skuhus/\#
 FLAGS     ?=
 
+# dev/ and spike/ are Go modules of their own, so the agent's vet and tests do
+# not compile them; -C runs each command inside its module.
 .PHONY: consume
 consume: caches network
 	docker run --rm -it --network $(NETWORK) \
 		-v "$(CURDIR)":/src -v $(MOD_CACHE):/go/pkg/mod -v $(BUILD_CACHE):/root/.cache/go-build \
 		-w /src -e GOFLAGS=-buildvcs=false $(GO_IMAGE) \
-		go run ./dev/consumer --broker $(BROKER) --username ingest --password ingest-dev \
+		go -C dev run ./consumer --broker $(BROKER) --username ingest --password ingest-dev \
 			--topic '$(TOPIC)' $(FLAGS)
 
 .PHONY: spike-brokerinfo
 spike-brokerinfo: caches network
-	$(GO_NET) go run ./spike/brokerinfo --mqtt $(BROKER) $(FLAGS)
+	$(GO_NET) go -C spike run ./brokerinfo --mqtt $(BROKER) $(FLAGS)
 
 .PHONY: spike-mqtt5
 spike-mqtt5: caches network
-	$(GO_NET) go run ./spike/mqtt5 --broker $(BROKER) --username $(MQTT_USER) --password $(MQTT_PASS) $(FLAGS)
+	$(GO_NET) go -C spike run ./mqtt5 --broker $(BROKER) --username $(MQTT_USER) --password $(MQTT_PASS) $(FLAGS)
