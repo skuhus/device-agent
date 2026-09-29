@@ -259,6 +259,22 @@ Actions are pinned to commit SHAs; a tag can be moved to point at other code.
 Not yet: golangci-lint, the Mosquitto integration job, and deb/rpm packaging
 with GoReleaser, which needs the `packaging/` files that are still M5.
 
+## Github naming convention
+
+Commit subjects and branch names start with the number of the issue they
+belong to.
+
+- Commit subject: `gh-<NNN> [<ACTION>] <COMMENT>`, for example
+  `gh-8 [Fix] Reject environment variables with an earlier release's prefix`.
+  The actions in use are `Add`, `Change` and `Fix`. The comment names the
+  change, not the reader's reaction to it.
+- Branch: `gh-<NNN>-<topic>`, for example `gh-8-rename`.
+- Issue title: `[Feature]`, `[Task]` or `[Bug]`, then the subject. A task from
+  PLAN-V2.md puts its number first: `[Task] T4: Give spike/ and dev/ their own
+  modules`.
+
+Dependabot names its own branches and commits.
+
 ## End to end on a workstation
 
 The scanner is on the desk, the broker is in Docker, and the agent runs on the
