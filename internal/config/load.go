@@ -16,6 +16,11 @@ import (
 // EnvPrefix is the prefix for every environment override.
 const EnvPrefix = "SH_DEV_AGENT_"
 
+// legacyEnvPrefixes are the prefixes earlier releases used: SKUHUS_AGENT_ in
+// 0.1.0, SH_DEV_SER_SCANNER_ in 0.2.0 and 0.3.0. Every variable any of them
+// defined exists under EnvPrefix with the same suffix.
+var legacyEnvPrefixes = []string{"SKUHUS_AGENT_", "SH_DEV_SER_SCANNER_"}
+
 // EnvConfigPath names the config file, equivalent to the --config flag.
 const EnvConfigPath = EnvPrefix + "CONFIG"
 
@@ -74,7 +79,14 @@ func Load(opts Options) (*Config, []Warning, error) {
 	if environ == nil {
 		environ = os.Environ
 	}
-	env := envMap(environ())
+	variables := environ()
+	// Before anything reads the environment: a legacy SH_DEV_SER_SCANNER_CONFIG
+	// would otherwise send loading to the default path and fail there, with an
+	// error about a missing file rather than about the variable.
+	if err := rejectLegacyEnvironment(variables); err != nil {
+		return nil, nil, err
+	}
+	env := envMap(variables)
 
 	path := opts.Path
 	explicit := path != ""
@@ -140,6 +152,38 @@ func decode(r io.Reader) (*Config, error) {
 		return nil, err
 	}
 	return &cfg, nil
+}
+
+// rejectLegacyEnvironment fails on every variable that uses an earlier release's
+// prefix, naming the variable that replaces it. Such a variable would otherwise
+// be ignored in silence, because envMap selects only EnvPrefix: a unit file or
+// container definition carried over from an earlier release would lose every
+// override it sets, and the station would run on the file's values without a
+// sign that anything was dropped. Only names are reported; a value can be a
+// password.
+func rejectLegacyEnvironment(environ []string) error {
+	var names []string
+	for _, entry := range environ {
+		name, _, _ := strings.Cut(entry, "=")
+		for _, legacy := range legacyEnvPrefixes {
+			if strings.HasPrefix(name, legacy) {
+				names = append(names, name)
+				break
+			}
+		}
+	}
+	sort.Strings(names)
+	problems := make([]error, 0, len(names))
+	for _, name := range names {
+		for _, legacy := range legacyEnvPrefixes {
+			if suffix, found := strings.CutPrefix(name, legacy); found {
+				problems = append(problems, fmt.Errorf(
+					"environment variable %s uses the prefix of an earlier release; rename it to %s", name, EnvPrefix+suffix))
+				break
+			}
+		}
+	}
+	return errors.Join(problems...)
 }
 
 // EnvMap selects the SH_DEV_AGENT_* variables from a KEY=VALUE list. The

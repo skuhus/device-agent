@@ -230,6 +230,54 @@ func TestLoadRejectsUnknownEnvironmentVariable(t *testing.T) {
 	}
 }
 
+// A station upgraded without editing its unit file still sets variables with an
+// earlier prefix. Ignoring them would run it on the file's values in silence;
+// SKUHUS_AGENT_ shipped in 0.1.0 and SH_DEV_SER_SCANNER_ in 0.2.0 and 0.3.0.
+func TestLoadRejectsEnvironmentFromEarlierReleases(t *testing.T) {
+	fixture := newFixture(t, validConfig)
+	env := []string{
+		"SH_DEV_SER_SCANNER_IDENTITY_STATION=pack-04",
+		"SKUHUS_AGENT_MQTT_PASSWORD=hunter2",
+		EnvPrefix + "IDENTITY_SITE=vasby",
+	}
+	_, _, err := load(t, fixture.path, env, Overrides{})
+	if err == nil {
+		t.Fatal("variables with an earlier release's prefix were accepted")
+	}
+	for _, want := range []string{
+		"SH_DEV_SER_SCANNER_IDENTITY_STATION", EnvPrefix + "IDENTITY_STATION",
+		"SKUHUS_AGENT_MQTT_PASSWORD", EnvPrefix + "MQTT_PASSWORD",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error does not name %s: %v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "hunter2") {
+		t.Errorf("the error repeats a variable's value, which can be a password: %v", err)
+	}
+}
+
+// Every variable an earlier release defined has a current equivalent with the
+// same suffix, so the replacement the error names always exists. When a later
+// change removes one of these settings, as T5 does for the audit_* keys, this
+// test fails on purpose: the error must then say the variable has no
+// equivalent, rather than name one that does not exist.
+func TestLegacyReplacementsAreRecognised(t *testing.T) {
+	recognised := envTargets(&Config{})
+	released := []string{
+		"CONFIG", "MQTT_USERNAME", "MQTT_PASSWORD",
+		"IDENTITY_PROJECT", "IDENTITY_SITE", "IDENTITY_STATION", "IDENTITY_INSTANCE",
+		"BROKER_URL", "BROKER_CREDENTIALS_FILE", "BROKER_CA_FILE", "BROKER_INSECURE", "BROKER_KEEPALIVE",
+		"DELIVERY_SCAN_TTL", "DELIVERY_PUBLISH_TIMEOUT", "DELIVERY_BUFFER_SIZE",
+		"LOGGING_LEVEL", "LOGGING_LOG_PAYLOADS", "LOGGING_AUDIT_FILE", "LOGGING_AUDIT_MAX_SIZE_MB", "LOGGING_AUDIT_KEEP",
+	}
+	for _, suffix := range released {
+		if _, ok := recognised[EnvPrefix+suffix]; !ok {
+			t.Errorf("%s shipped in an earlier release but %s is not recognised", suffix, EnvPrefix+suffix)
+		}
+	}
+}
+
 // Variables not belonging to the agent must be ignored, not rejected.
 func TestLoadIgnoresForeignEnvironmentVariables(t *testing.T) {
 	fixture := newFixture(t, validConfig)

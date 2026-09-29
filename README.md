@@ -308,8 +308,12 @@ injected, because source cannot know them.
 
 Precedence is CLI flags, then `SH_DEV_AGENT_*` environment variables, then the
 config file, then defaults. Unknown keys and unrecognised `SH_DEV_AGENT_*`
-variables are both fatal. Broker credentials are never accepted as CLI
-arguments, because `ps` would expose them to every user on the host.
+variables are both fatal. So are variables with an earlier release's prefix,
+`SKUHUS_AGENT_` or `SH_DEV_SER_SCANNER_`: an upgraded station that still sets
+them would otherwise run on its file's values in silence, so the error names the
+`SH_DEV_AGENT_` variable that replaces each one. Broker credentials are never
+accepted as CLI arguments, because `ps` would expose them to every user on the
+host.
 
 ```
 skuhus-device-agent validate --config /etc/skuhus-device-agent/config.yaml
