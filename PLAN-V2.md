@@ -19,8 +19,8 @@ that send no separator.
 
 Every task is a sub-issue of #4, in this order. T1 was finished before issues
 were created for the plan, so it has none. #6 and #7 are sub-issues of #4 too,
-postponed beyond it. #24 and #25 are defects found in review, fixed within T11
-and T4.
+postponed beyond it, as are #20 (formerly T15), #26 and #27. #24 and #25 are
+defects found in review, fixed within T11 and T4.
 
 | Task | Issue | Title |
 |---|---|---|
@@ -38,7 +38,7 @@ and T4.
 | T12 | #17 | Documentation |
 | T13 | #18 | Release 2.0.0 |
 | T14 | #19 | tx: receive and write |
-| T15 | #20 | tx across reconnects |
+| T15 | #20 | tx through reconnects, postponed out of #4 |
 | T16 | #21 | tx idempotency |
 | T17 | #5 | Flow control and write pacing, postponed out of #4 |
 | T18 | #22 | Release 2.1.0 |
@@ -53,8 +53,7 @@ and T4.
                        |                         |           +--> T9 logging  |
                        |                         +--> T11 dev env ------------+--> T10 e2e --> T12 docs --> T13 release 2.0.0
                        |
-                       +--> T14 tx --> T15 tx reconnects --+
-                                  +--> T16 tx idempotency -+--> T18 release 2.1.0
+                       +--> T14 tx --> T16 tx idempotency --> T18 release 2.1.0
 
 T3 goes first among the code tasks so that every later pull request is written
 against the final names, and the rename is a single diff with no behaviour
@@ -85,9 +84,9 @@ DESIGN-V2.md cites exists in a fresh clone.
 
 ### T2. Settle the open decisions
 
-Status: not done. The open decisions were settled on 2026-09-29 and recorded
-in DESIGN-V2.md, but 19 items are still `[Proposed]`, and 14 of them block phase
-1 tasks. #23 settles them.
+Status: done on 2026-09-29. The maintainer answered every question and
+follow-up in #23, the answers are recorded in DESIGN-V2.md, and no item there is
+open or proposed.
 
 Motivation. DESIGN-V2.md lists eight open decisions and a number of proposals.
 Each open decision blocks a named task; building on an unconfirmed proposal
@@ -163,9 +162,11 @@ Motivation. The v1 schema is shaped around a scanner:
 
 Work. Per device: id (topic-segment rule, with `agent` reserved), path, baud,
 data bits, parity, stop bits, separator, max_frame_bytes, inter_char_timeout,
-and, if confirmed, message expiry and model. Remove assert_config. Replace
-audit_file, audit_max_size_mb and audit_keep with the common log's keys
-(DESIGN-V2.md, "Logging: one common log"). Framing without a separator is #7 and
+message expiry, and an optional device_type string. Remove assert_config.
+Replace audit_file, audit_max_size_mb and audit_keep with the common log's keys,
+logging.file, logging.max_size_mb and logging.keep, and add logging.stdout; each
+destination is optional, and a configuration with neither is accepted
+(DESIGN-V2.md, "Logging: one common log"; #23 Q11, Q11a). Framing without a separator is #7 and
 not part of this task.
 
 Keep: strict loading of keys and environment variables; validation that reports
@@ -191,6 +192,10 @@ Work.
   of each message: rx, tx (reserved in phase 1), device status event, tx result,
   agent keepalive with counters, will. Every field, its type, and whether it can
   be null.
+- In the same section, state the tx contract: the id is a UUID of any version,
+  and a sender that has no result after a stated time treats the tx as not
+  written, because a tx published while the agent is disconnected is lost
+  (#23 Q15a, Q18, Q19a).
 - Implement the topic builder with the device segment and the agent/<instance>
   level, rejecting `agent` as a device id.
 - Implement the message types, with tests that assert the exact set of JSON
@@ -271,11 +276,11 @@ identifying where it was produced. On 2026-09-07, as a defect: the data read fro
 the port only reaches the log at DEBUG (internal/device/serial/serial.go:281),
 so seeing a reading means enabling every other DEBUG line as well.
 
-Work, as DESIGN-V2.md, "Logging: one common log", describes it and as the
-maintainer confirms its `[Proposed]` items:
-- One log, written to a file with size rotation and to stdout.
-- Every record carries its severity, slog's source attribute (function, file,
-  line) and a component attribute.
+Work, as DESIGN-V2.md, "Logging: one common log", describes it:
+- One log, written to a file with size rotation, to stdout, or both, as
+  configured.
+- Every record carries its severity and slog's source attribute (function,
+  file, line).
 - Delivery outcomes are ordinary records, with the payload when the broker did
   not accept the message.
 - Records at INFO and above are flushed to disk as written.
@@ -286,7 +291,7 @@ maintainer confirms its `[Proposed]` items:
   the topics line carried instance_id twice until it was fixed.
 
 Intended result. Tests that capture the log and assert: the frame line's content
-with log_payloads set and unset; source and component present on every record; a
+with log_payloads set and unset; source present on every record; a
 failed publish's payload present; no repeated key in any line. Rotation keeps
 the configured number of files.
 
@@ -387,12 +392,17 @@ also returns the result of a single write(2) and does not continue after a
 partial write.
 
 Work.
-- Subscribe to each device's tx topic. Validate the message; a malformed tx gets
-  a failed result with a machine-readable reason.
+- Subscribe to each device's tx topic. Validate the message, including that its
+  id is a UUID; a malformed tx gets a failed result with a code and a text.
 - One writer per port, which only writes while it holds the port open under the
   agent's own lock, and loops until every byte is written.
-- Results: accepted, then written or failed with the port's error class. A tx for
-  a port that is not open fails at once.
+- Results: accepted, then written or failed, each with a code, a text and the
+  detail at hand: the port's error class, bytes written, attempts made.
+- Retry opening the port, up to the configured count and at the configured
+  interval, then fail the tx. Once writing has started, a failure is not
+  retried: the result reports the bytes written (#23 Q17, Q17a).
+- No gap between writes and no read or write priority: the line is full-duplex
+  and reading continues throughout (#23 Q16a).
 - Decide whether "written" is reported after write(2) accepts the bytes or after
   Drain (the library exposes tcdrain as Port.Drain) confirms they left the
   buffer. The maintainer's definition, bytes written to the port, fits either;
@@ -407,30 +417,13 @@ racing a close fails and never reaches another descriptor.
 
 Depends on: T13.
 
-### T15. tx across reconnects
+### T15. Postponed: tx through reconnects
 
-Motivation. With clean start and session expiry 0
-(internal/transport/mqtt/client.go:107-108), a tx published while the agent
-reconnects is dropped by the broker and never gets a result (DESIGN-V2.md,
-"Writing: tx").
-
-Work.
-- Session settings belong to a connection, not a subscription: autopaho's
-  ClientConfig has one SessionExpiryInterval and one
-  CleanStartOnInitialConnection (paho.golang v0.23.0). So choose between one
-  connection with a session, or a second connection with its own client id for
-  tx.
-- Choose CleanStartOnInitialConnection. True discards every tx queued while the
-  process was down, including ones that have not expired.
-- RabbitMQ caps session expiry at 86400 s by default (docs/spikes/m0-mqtt5.md,
-  retained store section).
-- Write the no-result timeout into the message format section.
-
-Intended result, in the integration test: a tx published while the broker
-connection is down is written after it returns; a tx whose expiry is shorter
-than the outage is never written and gets no result.
-
-Depends on: T14, T10.
+Postponed out of #4 on 2026-09-29 (#23 Q19a). This task's issue, #20, now holds
+it as a feature. Until then rx and tx share one clean connection, a tx
+published while the agent is disconnected is lost, and the sender learns it from
+the missing result; T6 writes that rule into the message formats. The number is
+kept so that references to T15 stay unambiguous.
 
 ### T16. tx idempotency
 
@@ -453,7 +446,7 @@ unambiguous.
 
 Intended result. Tag v2.1.0, releasing writing.
 
-Depends on: T14, T15, T16.
+Depends on: T14, T16.
 
 ## Outside #4
 
@@ -462,6 +455,9 @@ Recorded so they are not lost:
 - #5: flow control and write pacing.
 - #6: reloading the configuration on SIGHUP.
 - #7: framing for devices that send no separator.
+- #20: keeping tx through reconnects on a persistent session (formerly T15).
+- #26: the same counters on an HTTP endpoint for scraping.
+- #27: restricting tx ids to UUID version 4.
 
 - Exchange sessions and polling (DESIGN-V2.md, "Deferred beyond #4").
 - Port locking between processes (same).

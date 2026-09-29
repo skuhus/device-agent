@@ -116,10 +116,10 @@ A consumer takes every device at a station with a single-level wildcard:
 - The segment `agent` is reserved and rejected as a device id, so no device can
   be configured into the agent's topics.
 
-`[Proposed]` A device id is now a topic segment, so it follows the topic-segment
+`[Decided]` A device id is now a topic segment, so it follows the topic-segment
 rule `[a-z0-9-]+` (internal/config/validate.go:24). v1 allows `[A-Za-z0-9._-]+`
 (validate.go:27), which was acceptable while the id only appeared inside
-payloads.
+payloads. Source: maintainer, 2026-09-29 (#23 Q1).
 
 ## Message ids and execution results
 
@@ -132,23 +132,47 @@ payloads.
 `[Decided]` For each tx the agent publishes an execution result naming the tx id,
 so the sender learns what happened to it. Source: maintainer, 2026-09-29.
 
-`[Proposed]` The result goes on the device's status topic, with one of three
+`[Decided]` The result goes on the device's status topic, with one of three
 states: accepted (received and queued for the port), written (every byte reached
 the port), failed (with a reason and, for port errors, the error class v1
 already assigns: absent, busy, permission_denied, read_only, disconnected).
+Source: maintainer, 2026-09-29 (#23 Q2).
 
-`[Proposed]` The tx id is an idempotency key. The agent remembers recent tx ids
+`[Decided]` Every result and every event carries as much information as the
+agent can easily provide: at least a machine-readable code and a human-readable
+text, and whatever detail is at hand, such as the error class, the byte count or
+the number of attempts. Source: maintainer, 2026-09-29 (#23 Q2).
+
+`[Decided]` The tx id is an idempotency key. The agent remembers recent tx ids
 and does not write a tx whose id it has already written; it publishes a result
 saying so instead. A sender that saw no result can then resend safely.
+Source: maintainer, 2026-09-29 (#23 Q15).
 
-`[Proposed]` The tx carries a sender field, set by the sender. Several senders
+`[Decided]` The tx id must be a UUID, not arbitrary data. A tx carrying anything
+else fails with a code saying why. Source: maintainer, 2026-09-29 (#23 Q15).
+
+`[Decided]` Any RFC 9562 UUID version is accepted, not only version 4.
+Uniqueness is all idempotency needs, and a sender using version 7 gets ids that
+sort by time at no cost to the agent. The agent's own rx ids stay version 4.
+Source: maintainer, 2026-09-29 (#23 Q15a).
+
+`[Deferred]` Restricting tx ids to version 4, as a possible refactoring: #27.
+Source: maintainer, 2026-09-29 (#23 Q15a).
+
+`[Decided]` The tx carries a sender field, set by the sender. Several senders
 may write to one device and there is no session, so the sender field is the
-only record of who wrote what when an interleaving has to be reconstructed.
+only record of who wrote what when an interleaving has to be reconstructed. For
+now it only indicates the sender, and nothing trusts it. Source: maintainer, 2026-09-29 (#23 Q3).
 
-`[Proposed]` The id travels in the JSON payload, not as MQTT 5 correlation data.
+`[Deferred]` Using the sender field as a path to authenticating senders.
+Source: maintainer, 2026-09-29 (#23 Q3).
+
+`[Decided]` The id travels in the JSON payload, not as MQTT 5 correlation data.
 Correlation data works on RabbitMQ 4.x (docs/spikes/m0-mqtt5.md:100), but a
 payload field is visible in every log and to every consumer, and does not depend
-on the broker supporting the property.
+on the broker supporting the property. Source: maintainer, 2026-09-29 (#23 Q4).
+
+`[Deferred]` Supporting MQTT 5 correlation data as well. Source: maintainer, 2026-09-29 (#23 Q4).
 
 ## Reading: rx
 
@@ -181,8 +205,9 @@ round, so that no reading is ever emitted. Source: maintainer, 2026-09-29. The
 Symbol 05e0:1701 capture shows what it looks like: one inter_char_timeout
 discard per scan and no frames (docs/scanners/symbol-05e0-1701.md:32).
 
-`[Proposed]` That failure is detected upstream from the counters, not in the
+`[Decided]` That failure is detected upstream from the counters, not in the
 agent: for one device, rx bytes rising, rx frames flat, timeout discards rising.
+Source: maintainer, 2026-09-29 (#23 Q5).
 
 `[Deferred]` Framing for devices that send no separator, ended by a timeout, a
 size, or both: #7. Source: maintainer, 2026-09-29, as no device in use needs it.
@@ -196,14 +221,20 @@ configured, and the size semantics settled with a device on the bench.
 bounded buffer, and is never retried or replayed (DESIGN.md, "Scans are
 perishable" and "A failed publish is not retried").
 
-`[Proposed]` The message expiry becomes a per-device setting. v1 has one
+`[Decided]` The message expiry becomes a per-device setting. v1 has one
 delivery.scan_ttl for the whole process (internal/config/config.go:114); a
 scanner and a scale on one station need not give their readings the same
-lifetime.
+lifetime. Source: maintainer, 2026-09-29 (#23 Q6).
 
-`[Proposed]` A device may declare a model string that is published in every rx
-message, so a consumer can choose a parser from the message rather than from a
-registry mapping stations to hardware.
+`[Decided]` A device's message expiry is reported in its status messages, as a
+troubleshooting aid. Source: maintainer, 2026-09-29 (#23 Q6).
+
+`[Decided]` A device may declare a `device_type` string, published with every
+message about that device, rx and status alike. It tells the services behind the
+broker which physical device this is, not only which response format to expect:
+it bridges the hardware IT connected to a station and how the station is
+configured. The agent carries it and does not interpret it. Source: maintainer, 2026-09-29 (#23 Q7). It
+replaces the proposed `model`.
 
 ## Writing: tx
 
@@ -221,31 +252,56 @@ prevent it. Source: maintainer, 2026-09-29.
 any other reading, with no link to the tx that caused it. Source: maintainer,
 2026-09-29.
 
-`[Proposed]` A tx is written to the port contiguously. Senders are not ordered
+`[Decided]` A tx is written to the port contiguously. Senders are not ordered
 against each other, but the bytes of two tx messages are never interleaved on
-the wire: one writer per port.
+the wire: one writer per port. Source: maintainer, 2026-09-29 (#23 Q16).
 
-`[Proposed]` A tx for a port that is not open fails at once, with the port's
-error class in the result.
+`[Decided]` There is no minimum gap between writes, and no setting to prioritise
+reading or writing. A serial line is full-duplex and the agent reads on its own
+goroutine throughout, so reading continues while a tx is written, and a device's
+response reaches rx without the writer pausing for it. Source: maintainer, 2026-09-29 (#23 Q16a).
 
-`[Proposed]` A tx published while the agent is reconnecting is not lost silently.
-v1 connects with clean start and session expiry 0
+`[Decided]` A tx that cannot be written is retried up to a configured number of
+times, then fails with a result that carries the port's error class and the
+attempts made. Source: maintainer, 2026-09-29 (#23 Q17). This replaces the proposal to fail at once.
+
+`[Decided]` Retries cover opening the port only: a tx that finds its port closed,
+or whose attempt to open it fails, is retried. Once writing has started, a
+failure is not retried, whatever was written, because a retry could put data on
+the wire twice and a printer would print it; the result reports how many bytes
+were written. The retry count and the interval between attempts are device
+settings, and no attempt is made once the tx's message expiry has passed.
+Source: maintainer, 2026-09-29 (#23 Q17a).
+
+A tx published while the agent is reconnecting must not be lost silently. v1
+connects with clean start and session expiry 0
 (internal/transport/mqtt/client.go:107-108), so no session survives a
 disconnect. While the agent reconnects its tx subscription does not exist; a tx
 published in that window has no subscriber, the broker drops it, and no result
-is ever published. Two measures, used together:
+is ever published.
 
-- The contract states that a sender that receives no result within a stated time
-  treats the tx as not written.
-- The tx subscription uses a persistent session, and senders set a message
-  expiry on every tx. The broker queues a tx through a short disconnect and
-  drops it once stale. M0 measured both on RabbitMQ: a 2 s message expired
-  during a 6 s absence while a 300 s one was delivered
-  (docs/spikes/m0-mqtt5.md:108).
+`[Decided]` The contract states that a sender that receives no result within a
+stated time treats the tx as not written. Source: maintainer, 2026-09-29 (#23 Q18).
 
-This reverses v1's clean start for the tx direction only. v1 chose clean start
-because a queued stale command is harmful; the sender's message expiry is what
-makes queuing safe here.
+`[Decided]` Senders set a message expiry on every tx, so that a tx that waited too
+long is dropped rather than written late. M0 measured the broker honouring it: a
+2 s message expired during a 6 s absence while a 300 s one was delivered
+(docs/spikes/m0-mqtt5.md:108). Source: maintainer, 2026-09-29 (#23 Q19).
+
+`[Decided]` rx and tx share one connection, which starts clean and keeps no
+session, as v1's does. Nothing is resubmitted after a reconnect. A tx published
+while the agent is disconnected is lost, and the sender learns it from the
+missing result. Source: maintainer, 2026-09-29 (#23 Q19a).
+
+`[Deferred]` Keeping tx through reconnects: #20. Source: maintainer, 2026-09-29 (#23 Q19a). It needs a
+second connection for tx, with its own client id and a session kept across
+reconnects and restarts. Session settings belong to a connection, not to a
+subscription (autopaho's ClientConfig), and a session on the rx connection
+would change rx: when a session resumes, paho resends every
+unacknowledged publish in its store (paho/session/state/state.go:208-210 in
+paho.golang v0.23.0), so a scan the agent had already recorded as failed would
+be delivered late. With clean start there is never a session to resume, and
+paho clears its store instead (state.go:171-173).
 
 `[Decided]` The serial library stays go.bug.st/serial. Source: maintainer,
 2026-09-29. It supports data bits, parity and stop bits (its `Mode`), keeps the
@@ -258,12 +314,12 @@ go.bug.st/serial always switches flow control off (serial_unix.go:242 and
 evaluation and the proposed replacement on `*os.File` and golang.org/x/sys/unix.
 Printers on `/dev/usb/lpN` or raw TCP use no termios and are not affected.
 
-`[Proposed]` The write path protects itself from two properties of the library.
+`[Decided]` The write path protects itself from two properties of the library.
 Its `Write` takes no lock and does not check that the port is open, so a write
 racing a close reaches whatever descriptor now has that number; and it makes one
 write(2) call without continuing after a partial write (serial_unix.go:112-118).
 The agent's port type holds one lock across `Write` and `Close`, and loops until
-every byte is written.
+every byte is written. Source: maintainer, 2026-09-29 (#23 Q20).
 
 ## Status channel
 
@@ -274,16 +330,21 @@ agent and every device can be seen from outside. Source: maintainer, 2026-09-29.
 the log, "not only via logs on the host computer". Source: maintainer,
 2026-09-19.
 
-`[Proposed]` Device events on the device status topic: port opened, port closed,
+`[Decided]` Device events on the device status topic: port opened, port closed,
 port lost with its error class, discard with its reason and byte count, tx
-result.
+result. The list is a minimum: anything that keeps consumers reasonably informed
+about a device or the agent belongs there too. Source: maintainer, 2026-09-29 (#23 Q8).
 
-`[Proposed]` Counters in the agent keepalive, per device: rx frames, rx bytes,
+`[Decided]` Counters in the agent keepalive, per device: rx frames, rx bytes,
 discards by reason, failed opens by error class, publish failures, tx written,
 tx failed, buffer depth. The v1 heartbeat carries some of these
 (internal/event/heartbeat.go:24-38). They are pushed over MQTT rather than
 scraped over HTTP: stations are not generally reachable for scraping, and
 publishing keeps the numbers off the host, which is the aim of the design.
+Source: maintainer, 2026-09-29 (#23 Q9).
+
+`[Deferred]` The same counters on an HTTP endpoint for scraping as well: #26.
+Source: maintainer, 2026-09-29 (#23 Q9).
 
 `[Carried over]` Liveness comes from the keepalive, not from the retained
 status. RabbitMQ delivers a will without retaining it, and does not replicate
@@ -358,32 +419,45 @@ logs in there").
 `[Decided]` Every record carries its severity and identifies where it was
 produced. Source: maintainer, 2026-09-29.
 
-`[Proposed]` The identification is slog's source attribute on every record,
+`[Decided]` The identification is slog's source attribute on every record,
 which gives the package-qualified function name, the file and the line
-(log/slog, type Source), plus a component attribute: port, framer, transport,
-publisher or status. The component survives refactoring, where a function name
-changes whenever code moves. v1 has the source option and leaves it off
-(internal/logging/logging.go:32-33).
+(log/slog, type Source). v1 has the source option and leaves it off
+(internal/logging/logging.go:32-33). The proposed hand-written component
+attribute is dropped. Source: maintainer, 2026-09-29 (#23 Q10).
+
+`[Deferred]` A standard for errors, with identifiers. Source: maintainer, 2026-09-29 (#23 Q10).
 
 `[Carried over]` Every rx and tx message gets a record of what happened to it,
 and the record carries the payload when the broker did not accept the message
 (DESIGN.md, "Scans are perishable"). In v1 this was the audit log.
 
-`[Proposed]` The log is written to a file with size rotation, configured by
+`[Decided]` The log can go to a file with size rotation, configured by
 logging.file, logging.max_size_mb and logging.keep in place of audit_file,
-audit_max_size_mb and audit_keep; the same records also go to stdout, so that
-journald and `docker logs` show them.
+audit_max_size_mb and audit_keep, and to stdout, so that journald and `docker
+logs` show it. Each destination is optional, so a deployment picks the
+combination that suits it. Source: maintainer, 2026-09-29 (#23 Q11).
 
-`[Proposed]` Records at INFO and above are flushed to disk as they are written,
+`[Decided]` A configuration with neither destination is accepted: where the agent
+logs, if anywhere, is the operator's business. Source: maintainer, 2026-09-29 (#23 Q11a).
+
+`[Decided]` Records at INFO and above are flushed to disk as they are written,
 as the audit log was (DESIGN.md, "The audit log is flushed per record"). They
 include every delivery outcome. DEBUG records are not flushed individually,
-because at DEBUG every read from the port is a record.
+because at DEBUG every read from the port is a record. Chosen at the
+maintainer's request (#23 Q12).
 
-`[Proposed]` With log_payloads set, the data read from the port appears on the
+Flushing makes the kernel put a record on the disk before the agent continues,
+so it survives a power cut. At the rate a person scans, that is a few writes per
+scan, which a station's storage absorbs; at the rate a streaming device produces
+INFO records it would not be, and that is the point to revisit if one is
+connected. Flushing concerns the log file only: records on stdout are the
+receiving side's to keep.
+
+`[Decided]` With log_payloads set, the data read from the port appears on the
 INFO line that reports the frame. In v1 it appears only at DEBUG
 (internal/device/serial/serial.go:281), so seeing a reading means switching on
 every other DEBUG line too. The maintainer reported this as a defect on
-2026-09-07.
+2026-09-07. Source: maintainer, 2026-09-29 (#23 Q13).
 
 ## Broker constraints
 
@@ -404,8 +478,9 @@ Measured in M0 (docs/spikes/m0-mqtt5.md):
 The maintainer's assessment of v1, given before the #4 discussion: it does what
 is needed, and it is in a state where starting over is easier than fixing it.
 
-`[Proposed]` Build v2 as a new core, and bring across only what was measured or
-tested against a real failure:
+`[Decided]` Build v2 as a new core. Source: maintainer, 2026-09-29 (#23 Q14). Whatever turns out to be
+needed can be carried over; what was measured or tested against a real failure
+comes across first:
 
 - the framer and its tests, including the real capture in
   internal/device/serial/testdata;
@@ -428,9 +503,8 @@ Leave behind:
 
 ## Open decisions
 
-No item is open. 19 items are still `[Proposed]`, 14 of them blocking phase 1
-tasks; #23 lists each with the tasks it blocks, and settles them. Until an item
-is marked `[Decided]`, the legend applies: do not build on it.
+None. No item is open or proposed: the maintainer's answers to #23 on
+2026-09-29 settled every proposal and every follow-up.
 Decisions of 2026-09-29 are recorded in their sections above.
 
 Task numbers refer to PLAN-V2.md.
