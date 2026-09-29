@@ -121,11 +121,13 @@ rule `[a-z0-9-]+` (internal/config/validate.go:24). v1 allows `[A-Za-z0-9._-]+`
 (validate.go:27), which was acceptable while the id only appeared inside
 payloads. Source: maintainer, 2026-09-29 (#23 Q1).
 
-`[Proposed]` The instance is a topic level too, `agent/<instance>/status`, so it
+`[Decided]` The instance is a topic level too, `agent/<instance>/status`, so it
 follows the same rule for the same reason. v1 allows `[A-Za-z0-9._-]{1,64}`,
 because there the instance was only the MQTT client id (validate.go:30 and
-74-84). internal/wire refuses an instance outside the rule, and T5 would check
-it in the configuration. This is #11 Q2.
+74-84). internal/wire refuses an instance outside the rule, and T5 checks it in
+the configuration. A station that sets an instance outside the rule refuses to
+start after the upgrade until the value is changed; one that does not set it
+takes the station id, which already follows the rule. Source: maintainer, 2026-09-29 (#11 Q2).
 
 ## Message ids and execution results
 
@@ -359,9 +361,9 @@ consumer relying on the retained status sees a dead agent as online.
 
 ## Message formats
 
-`[Proposed]` Everything in this section that is not marked `[Decided]`, until
-the maintainer has answered the T6 review questions in #11. The decisions it
-builds on are cited where they are used.
+`[Decided]` The formats in this section, as reviewed in #11. Source: maintainer, 2026-09-29
+(#11 Q1-Q9 and Q6a). The earlier decisions they build on are cited where they
+are used.
 
 `[Decided]` Names may change where the change improves them. Source:
 maintainer, 2026-09-29 (#11 Q9). Changed since the first draft: `expiry_s` to
@@ -514,7 +516,7 @@ to it from 2.1.0.
 | raw_b64 | string | The bytes to write, in padded standard base64. |
 
 All four are required and no other field is accepted, so a mistake in a sender
-gets a failed result instead of being ignored; this is #11 Q3, still open.
+gets a failed result instead of being ignored. Source: maintainer, 2026-09-29 (#11 Q3).
 Senders set an MQTT message expiry on every tx (#23 Q19).
 
 ### tx results
@@ -569,7 +571,7 @@ written gets `rejected` alone, and the earlier one carries on.
 |---|---|---|---|
 | `accepted` | `accepted` | | Received and queued for the port. |
 | `written` | `written` | `bytes_written`, `open_attempts` | Every byte reached the port. |
-| `written` | `already_written` | `written_at` | A tx with this id was written before, so this one was not (#23 Q15). Whether the agent still knows an id once its tx is written is #11 Q6a. |
+| `written` | `already_written` | `written_at` | A tx with this id was written before, so this one was not (#23 Q15). The agent remembers a bounded number of written ids in memory, and a restart forgets them (#11 Q6a, T16). |
 | `rejected` | `in_progress` | `stage`, `since`, `bytes_written` | A tx with this id is queued or being written, so this one is not taken (#11 Q6). |
 | `failed` | `invalid_message` | `error` | Not JSON, `schema` is not 2, a field is missing or unknown, or `raw_b64` is not base64. |
 | `failed` | `invalid_id` | | `id` is not a UUID. |
@@ -585,20 +587,20 @@ or `writing`, and `since` is when the earlier tx entered that stage.
 
 ### The tx contract
 
-- A sender that receives no result at all within the tx's message expiry plus 5
-  seconds treats the tx as not written (#23 Q18). A tx published while the agent
-  is disconnected is lost and gets no result (#23 Q19a). The 5 seconds cover
-  the broker delivering the tx and the agent publishing `accepted`. This is
-  #11 Q4, still open.
-- `[Decided]` After `accepted`, how long to wait for `written` or `failed` is the
-  sender's own timeout; the agent sets none. Source: maintainer, 2026-09-29
-  (#11 Q5).
+- `[Decided]` The contract names no time. Each sender sets its own timeouts,
+  for `accepted` and, after it, for `written` or `failed`, and treats a tx with
+  no result by then as not written (#23 Q18). A tx published while the agent is
+  disconnected is lost and never gets a result (#23 Q19a). Source: maintainer, 2026-09-29
+  (#11 Q4, Q5).
 - `[Decided]` Sending the same tx again, with the same id, is how a sender asks
   where it stands, until an enquiry of its own exists (#28). While a tx with
   that id is queued or being written, the resend is rejected with
   `in_progress`, which says where the earlier tx stands and since when, and
-  nothing is queued twice. The agent keeps no record of ids beyond its current
-  state. Source: maintainer, 2026-09-29 (#11 Q5, Q6).
+  nothing is queued twice. Source: maintainer, 2026-09-29 (#11 Q5, Q6).
+- `[Decided]` The agent keeps no record of ids beyond what the running agent
+  holds: the txs queued or being written, and a bounded set of recently written
+  ids. A restart forgets both. A resend after `written` gets `already_written`
+  while the id is in the set. Source: maintainer, 2026-09-29 (#11 Q6, Q6a).
 - `accepted` says the tx reached the agent. Only `written` says the bytes
   reached the port, and it says nothing about the device ("Writing: tx").
 
@@ -768,15 +770,15 @@ message arrives, which only the consumer knows.
 | offline | `agent/<instance>/status` | 1 | no | none |
 | tx | `<device>/tx` | 1, by senders | no | set by the sender (#23 Q19) |
 
-`[Proposed]` Nothing is retained. v1 retains its status and its will
+`[Decided]` Nothing is retained. v1 retains its status and its will
 (internal/transport/mqtt/client.go:141-149, 182-192), and three measurements
 leave that of little use on RabbitMQ: a will is delivered but not retained, so
 the last retained status of a dead agent reads online; a retained message is
 not visible through another cluster node; and on 4.3.5 a retained message
 reaches only a subscription naming its exact topic, not a wildcard one such as
 `+/status` (docs/spikes/m0-mqtt5.md). A consumer learns an agent's state, and
-every device's, from the next keepalive instead, within one interval. This is
-#11 Q1, still open.
+every device's, from the next keepalive instead, within one interval. Source: maintainer, 2026-09-29
+(#11 Q1).
 
 A consumer at a station subscribes to:
 
@@ -946,18 +948,8 @@ Leave behind:
 
 ## Open decisions
 
-No item is open. The maintainer's answers to #23 on 2026-09-29 settled every
-proposal and follow-up made up to then; they are recorded in their sections
-above.
-
-`[Proposed]` until the maintainer answers them in #11:
-
-- publishing nothing retained (#11 Q1);
-- the instance following the topic-level rule, "Topics" (#11 Q2);
-- refusing a tx with a field the format does not define (#11 Q3);
-- the time after which a sender with no result treats a tx as not written
-  (#11 Q4);
-- whether the agent still knows a tx id once the tx is written (#11 Q6a);
-- the rest of "Message formats" not marked `[Decided]`.
+None. No item is open or proposed. The maintainer's answers to #23 and, for the
+message formats, to #11, both on 2026-09-29, settled every proposal and
+follow-up; they are recorded in their sections above.
 
 Task numbers refer to PLAN-V2.md.

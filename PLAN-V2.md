@@ -86,8 +86,8 @@ DESIGN-V2.md cites exists in a fresh clone.
 
 Status: done on 2026-09-29. The maintainer answered every question and
 follow-up in #23, the answers are recorded in DESIGN-V2.md, and when T2 closed
-no item there was open or proposed. T6 has since proposed the message formats
-and the instance rule, which its review settles.
+no item there was open or proposed. T6 then proposed the message formats and
+the instance rule, which the maintainer settled in #11 the same day.
 
 Motivation. DESIGN-V2.md lists eight open decisions and a number of proposals.
 Each open decision blocks a named task; building on an unconfirmed proposal
@@ -179,9 +179,9 @@ Replace audit_file, audit_max_size_mb and audit_keep with the common log's keys,
 logging.file, logging.max_size_mb and logging.keep, and add logging.stdout; each
 destination is optional, and a configuration with neither is accepted
 (DESIGN-V2.md, "Logging: one common log"; #23 Q11, Q11a). Framing without a separator is #7 and
-not part of this task. If the T6 review confirms it, check identity.instance
-against the topic-level rule `[a-z0-9-]+`, since the instance is now a topic
-level (DESIGN-V2.md, "Topics"); v1 allows `[A-Za-z0-9._-]{1,64}`. Add the
+not part of this task. Check identity.instance against the topic-level rule
+`[a-z0-9-]+`, since the instance is now a topic level (DESIGN-V2.md, "Topics";
+#11 Q2); v1 allows `[A-Za-z0-9._-]{1,64}`. Add the
 keepalive interval, default 15 s, and the number of missed keepalives after
 which a consumer treats the agent as gone, default 3 (#11 Q7).
 
@@ -450,9 +450,8 @@ kept so that references to T15 stay unambiguous.
 
 Work. Keep a bounded set of recently written tx ids. A tx whose id is in the set
 is not written, and gets a result saying it was a duplicate. The set lives in
-memory; a restart forgets it, and the message format section says so. Whether
-written ids are kept at all is #11 Q6a; the maintainer's answer to #11 Q6 was
-that the agent keeps no record of ids beyond its current state.
+memory; a restart forgets it, and the message format section says so. It is
+part of the running agent's state, which is all the agent keeps (#11 Q6, Q6a).
 
 Intended result. The same id sent twice produces one write and two results.
 
