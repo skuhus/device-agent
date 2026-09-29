@@ -246,29 +246,40 @@ Validation is repeated in agent.New.
 
 Work. A new core with one responsibility per part:
 - Port reader: open, read, frame, reopen with backoff. Carry the framer, its
-  tests and the captures in internal/device/serial/testdata unchanged.
+  tests and the captures in internal/device/serial/testdata unchanged. The
+  reader reports what happens to its port: opened, closed, lost and a failed
+  open, each with its error class, and discarded bytes with reason and count.
+  The core logs each; T8 publishes and counts them.
 - Per-device pipeline: reader to bounded channel to publisher, publishing to
-  that device's rx topic.
+  that device's rx topic with the device's message expiry.
 - Transport: carry the connection handling from internal/transport/mqtt, whose
   properties were each measured: the connection outlives the run context, the
   disconnect is bounded, there is no publish queue, and the connection is safe
   for concurrent publishing (autopaho wraps it in packets.NewThreadSafeConn).
-- Delivery outcomes: a record in the common log for every message, with the
-  payload when the broker did not accept it.
+  It publishes the messages of DESIGN-V2.md, "Message formats", as its
+  publishing table says, and registers the will.
+- The will and the offline message on the agent's status topic. Both are part
+  of the connection's life, which this task builds: the will goes in the
+  CONNECT packet, and the offline message is part of shutdown.
+- Delivery outcomes: a record in the log file for every rx message, with the
+  payload when the broker did not accept it. T9 makes that file the common log.
 - Wiring that assembles the parts and does nothing else; validation in the
   configuration package only.
-- An absent port keeps the agent running: it is reported on the device status
-  topic and counted, and opening is retried with backoff.
+- An absent port keeps the agent running, and opening is retried with backoff;
+  T8 reports it on the device status topic and counts it.
+- Remove what the new core replaces: the v1 supervisor, the v1 messages in
+  internal/event, and the v1 topics.
 
 Carry the v1 tests that encode a measured failure, rewritten against the new
-core: shutdown order (devices, drain, offline status, disconnect), the drain
-deadline, the bounded disconnect, a failed publish being counted and recorded
-with its payload, and the pseudo-terminal harness tests.
+core: shutdown order (devices, drain, offline message, disconnect), the drain
+deadline, the bounded disconnect, a failed publish recorded with its payload,
+and the pseudo-terminal harness tests.
 
 Intended result. With the pseudo-terminal harness, every frame produces exactly
 one rx message on its device's topic. Two devices on one agent publish to their
 own topics. The carried tests pass. A publish that fails leaves its payload in
-the common log.
+the log file. Killing the agent with SIGKILL makes the broker publish its will,
+checked against the development broker.
 
 Depends on: T5, T6.
 
@@ -283,17 +294,14 @@ Work.
   configured interval, carrying `gone_after_s` (#11 Q7).
 - Device events on the device status topic: opened, closed, lost with its error
   class, a failed open on every attempt (#11 Q8), discarded bytes with reason
-  and byte count.
-- The will on the agent-level status topic.
-- Consumers derive liveness from the keepalive; RabbitMQ does not retain a will
-  (docs/spikes/m0-mqtt5.md:106). Say so in the message format section.
+  and byte count, from the port events T7's reader reports.
+- Count, per device, what the keepalive reports.
 
 Intended result, each checked end to end against the development broker:
 - Closing the pseudo-terminal publishes a port-lost event with its error class.
 - A device configured with a separator it never sends shows timeout discards
   rising and rx frames at zero in consecutive keepalives: the inverted-separator
   signature, visible without reading a log on the station.
-- Killing the agent with SIGKILL publishes the will.
 
 Depends on: T6, T7.
 
