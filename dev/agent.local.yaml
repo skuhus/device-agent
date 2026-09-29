@@ -1,0 +1,53 @@
+# Agent configuration for a workstation: the scanner on this desk, the broker in
+# dev/rabbitmq. Not a station configuration - see config.sample.yaml for that,
+# and for what every setting means.
+#
+#   make broker-up
+#   mkdir -p /tmp/skuhus-device-serial-scanner
+#   SH_DEV_SER_SCANNER_MQTT_USERNAME=station-pack-03 \
+#   SH_DEV_SER_SCANNER_MQTT_PASSWORD=pack-03-dev \
+#     ./dist/skuhus-device-serial-scanner-darwin-arm64 run --config dev/agent.local.yaml
+#
+# The credentials come from the environment rather than a file, so running this
+# needs no secret on disk. They are the development fixtures in
+# dev/rabbitmq/definitions.json, and that user is confined by topic permission
+# to this station's own topics.
+
+identity:
+  project: acme
+  site: vasby
+  station: pack-03
+
+broker:
+  # The compose file publishes MQTT on the loopback interface only.
+  url: tcp://127.0.0.1:1883
+  # Plaintext, so this has to be stated. The local broker terminates no TLS.
+  insecure: true
+
+devices:
+  - id: scanner-main
+    kind: serial
+
+    # The Symbol 05e0:1701 on a Mac. Run "skuhus-device-serial-scanner probe --list" to find
+    # the path on this host; it changes with the USB port.
+    path: /dev/cu.usbmodem21101
+
+    baud: 9600
+
+    # Measured for this model in docs/scanners/symbol-05e0-1701.md. A scanner
+    # sending CR against this setting corrupts payloads under load and looks
+    # fine at a desk, so check the model before changing it.
+    terminator: "\r\n"
+
+delivery:
+  scan_ttl: 30s
+  publish_timeout: 2s
+  buffer_size: 64
+
+logging:
+  level: info
+  # Off here as in production. Turn it on with level debug to see payloads when
+  # a device frames nothing.
+  log_payloads: false
+  # The directory must already exist; the agent will not create it.
+  audit_file: /tmp/skuhus-device-serial-scanner/audit.log
