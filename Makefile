@@ -199,7 +199,12 @@ spike-mosquitto-up: network
 	@docker rm -f skuhus-dev-mosquitto >/dev/null 2>&1 || true
 	@docker run -d --name skuhus-dev-mosquitto --network $(NETWORK) $(MOSQUITTO_IMAGE) \
 		sh -c 'printf "listener 1883\nallow_anonymous true\n" > /mosquitto/config/mosquitto.conf && exec mosquitto -c /mosquitto/config/mosquitto.conf' >/dev/null
-	@until docker logs skuhus-dev-mosquitto 2>&1 | grep -q " running"; do sleep 1; done
+	@for attempt in $$(seq 1 30); do \
+		docker logs skuhus-dev-mosquitto 2>&1 | grep -q " running" && exit 0; \
+		[ "$$(docker inspect -f '{{.State.Running}}' skuhus-dev-mosquitto)" = true ] || break; \
+		sleep 1; \
+	done; \
+	echo "mosquitto did not start:"; docker logs skuhus-dev-mosquitto 2>&1 | tail -5; exit 1
 	@echo "mosquitto at skuhus-dev-mosquitto:1883; use BROKER=skuhus-dev-mosquitto:1883"
 
 # The broker, the credentials and the topic to watch. Override any of them to
