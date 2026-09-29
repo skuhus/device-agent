@@ -14,7 +14,7 @@ import (
 )
 
 // EnvPrefix is the prefix for every environment override.
-const EnvPrefix = "SH_DEV_SER_SCANNER_"
+const EnvPrefix = "SH_DEV_AGENT_"
 
 // EnvConfigPath names the config file, equivalent to the --config flag.
 const EnvConfigPath = EnvPrefix + "CONFIG"
@@ -67,7 +67,7 @@ type Options struct {
 //
 // It returns the merged configuration and any non-fatal warnings. An error is
 // returned for a missing or unreadable file, an unknown key, an unrecognised
-// SH_DEV_SER_SCANNER_* variable, or any validation failure; the error text names
+// SH_DEV_AGENT_* variable, or any validation failure; the error text names
 // every problem found rather than only the first.
 func Load(opts Options) (*Config, []Warning, error) {
 	environ := opts.Environ
@@ -142,7 +142,7 @@ func decode(r io.Reader) (*Config, error) {
 	return &cfg, nil
 }
 
-// EnvMap selects the SH_DEV_SER_SCANNER_* variables from a KEY=VALUE list. The
+// EnvMap selects the SH_DEV_AGENT_* variables from a KEY=VALUE list. The
 // transport needs it to read credentials, which are deliberately not part of
 // Config.
 func EnvMap(environ []string) map[string]string { return envMap(environ) }

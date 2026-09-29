@@ -2,7 +2,7 @@
 // section 5.1: it proves, against a real broker, that the MQTT 5 features the
 // agent depends on behave as the specification assumes.
 //
-// It is a spike rather than part of the agent. Nothing in cmd/skuhus-device-serial-scanner
+// It is a spike rather than part of the agent. Nothing in cmd/skuhus-device-agent
 // imports it, and it is not built by "make build". It exists so the answer to
 // "does the broker do message expiry" is a measurement rather than a belief,
 // and so the measurement can be repeated when the broker is upgraded.

@@ -91,7 +91,7 @@ jobs:
         run: |
           go build -trimpath \
             -ldflags "-s -w -X main.commit=${GITHUB_SHA} -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            -o /dev/null ./cmd/skuhus-device-serial-scanner
+            -o /dev/null ./cmd/skuhus-device-agent
 
   image:
     runs-on: ubuntu-latest
@@ -107,19 +107,19 @@ jobs:
             --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --label org.opencontainers.image.version="$version" \
             --label org.opencontainers.image.revision="${GITHUB_SHA}" \
-            -t skuhus-device-serial-scanner:"$version" .
+            -t skuhus-device-agent:"$version" .
 
       # The label is applied at build time and the version is compiled in, so
       # this is what keeps the two from drifting apart.
       - name: the image reports the version in source
         run: |
           version="$(make version)"
-          reported="$(docker run --rm skuhus-device-serial-scanner:"$version" version)"
-          label="$(docker inspect skuhus-device-serial-scanner:"$version" --format '{{index .Config.Labels "org.opencontainers.image.version"}}')"
+          reported="$(docker run --rm skuhus-device-agent:"$version" version)"
+          label="$(docker inspect skuhus-device-agent:"$version" --format '{{index .Config.Labels "org.opencontainers.image.version"}}')"
           echo "label $label"
           [ "$label" = "$version" ] || { echo "the image label says $label, source says $version"; exit 1; }
           echo "$reported"
           case "$reported" in
-            "skuhus-device-serial-scanner $version "*) ;;
+            "skuhus-device-agent $version "*) ;;
             *) echo "the image reports something other than $version"; exit 1 ;;
           esac

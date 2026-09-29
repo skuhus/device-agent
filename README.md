@@ -1,4 +1,4 @@
-# device-serial-scanner
+# device-agent
 
 Device agent that gives network access to devices physically attached to a host.
 Phase 1 covers wired barcode scanners in USB-CDC mode.
@@ -41,7 +41,7 @@ Everything runs in Docker; nothing installs a toolchain on the host.
 
 ```
 make              # the target list, with one line each
-make build        # dist/skuhus-device-serial-scanner for this platform
+make build        # dist/skuhus-device-agent for this platform
 make test         # go test -race across all packages
 make check        # gofmt, go vet, go mod tidy and the tests; what CI runs
 make cross        # all release targets: linux amd64/arm64/armv7/armv6, darwin amd64/arm64
@@ -129,7 +129,7 @@ run `make spike-mqtt5` against the same broker.
 ## Running
 
 ```
-skuhus-device-serial-scanner run --config /etc/skuhus-device-serial-scanner/config.yaml
+skuhus-device-agent run --config /etc/skuhus-device-agent/config.yaml
 ```
 
 Opens the configured devices, connects to the broker, and publishes until
@@ -151,7 +151,7 @@ username=station-pack-03
 password=...
 ```
 
-or from `SH_DEV_SER_SCANNER_MQTT_USERNAME` and `SH_DEV_SER_SCANNER_MQTT_PASSWORD`, which
+or from `SH_DEV_AGENT_MQTT_USERNAME` and `SH_DEV_AGENT_MQTT_PASSWORD`, which
 override the file. There is no flag for them, because `ps` would expose them to
 every user on the host.
 
@@ -161,7 +161,7 @@ every user on the host.
 make image
 ```
 
-Builds `skuhus-device-serial-scanner:<version>`, tagged and labelled with the version compiled
+Builds `skuhus-device-agent:<version>`, tagged and labelled with the version compiled
 into the binary. The Makefile is the one place that reads that version; CI
 asserts that the label and what the binary reports still agree.
 
@@ -171,7 +171,7 @@ Without make:
 docker build \
   --build-arg COMMIT="$(git rev-parse HEAD)" \
   --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-  -t skuhus-device-serial-scanner:local .
+  -t skuhus-device-agent:local .
 ```
 
 The runtime image is Alpine, about 26MB, running as uid 65532. Alpine rather
@@ -182,21 +182,21 @@ diagnosing those means running `id` and `ls -l /dev` on the station where it is
 happening.
 
 ```
-docker exec skuhus-device-serial-scanner sh -c 'id; ls -l /dev/scanner'
-docker run --rm --device /dev/ttyACM0 skuhus-device-serial-scanner:local probe --list
+docker exec skuhus-device-agent sh -c 'id; ls -l /dev/scanner'
+docker run --rm --device /dev/ttyACM0 skuhus-device-agent:local probe --list
 ```
 
 ### Running it
 
 ```
-docker run -d --name skuhus-device-serial-scanner --restart unless-stopped \
+docker run -d --name skuhus-device-agent --restart unless-stopped \
   --device "$(readlink -f /dev/serial/by-id/usb-Symbol_Bar_Code_Scanner-if00):/dev/scanner" \
   --group-add "$(stat -c %g "$(readlink -f /dev/serial/by-id/usb-Symbol_Bar_Code_Scanner-if00)")" \
-  -v /etc/skuhus-device-serial-scanner:/etc/skuhus-device-serial-scanner:ro \
-  -v skuhus-device-serial-scanner-audit:/var/log/skuhus-device-serial-scanner \
-  -e SH_DEV_SER_SCANNER_MQTT_USERNAME=station-pack-03 \
-  -e SH_DEV_SER_SCANNER_MQTT_PASSWORD=... \
-  skuhus-device-serial-scanner:local
+  -v /etc/skuhus-device-agent:/etc/skuhus-device-agent:ro \
+  -v skuhus-device-agent-audit:/var/log/skuhus-device-agent \
+  -e SH_DEV_AGENT_MQTT_USERNAME=station-pack-03 \
+  -e SH_DEV_AGENT_MQTT_PASSWORD=... \
+  skuhus-device-agent:local
 ```
 
 Four things in that command are not decoration:
@@ -209,10 +209,10 @@ Four things in that command are not decoration:
 - **`--group-add`.** The device node is owned by a group - `dialout` on Debian -
   and uid 65532 is in no groups. Without this the agent reports
   `error_class=permission_denied` and retries forever.
-- **The config is mounted read-only**, at `/etc/skuhus-device-serial-scanner`. The image ships
+- **The config is mounted read-only**, at `/etc/skuhus-device-agent`. The image ships
   `config.sample.yaml` in that directory as a reference; the file the agent
   reads is `config.yaml`, which comes from the host.
-- **The audit log needs a writable mount** at `/var/log/skuhus-device-serial-scanner`, owned by
+- **The audit log needs a writable mount** at `/var/log/skuhus-device-agent`, owned by
   65532. A named volume gets this right; a host path needs
   `chown 65532:65532`.
 
@@ -248,9 +248,9 @@ would make the next merge skip a release that never happened.
 Every release carries, for each of linux amd64/arm64/armv7/armv6 and darwin
 amd64/arm64:
 
-- `skuhus-device-serial-scanner-<version>-<os>-<arch>.tar.gz`, holding the binary, the sample
+- `skuhus-device-agent-<version>-<os>-<arch>.tar.gz`, holding the binary, the sample
   config, the README and the licence
-- `skuhus-device-serial-scanner-<version>-<os>-<arch>`, the bare binary, for updating a station
+- `skuhus-device-agent-<version>-<os>-<arch>`, the bare binary, for updating a station
   in place
 - one `checksums.txt` covering all of them
 
@@ -270,11 +270,11 @@ make consume                                    # watch every topic
 ```
 
 ```
-make cross                                      # dist/skuhus-device-serial-scanner-darwin-arm64
-mkdir -p /tmp/skuhus-device-serial-scanner
-SH_DEV_SER_SCANNER_MQTT_USERNAME=station-pack-03 \
-SH_DEV_SER_SCANNER_MQTT_PASSWORD=pack-03-dev \
-  ./dist/skuhus-device-serial-scanner-darwin-arm64 run --config dev/agent.local.yaml
+make cross                                      # dist/skuhus-device-agent-darwin-arm64
+mkdir -p /tmp/skuhus-device-agent
+SH_DEV_AGENT_MQTT_USERNAME=station-pack-03 \
+SH_DEV_AGENT_MQTT_PASSWORD=pack-03-dev \
+  ./dist/skuhus-device-agent-darwin-arm64 run --config dev/agent.local.yaml
 ```
 
 `dev/agent.local.yaml` points at the local broker and at a Symbol 05e0:1701 on
@@ -303,16 +303,16 @@ injected, because source cannot know them.
 ## Configuration
 
 `config.sample.yaml` documents every setting. Install it at
-`/etc/skuhus-device-serial-scanner/config.yaml` on Linux or
-`/usr/local/etc/skuhus-device-serial-scanner/config.yaml` on macOS.
+`/etc/skuhus-device-agent/config.yaml` on Linux or
+`/usr/local/etc/skuhus-device-agent/config.yaml` on macOS.
 
-Precedence is CLI flags, then `SH_DEV_SER_SCANNER_*` environment variables, then the
-config file, then defaults. Unknown keys and unrecognised `SH_DEV_SER_SCANNER_*`
+Precedence is CLI flags, then `SH_DEV_AGENT_*` environment variables, then the
+config file, then defaults. Unknown keys and unrecognised `SH_DEV_AGENT_*`
 variables are both fatal. Broker credentials are never accepted as CLI
 arguments, because `ps` would expose them to every user on the host.
 
 ```
-skuhus-device-serial-scanner validate --config /etc/skuhus-device-serial-scanner/config.yaml
+skuhus-device-agent validate --config /etc/skuhus-device-agent/config.yaml
 ```
 
 Every problem is reported in one pass, so a misconfigured station is fixed
@@ -324,7 +324,7 @@ exit code.
 `probe` is the tool to reach for first when a station is not scanning.
 
 ```
-skuhus-device-serial-scanner probe --list
+skuhus-device-agent probe --list
 ```
 
 Enumerates the device nodes this host offers, and the `/dev/serial/by-id` and
@@ -332,8 +332,8 @@ Enumerates the device nodes this host offers, and the `/dev/serial/by-id` and
 kernel-assigned names.
 
 ```
-skuhus-device-serial-scanner probe --device scanner-main
-skuhus-device-serial-scanner probe --path /dev/serial/by-id/usb-Honeywell_1470g-if00 --terminator '\r'
+skuhus-device-agent probe --device scanner-main
+skuhus-device-agent probe --path /dev/serial/by-id/usb-Honeywell_1470g-if00 --terminator '\r'
 ```
 
 Opens one device and prints every framed payload as hex and as text, saying
@@ -358,7 +358,7 @@ is not written yet (M5).
 ## Layout
 
 ```
-cmd/skuhus-device-serial-scanner/          main, flags, subcommands
+cmd/skuhus-device-agent/          main, flags, subcommands
 internal/config/           load, validate, defaults
 internal/device/           Device interface
 internal/device/serial/    CDC / RS-232 implementation, framing, PTY harness

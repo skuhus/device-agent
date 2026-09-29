@@ -1,14 +1,14 @@
-# skuhus-device-serial-scanner configuration.
+# skuhus-device-agent configuration.
 #
-# Install at /etc/skuhus-device-serial-scanner/config.yaml on Linux, or
-# /usr/local/etc/skuhus-device-serial-scanner/config.yaml on macOS.
+# Install at /etc/skuhus-device-agent/config.yaml on Linux, or
+# /usr/local/etc/skuhus-device-agent/config.yaml on macOS.
 #
-# Precedence is CLI flags, then SH_DEV_SER_SCANNER_* environment variables, then this
+# Precedence is CLI flags, then SH_DEV_AGENT_* environment variables, then this
 # file, then built-in defaults. Unknown keys are rejected: a typo that is
 # ignored leaves a station running settings nobody chose.
 #
 # Check a change before restarting the agent:
-#   skuhus-device-serial-scanner validate --config /etc/skuhus-device-serial-scanner/config.yaml
+#   skuhus-device-agent validate --config /etc/skuhus-device-agent/config.yaml
 
 identity:
   # The station identity. It comes from here and nowhere else; the hostname is
@@ -34,8 +34,8 @@ broker:
   url: tls://mq.internal:8883
 
   # Per-station credentials, never a shared fleet user. Mode 0600; a file any
-  # other user can read is rejected at startup. Set SH_DEV_SER_SCANNER_MQTT_USERNAME
-  # and SH_DEV_SER_SCANNER_MQTT_PASSWORD instead if credentials come from the
+  # other user can read is rejected at startup. Set SH_DEV_AGENT_MQTT_USERNAME
+  # and SH_DEV_AGENT_MQTT_PASSWORD instead if credentials come from the
   # environment; they override the file. There is no CLI flag for credentials:
   # ps would expose them.
   #
@@ -46,10 +46,10 @@ broker:
   #
   # The password is everything after the first "=", including any trailing
   # space, so that a password containing one still works.
-  credentials_file: /etc/skuhus-device-serial-scanner/credentials
+  credentials_file: /etc/skuhus-device-agent/credentials
 
   # Pinned CA bundle for the broker certificate. Optional.
-  # ca_file: /etc/skuhus-device-serial-scanner/ca.pem
+  # ca_file: /etc/skuhus-device-agent/ca.pem
 
   # Development only. Allows a plaintext URL and skips certificate
   # verification, and is logged at WARN on every reconnect.
@@ -68,7 +68,7 @@ devices:
     kind: serial
 
     # A stable path. /dev/ttyACM0 moves between reboots and replug order, so it
-    # is accepted but warned about. Run "skuhus-device-serial-scanner probe --list" to see the
+    # is accepted but warned about. Run "skuhus-device-agent probe --list" to see the
     # by-id and by-path names this host offers.
     path: /dev/serial/by-id/usb-Honeywell_1470g-if00
 
@@ -128,6 +128,6 @@ logging:
   # holds it; a scan that was delivered is recorded by length only. Not a replay
   # source.
   # The directory must already exist; the agent will not create it.
-  audit_file: /var/log/skuhus-device-serial-scanner/audit.log
+  audit_file: /var/log/skuhus-device-agent/audit.log
   audit_max_size_mb: 64
   audit_keep: 7

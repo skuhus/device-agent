@@ -17,7 +17,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/skuhus/device-serial-scanner/internal/device"
+	"github.com/skuhus/device-agent/internal/device"
 	goserial "go.bug.st/serial"
 )
 

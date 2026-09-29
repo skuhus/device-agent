@@ -5,14 +5,14 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/skuhus/device-serial-scanner/internal/config"
+	"github.com/skuhus/device-agent/internal/config"
 )
 
 func runValidate(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("validate", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() {
-		fmt.Fprint(fs.Output(), "Usage: skuhus-device-serial-scanner validate [flags]\n\n"+
+		fmt.Fprint(fs.Output(), "Usage: skuhus-device-agent validate [flags]\n\n"+
 			"Loads the configuration, applies environment and flag overrides, and\n"+
 			"reports every problem found. Exits 0 only when the configuration is\n"+
 			"usable. Warnings do not affect the exit code.\n\n")

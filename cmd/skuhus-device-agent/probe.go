@@ -14,12 +14,12 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/skuhus/device-serial-scanner/internal/config"
-	"github.com/skuhus/device-serial-scanner/internal/device"
-	serialdev "github.com/skuhus/device-serial-scanner/internal/device/serial"
-	"github.com/skuhus/device-serial-scanner/internal/event"
-	"github.com/skuhus/device-serial-scanner/internal/logging"
-	buildinfo "github.com/skuhus/device-serial-scanner/internal/version"
+	"github.com/skuhus/device-agent/internal/config"
+	"github.com/skuhus/device-agent/internal/device"
+	serialdev "github.com/skuhus/device-agent/internal/device/serial"
+	"github.com/skuhus/device-agent/internal/event"
+	"github.com/skuhus/device-agent/internal/logging"
+	buildinfo "github.com/skuhus/device-agent/internal/version"
 	goserial "go.bug.st/serial"
 )
 
@@ -27,7 +27,7 @@ func runProbe(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("probe", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() {
-		fmt.Fprint(fs.Output(), "Usage: skuhus-device-serial-scanner probe [flags]\n\n"+
+		fmt.Fprint(fs.Output(), "Usage: skuhus-device-agent probe [flags]\n\n"+
 			"With --list, enumerates candidate serial devices and the stable paths\n"+
 			"that point at them. Otherwise opens one device and prints every framed\n"+
 			"payload to stdout until interrupted.\n\n"+

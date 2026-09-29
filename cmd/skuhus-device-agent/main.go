@@ -1,4 +1,4 @@
-// Command skuhus-device-serial-scanner gives network access to devices physically attached to a
+// Command skuhus-device-agent gives network access to devices physically attached to a
 // host. It is a transport shim: it moves bytes and adds an envelope, and knows
 // nothing about what the bytes mean.
 package main
@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	buildinfo "github.com/skuhus/device-serial-scanner/internal/version"
+	buildinfo "github.com/skuhus/device-agent/internal/version"
 )
 
 // Injected by the linker at build time. The version is not among them: it lives
@@ -22,10 +22,10 @@ var (
 	date   string
 )
 
-const usage = `skuhus-device-serial-scanner - SKU Hus serial scanner device agent
+const usage = `skuhus-device-agent - SKU Hus serial scanner device agent
 
 Usage:
-  skuhus-device-serial-scanner <command> [flags]
+  skuhus-device-agent <command> [flags]
 
 Commands:
   run        Open the configured devices, connect to the broker, and publish
@@ -36,9 +36,9 @@ Commands:
              This is the field diagnosis tool.
   version    Print the build identity.
 
-Run "skuhus-device-serial-scanner <command> -h" for the flags of a command.
+Run "skuhus-device-agent <command> -h" for the flags of a command.
 
-Configuration precedence is CLI flags, then SH_DEV_SER_SCANNER_* environment
+Configuration precedence is CLI flags, then SH_DEV_AGENT_* environment
 variables, then the config file, then defaults. Broker credentials are never
 accepted as CLI arguments, because ps exposes them to every user on the host.
 `

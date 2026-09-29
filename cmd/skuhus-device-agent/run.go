@@ -11,26 +11,26 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/skuhus/device-serial-scanner/internal/agent"
-	"github.com/skuhus/device-serial-scanner/internal/config"
-	"github.com/skuhus/device-serial-scanner/internal/device"
-	serialdev "github.com/skuhus/device-serial-scanner/internal/device/serial"
-	"github.com/skuhus/device-serial-scanner/internal/event"
-	"github.com/skuhus/device-serial-scanner/internal/logging"
-	"github.com/skuhus/device-serial-scanner/internal/transport/mqtt"
-	buildinfo "github.com/skuhus/device-serial-scanner/internal/version"
+	"github.com/skuhus/device-agent/internal/agent"
+	"github.com/skuhus/device-agent/internal/config"
+	"github.com/skuhus/device-agent/internal/device"
+	serialdev "github.com/skuhus/device-agent/internal/device/serial"
+	"github.com/skuhus/device-agent/internal/event"
+	"github.com/skuhus/device-agent/internal/logging"
+	"github.com/skuhus/device-agent/internal/transport/mqtt"
+	buildinfo "github.com/skuhus/device-agent/internal/version"
 )
 
 func runRun(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() {
-		fmt.Fprint(fs.Output(), "Usage: skuhus-device-serial-scanner run [flags]\n\n"+
+		fmt.Fprint(fs.Output(), "Usage: skuhus-device-agent run [flags]\n\n"+
 			"Opens the configured devices, connects to the broker, and publishes\n"+
 			"scans until stopped. SIGTERM and SIGINT drain what is already framed,\n"+
 			"publish an offline status and disconnect.\n\n"+
 			"Broker credentials come from broker.credentials_file or from\n"+
-			"SH_DEV_SER_SCANNER_MQTT_USERNAME and SH_DEV_SER_SCANNER_MQTT_PASSWORD. There is\n"+
+			"SH_DEV_AGENT_MQTT_USERNAME and SH_DEV_AGENT_MQTT_PASSWORD. There is\n"+
 			"no flag for them: ps would expose them to every user on the host.\n\n")
 		fs.PrintDefaults()
 	}

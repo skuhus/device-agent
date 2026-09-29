@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/skuhus/device-serial-scanner/internal/device"
-	"github.com/skuhus/device-serial-scanner/internal/event"
-	"github.com/skuhus/device-serial-scanner/internal/logging"
+	"github.com/skuhus/device-agent/internal/device"
+	"github.com/skuhus/device-agent/internal/event"
+	"github.com/skuhus/device-agent/internal/logging"
 )
 
 // fakePublisher records what the supervisor sent, and can be made to fail or to

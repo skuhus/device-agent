@@ -23,7 +23,7 @@ func TestRunHelpMentionsCredentialHandling(t *testing.T) {
 		t.Fatal("expected flag.ErrHelp")
 	}
 	help := stderr.String()
-	for _, want := range []string{"SH_DEV_SER_SCANNER_MQTT_PASSWORD", "no flag for them", "SIGTERM"} {
+	for _, want := range []string{"SH_DEV_AGENT_MQTT_PASSWORD", "no flag for them", "SIGTERM"} {
 		if !strings.Contains(help, want) {
 			t.Errorf("run help does not mention %q:\n%s", want, help)
 		}

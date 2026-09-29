@@ -15,7 +15,7 @@ package version
 const version = "0.3.0"
 
 // Commit and date are the one part of the identity source cannot know, so they
-// are injected from cmd/skuhus-device-serial-scanner via Set, out of
+// are injected from cmd/skuhus-device-agent via Set, out of
 // -ldflags -X main.commit / main.date.
 var (
 	commit = "none"
@@ -44,5 +44,5 @@ func Date() string { return date }
 
 // String renders the full build identity for the version subcommand.
 func String() string {
-	return "skuhus-device-serial-scanner " + version + " commit=" + commit + " built=" + date
+	return "skuhus-device-agent " + version + " commit=" + commit + " built=" + date
 }

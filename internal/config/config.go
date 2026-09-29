@@ -1,8 +1,8 @@
 // Package config loads and validates the agent configuration.
 //
-// Precedence is CLI flags > environment (SH_DEV_SER_SCANNER_*) > config file >
+// Precedence is CLI flags > environment (SH_DEV_AGENT_*) > config file >
 // defaults. Loading is strict in both directions: an unknown key in the YAML
-// file and an unrecognised SH_DEV_SER_SCANNER_* variable are both errors, because a
+// file and an unrecognised SH_DEV_AGENT_* variable are both errors, because a
 // typo that is silently ignored produces a station running settings nobody
 // intended.
 package config

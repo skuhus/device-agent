@@ -220,7 +220,7 @@ func TestLoadRejectsUnknownEnvironmentVariable(t *testing.T) {
 	fixture := newFixture(t, validConfig)
 	_, _, err := load(t, fixture.path, []string{EnvPrefix + "IDENTITY_STATON=typo"}, Overrides{})
 	if err == nil {
-		t.Fatal("a misspelled SH_DEV_SER_SCANNER_ variable should be rejected")
+		t.Fatal("a misspelled SH_DEV_AGENT_ variable should be rejected")
 	}
 	if !strings.Contains(err.Error(), "IDENTITY_STATON") {
 		t.Errorf("error does not name the variable: %v", err)

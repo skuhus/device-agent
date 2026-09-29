@@ -25,8 +25,8 @@ const (
 	DefaultAuditMaxSizeMB = 64
 	DefaultAuditKeep      = 7
 
-	linuxConfigPath  = "/etc/skuhus-device-serial-scanner/config.yaml"
-	darwinConfigPath = "/usr/local/etc/skuhus-device-serial-scanner/config.yaml"
+	linuxConfigPath  = "/etc/skuhus-device-agent/config.yaml"
+	darwinConfigPath = "/usr/local/etc/skuhus-device-agent/config.yaml"
 )
 
 // DefaultPath is the platform config file location.

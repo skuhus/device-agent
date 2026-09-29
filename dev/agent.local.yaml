@@ -3,10 +3,10 @@
 # and for what every setting means.
 #
 #   make broker-up
-#   mkdir -p /tmp/skuhus-device-serial-scanner
-#   SH_DEV_SER_SCANNER_MQTT_USERNAME=station-pack-03 \
-#   SH_DEV_SER_SCANNER_MQTT_PASSWORD=pack-03-dev \
-#     ./dist/skuhus-device-serial-scanner-darwin-arm64 run --config dev/agent.local.yaml
+#   mkdir -p /tmp/skuhus-device-agent
+#   SH_DEV_AGENT_MQTT_USERNAME=station-pack-03 \
+#   SH_DEV_AGENT_MQTT_PASSWORD=pack-03-dev \
+#     ./dist/skuhus-device-agent-darwin-arm64 run --config dev/agent.local.yaml
 #
 # The credentials come from the environment rather than a file, so running this
 # needs no secret on disk. They are the development fixtures in
@@ -28,7 +28,7 @@ devices:
   - id: scanner-main
     kind: serial
 
-    # The Symbol 05e0:1701 on a Mac. Run "skuhus-device-serial-scanner probe --list" to find
+    # The Symbol 05e0:1701 on a Mac. Run "skuhus-device-agent probe --list" to find
     # the path on this host; it changes with the USB port.
     path: /dev/cu.usbmodem21101
 
@@ -50,4 +50,4 @@ logging:
   # a device frames nothing.
   log_payloads: false
   # The directory must already exist; the agent will not create it.
-  audit_file: /tmp/skuhus-device-serial-scanner/audit.log
+  audit_file: /tmp/skuhus-device-agent/audit.log

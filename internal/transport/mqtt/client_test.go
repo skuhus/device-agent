@@ -98,7 +98,7 @@ func TestTLSConfigPlaintextSchemeHasNoTLS(t *testing.T) {
 // encrypted when it is not. That is worth failing over rather than ignoring.
 func TestTLSConfigRejectsCAFileOnPlaintextURL(t *testing.T) {
 	u, _ := url.Parse("tcp://localhost:1883")
-	_, err := tlsConfig(u, "/etc/skuhus-device-serial-scanner/ca.pem", false)
+	_, err := tlsConfig(u, "/etc/skuhus-device-agent/ca.pem", false)
 	if err == nil {
 		t.Fatal("expected an error")
 	}

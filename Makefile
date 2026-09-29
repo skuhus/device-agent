@@ -5,8 +5,8 @@
 
 GO_IMAGE       ?= golang:1.25
 RABBITMQ_IMAGE ?= rabbitmq:4.3.5-management
-BIN            ?= skuhus-device-serial-scanner
-IMAGE          ?= skuhus-device-serial-scanner
+BIN            ?= skuhus-device-agent
+IMAGE          ?= skuhus-device-agent
 
 # The version is defined once, in Go source. This reads it; it is never injected.
 VERSION := $(shell sed -n 's/^const version = "\(.*\)"/\1/p' internal/version/version.go)
@@ -20,8 +20,8 @@ PLATFORMS = linux/amd64 linux/arm64 linux/arm/7 linux/arm/6 darwin/amd64 darwin/
 # One network for everything in the development environment, so a container can
 # always reach the broker by name.
 NETWORK    := skuhus-dev
-MOD_CACHE  := skuhus-device-serial-scanner-gomodcache
-BUILD_CACHE := skuhus-device-serial-scanner-gobuildcache
+MOD_CACHE  := skuhus-device-agent-gomodcache
+BUILD_CACHE := skuhus-device-agent-gobuildcache
 
 # GO runs one command in the toolchain image with the module and build caches
 # mounted and the source at /src. GO_NET is the same on the development network.
@@ -66,7 +66,7 @@ caches:
 
 .PHONY: build
 build: caches
-	$(GO) env CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o dist/$(BIN) ./cmd/skuhus-device-serial-scanner
+	$(GO) env CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o dist/$(BIN) ./cmd/skuhus-device-agent
 	@echo "built dist/$(BIN) version=$(VERSION)"
 
 # Cross-compiling every target on every check catches an arm-only breakage
@@ -79,7 +79,7 @@ cross: caches
 		out=dist/$(BIN)-$$os-$$arch$${arm:+v$$arm}; \
 		echo "building $$out"; \
 		$(GO) env CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch GOARM=$$arm \
-			go build -trimpath -ldflags "$(LDFLAGS)" -o $$out ./cmd/skuhus-device-serial-scanner || exit 1; \
+			go build -trimpath -ldflags "$(LDFLAGS)" -o $$out ./cmd/skuhus-device-agent || exit 1; \
 	done
 	@ls -la dist/
 

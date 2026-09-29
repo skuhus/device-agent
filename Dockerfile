@@ -28,7 +28,7 @@ ARG TARGETVARIANT=
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH GOARM=${TARGETVARIANT#v} \
     go build -trimpath \
     -ldflags "-s -w -X main.commit=$COMMIT -X main.date=$BUILD_DATE" \
-    -o /out/skuhus-device-serial-scanner ./cmd/skuhus-device-serial-scanner
+    -o /out/skuhus-device-agent ./cmd/skuhus-device-agent
 
 # Alpine rather than a distroless or scratch base, deliberately. This agent
 # fails in ways that live outside the process: a device node owned by a group
@@ -44,28 +44,28 @@ RUN apk add --no-cache ca-certificates tzdata
 
 # A fixed uid and gid, so a host directory mounted for the audit log can be
 # chowned to a number that does not change between builds.
-RUN addgroup -S -g 65532 skuhus-device-serial-scanner \
- && adduser -S -D -H -u 65532 -G skuhus-device-serial-scanner \
-      -s /sbin/nologin skuhus-device-serial-scanner \
- && mkdir -p /etc/skuhus-device-serial-scanner /var/log/skuhus-device-serial-scanner \
- && chown skuhus-device-serial-scanner:skuhus-device-serial-scanner /var/log/skuhus-device-serial-scanner
+RUN addgroup -S -g 65532 skuhus-device-agent \
+ && adduser -S -D -H -u 65532 -G skuhus-device-agent \
+      -s /sbin/nologin skuhus-device-agent \
+ && mkdir -p /etc/skuhus-device-agent /var/log/skuhus-device-agent \
+ && chown skuhus-device-agent:skuhus-device-agent /var/log/skuhus-device-agent
 
-COPY --from=build /out/skuhus-device-serial-scanner /usr/local/bin/skuhus-device-serial-scanner
-COPY config.sample.yaml /etc/skuhus-device-serial-scanner/config.sample.yaml
+COPY --from=build /out/skuhus-device-agent /usr/local/bin/skuhus-device-agent
+COPY config.sample.yaml /etc/skuhus-device-agent/config.sample.yaml
 
 # Facts that do not vary with the build. The version and the commit are passed
 # as --label at build time by the Makefile, which is the one place that reads
 # the version; putting them here would mean a second reader that can drift.
-LABEL org.opencontainers.image.title="skuhus-device-serial-scanner" \
+LABEL org.opencontainers.image.title="skuhus-device-agent" \
       org.opencontainers.image.description="Device agent that publishes barcode scans over MQTT" \
-      org.opencontainers.image.source="https://github.com/skuhus/device-serial-scanner" \
+      org.opencontainers.image.source="https://github.com/skuhus/device-agent" \
       org.opencontainers.image.licenses="MIT"
 
 # No VOLUME instruction: it would create an anonymous volume on every run that
 # did not mount over it, and those accumulate unnoticed. Two paths want mounting
-# and the README says so - /etc/skuhus-device-serial-scanner read-only for the config, and
-# /var/log/skuhus-device-serial-scanner writable for the audit log.
+# and the README says so - /etc/skuhus-device-agent read-only for the config, and
+# /var/log/skuhus-device-agent writable for the audit log.
 
-USER skuhus-device-serial-scanner
-ENTRYPOINT ["skuhus-device-serial-scanner"]
-CMD ["run", "--config", "/etc/skuhus-device-serial-scanner/config.yaml"]
+USER skuhus-device-agent
+ENTRYPOINT ["skuhus-device-agent"]
+CMD ["run", "--config", "/etc/skuhus-device-agent/config.yaml"]

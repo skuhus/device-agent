@@ -17,10 +17,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/skuhus/device-serial-scanner/internal/device"
-	"github.com/skuhus/device-serial-scanner/internal/event"
-	"github.com/skuhus/device-serial-scanner/internal/logging"
-	"github.com/skuhus/device-serial-scanner/internal/transport/mqtt"
+	"github.com/skuhus/device-agent/internal/device"
+	"github.com/skuhus/device-agent/internal/event"
+	"github.com/skuhus/device-agent/internal/logging"
+	"github.com/skuhus/device-agent/internal/transport/mqtt"
 )
 
 // DefaultDrainTimeout bounds the shutdown drain. A scan is perishable, so

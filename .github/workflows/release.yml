@@ -89,18 +89,18 @@ jobs:
           for platform in linux/amd64 linux/arm64 linux/arm/7 linux/arm/6 darwin/amd64 darwin/arm64; do
             os="${platform%%/*}"; rest="${platform#*/}"; arch="${rest%%/*}"; arm="${rest#*/}"
             [ "$arm" = "$arch" ] && arm=""
-            name="skuhus-device-serial-scanner-${version}-${os}-${arch}${arm:+v$arm}"
+            name="skuhus-device-agent-${version}-${os}-${arch}${arm:+v$arm}"
             echo "building $name"
             mkdir -p "build/$name"
             GOOS="$os" GOARCH="$arch" GOARM="$arm" go build -trimpath \
               -ldflags "-s -w -X main.commit=${GITHUB_SHA} -X main.date=${date}" \
-              -o "build/$name/skuhus-device-serial-scanner" ./cmd/skuhus-device-serial-scanner
+              -o "build/$name/skuhus-device-agent" ./cmd/skuhus-device-agent
             # Both shapes are attached to the release: the archive for an
             # install that wants the sample config beside the binary, and the
             # bare binary for a station being updated in place.
             cp config.sample.yaml README.md LICENSE "build/$name/"
             tar -czf "dist/${name}.tar.gz" -C build "$name"
-            cp "build/$name/skuhus-device-serial-scanner" "dist/${name}"
+            cp "build/$name/skuhus-device-agent" "dist/${name}"
           done
           cd dist && sha256sum ./* > checksums.txt && cat checksums.txt
 
@@ -113,12 +113,12 @@ jobs:
             --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --label org.opencontainers.image.version="$version" \
             --label org.opencontainers.image.revision="${GITHUB_SHA}" \
-            -t "ghcr.io/${GITHUB_REPOSITORY_OWNER}/skuhus-device-serial-scanner:${version}" \
-            -t "ghcr.io/${GITHUB_REPOSITORY_OWNER}/skuhus-device-serial-scanner:latest" .
-          reported="$(docker run --rm "ghcr.io/${GITHUB_REPOSITORY_OWNER}/skuhus-device-serial-scanner:${version}" version)"
+            -t "ghcr.io/${GITHUB_REPOSITORY_OWNER}/skuhus-device-agent:${version}" \
+            -t "ghcr.io/${GITHUB_REPOSITORY_OWNER}/skuhus-device-agent:latest" .
+          reported="$(docker run --rm "ghcr.io/${GITHUB_REPOSITORY_OWNER}/skuhus-device-agent:${version}" version)"
           echo "$reported"
           case "$reported" in
-            "skuhus-device-serial-scanner $version "*) ;;
+            "skuhus-device-agent $version "*) ;;
             *) echo "the image reports something other than $version"; exit 1 ;;
           esac
 
@@ -128,8 +128,8 @@ jobs:
           set -eu
           version="${{ steps.version.outputs.version }}"
           echo "${{ github.token }}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
-          docker push "ghcr.io/${GITHUB_REPOSITORY_OWNER}/skuhus-device-serial-scanner:${version}"
-          docker push "ghcr.io/${GITHUB_REPOSITORY_OWNER}/skuhus-device-serial-scanner:latest"
+          docker push "ghcr.io/${GITHUB_REPOSITORY_OWNER}/skuhus-device-agent:${version}"
+          docker push "ghcr.io/${GITHUB_REPOSITORY_OWNER}/skuhus-device-agent:latest"
 
       # The tag is created by the release itself, so a tag and a release always
       # appear together: a tag pushed separately would survive a failed publish
