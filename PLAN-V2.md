@@ -17,7 +17,8 @@ that send no separator.
 
 ## Tracking
 
-Every task is a sub-issue of #4, in this order. T1 was finished before issues
+Every task is a sub-issue of #4, in this order: the order the tasks can be done
+in, each after the tasks it depends on. T11 therefore comes before T10. T1 was finished before issues
 were created for the plan, so it has none. #6 and #7 are sub-issues of #4 too,
 postponed beyond it, as are #20 (formerly T15), #26, #27 and #28. #24 and #25 are
 defects found in review, fixed within T11 and T4.
@@ -33,8 +34,8 @@ defects found in review, fixed within T11 and T4.
 | T7 | #12 | Core: reading and publishing |
 | T8 | #13 | Status channel and counters |
 | T9 | #14 | Common log |
-| T10 | #15 | End-to-end test in CI |
 | T11 | #16 | Development environment for v2 |
+| T10 | #15 | End-to-end test in CI |
 | T12 | #17 | Documentation |
 | T13 | #18 | Release 2.0.0 |
 | T14 | #19 | tx: receive and write |
@@ -47,13 +48,13 @@ defects found in review, fixed within T11 and T4.
 
     T1 commit docs ----+
     T2 decisions ------+--> T3 rename --> T4 tool modules
-                       |        |
-                       |        +--> T5 config --+
-                       |        +--> T6 messages +--> T7 core --> T8 status --+
-                       |                         |           +--> T9 logging  |
-                       |                         +--> T11 dev env ------------+--> T10 e2e --> T12 docs --> T13 release 2.0.0
-                       |
-                       +--> T14 tx --> T16 tx idempotency --> T18 release 2.1.0
+                                |
+                                +--> T5 config --+
+                                +--> T6 messages +--> T7 core --> T8 status --+
+                                                 |           +--> T9 logging  |
+                                                 +--> T11 dev env ------------+--> T10 e2e --> T12 docs --> T13 release 2.0.0
+                                                                                                            |
+                                                                                                            +--> T14 tx --> T16 tx idempotency --> T18 release 2.1.0
 
 T3 goes first among the code tasks so that every later pull request is written
 against the final names, and the rename is a single diff with no behaviour
@@ -103,6 +104,8 @@ depends on. Items that only affect phase 2 may stay open until T14 starts.
 
 ### T3. Rename to the device agent
 
+Status: done on branch gh-8-rename, not yet merged.
+
 Motivation. The repository is skuhus/device-agent, but the module path, binary,
 environment prefix, directories and image still carry the scanner's name
 (go.mod line 1; internal/config/load.go:17; Makefile lines 8-9). Renaming first
@@ -131,6 +134,8 @@ release workflow's build step use the new name.
 Depends on: T1, T2.
 
 ### T4. Give spike/ and dev/ their own modules
+
+Status: done on branch gh-9-tool-modules, not yet merged.
 
 Motivation. spike/mqtt5, spike/brokerinfo and dev/consumer are tools, not the
 agent, but they are packages of the agent's module. `go vet ./...` and `go test
@@ -198,6 +203,9 @@ Depends on: T2, T3.
 
 ### T6. Topics and message formats
 
+Status: done on branch gh-11-message-formats, not yet merged; the maintainer
+reviewed the format section in #11.
+
 Motivation. The topics and the JSON messages are the contract that parsers,
 relays and the tx senders are built against. Writing them down before the code
 lets those services start in parallel and makes the contract reviewable on its
@@ -222,7 +230,7 @@ field is added, removed or renamed without the section changing. A wildcard
 subscription to `skuhus/<project>/<site>/<station>/+/rx` receives messages from
 two devices on the development broker.
 
-Depends on: T2.
+Depends on: T2, T3.
 
 ### T7. Core: reading and publishing
 
@@ -315,29 +323,6 @@ the configured number of files.
 
 Depends on: T5, T7.
 
-### T10. End-to-end test in CI
-
-Motivation. The worst v1 defects were found only by running the agent against a
-broker by hand: the connection was torn down before the offline status could be
-sent (DESIGN.md, "The broker connection outlives the run context"), and a
-failed scan left nothing but its length in the audit log. The integration job
-the specification asks for (section 11) was never built.
-
-Work.
-- An integration test, behind the build tag `integration`, that starts the
-  pseudo-terminal device and a RabbitMQ 4.x broker, runs the agent, subscribes,
-  and asserts what arrives.
-- A CI job that runs it. Start the broker in a step after checkout with
-  `docker run`, mounting dev/rabbitmq/: GitHub service containers start before
-  checkout and cannot mount files from the repository, and the broker needs its
-  plugin list and definitions.
-
-Intended result. The CI job passes and covers: frames published to the right
-topics; device events; the will after SIGKILL; a failed publish recorded in the
-common log with its payload when the broker is stopped mid-run.
-
-Depends on: T7, T8, T11.
-
 ### T11. Development environment for v2
 
 Motivation. The development broker's permissions and the consumer are written
@@ -362,13 +347,34 @@ checked the way M0 checked topic permissions (docs/spikes/m0-mqtt5.md,
 
 Depends on: T5, T6.
 
+### T10. End-to-end test in CI
+
+Motivation. The worst v1 defects were found only by running the agent against a
+broker by hand: the connection was torn down before the offline status could be
+sent (DESIGN.md, "The broker connection outlives the run context"), and a
+failed scan left nothing but its length in the audit log. The integration job
+the specification asks for (section 11) was never built.
+
+Work.
+- An integration test, behind the build tag `integration`, that starts the
+  pseudo-terminal device and a RabbitMQ 4.x broker, runs the agent, subscribes,
+  and asserts what arrives.
+- A CI job that runs it. Start the broker in a step after checkout with
+  `docker run`, mounting dev/rabbitmq/: GitHub service containers start before
+  checkout and cannot mount files from the repository, and the broker needs its
+  plugin list and definitions.
+
+Intended result. The CI job passes and covers: frames published to the right
+topics; device events; the will after SIGKILL; a failed publish recorded in the
+common log with its payload when the broker is stopped mid-run.
+
+Depends on: T7, T8, T11.
+
 ### T12. Documentation
 
 Motivation. After phase 1, DESIGN.md describes topics and a supervisor that no
 longer exist, and README.md describes a scanner. Two design documents would
-disagree about the same product. Separately, AGENTS.md says the commit subject
-format lives in a README section called "Github naming convention", and README
-has no such section.
+disagree about the same product.
 
 Work.
 - Rewrite README.md for the device agent: running, configuration, container,
@@ -376,7 +382,6 @@ Work.
 - config.sample.yaml as T5 left it.
 - Move into DESIGN-V2.md the reasoning it currently borrows from DESIGN.md, then
   remove DESIGN.md, leaving one design document.
-- Add the "Github naming convention" section AGENTS.md refers to.
 
 Intended result. Every citation in DESIGN-V2.md resolves inside the tree. No
 document describes the scan, cmd or heartbeat topics.
