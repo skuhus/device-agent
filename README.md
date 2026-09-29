@@ -193,7 +193,7 @@ docker run -d --name skuhus-device-agent --restart unless-stopped \
   --device "$(readlink -f /dev/serial/by-id/usb-Symbol_Bar_Code_Scanner-if00):/dev/scanner" \
   --group-add "$(stat -c %g "$(readlink -f /dev/serial/by-id/usb-Symbol_Bar_Code_Scanner-if00)")" \
   -v /etc/skuhus-device-agent:/etc/skuhus-device-agent:ro \
-  -v skuhus-device-agent-audit:/var/log/skuhus-device-agent \
+  -v skuhus-device-agent-log:/var/log/skuhus-device-agent \
   -e SH_DEV_AGENT_MQTT_USERNAME=station-pack-03 \
   -e SH_DEV_AGENT_MQTT_PASSWORD=... \
   skuhus-device-agent:local
@@ -212,9 +212,9 @@ Four things in that command are not decoration:
 - **The config is mounted read-only**, at `/etc/skuhus-device-agent`. The image ships
   `config.sample.yaml` in that directory as a reference; the file the agent
   reads is `config.yaml`, which comes from the host.
-- **The audit log needs a writable mount** at `/var/log/skuhus-device-agent`, owned by
-  65532. A named volume gets this right; a host path needs
-  `chown 65532:65532`.
+- **The log file needs a writable mount** at `/var/log/skuhus-device-agent`,
+  owned by 65532, when `logging.file` is set. A named volume gets this right; a
+  host path needs `chown 65532:65532`.
 
 Credentials go in the environment or in a mounted credentials file. There is no
 flag for them, and a URL carrying them is rejected at startup.
@@ -327,7 +327,9 @@ config file, then defaults. Unknown keys and unrecognised `SH_DEV_AGENT_*`
 variables are both fatal. So are variables with an earlier release's prefix,
 `SKUHUS_AGENT_` or `SH_DEV_SER_SCANNER_`: an upgraded station that still sets
 them would otherwise run on its file's values in silence, so the error names the
-`SH_DEV_AGENT_` variable that replaces each one. Broker credentials are never
+`SH_DEV_AGENT_` variable that replaces each one. A key or variable that 2.0.0
+removed, such as `delivery.scan_ttl` or `logging.audit_file`, is rejected with
+what replaces it. Broker credentials are never
 accepted as CLI arguments, because `ps` would expose them to every user on the
 host.
 
@@ -353,7 +355,7 @@ kernel-assigned names.
 
 ```
 skuhus-device-agent probe --device scanner-main
-skuhus-device-agent probe --path /dev/serial/by-id/usb-Honeywell_1470g-if00 --terminator '\r'
+skuhus-device-agent probe --path /dev/serial/by-id/usb-Honeywell_1470g-if00 --separator '\r'
 ```
 
 Opens one device and prints every framed payload as hex and as text, saying
