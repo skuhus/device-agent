@@ -167,6 +167,9 @@ Depends on: T1, T3.
 
 ### T5. Configuration schema v2
 
+Status: done on branch gh-10-config, not yet merged. The v1 binary runs on the
+v2 schema until T7 and T9 replace its wiring.
+
 Motivation. The v1 schema is shaped around a scanner:
 - one delivery.scan_ttl for the whole process (internal/config/config.go:114);
 - assert_config, which is accepted and then only produces a warning that it is
@@ -338,7 +341,8 @@ Work.
 - dev/consumer prints rx, tx and status, decoding the payload. Fix #24 on the
   way: it keeps running silently after a connection error, and has a dead
   loop.
-- dev/agent.local.yaml in the v2 schema.
+- dev/agent.local.yaml is already in the v2 schema: T5 converted it, because
+  the schema change would otherwise have broken it.
 
 Intended result. `make broker-up` and `make consume` show a v2 agent's rx and
 status messages. A station user cannot publish to another station's tx topic,
