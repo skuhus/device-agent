@@ -19,7 +19,7 @@ that send no separator.
 
 Every task is a sub-issue of #4, in this order. T1 was finished before issues
 were created for the plan, so it has none. #6 and #7 are sub-issues of #4 too,
-postponed beyond it, as are #20 (formerly T15), #26 and #27. #24 and #25 are
+postponed beyond it, as are #20 (formerly T15), #26, #27 and #28. #24 and #25 are
 defects found in review, fixed within T11 and T4.
 
 | Task | Issue | Title |
@@ -181,7 +181,9 @@ destination is optional, and a configuration with neither is accepted
 (DESIGN-V2.md, "Logging: one common log"; #23 Q11, Q11a). Framing without a separator is #7 and
 not part of this task. If the T6 review confirms it, check identity.instance
 against the topic-level rule `[a-z0-9-]+`, since the instance is now a topic
-level (DESIGN-V2.md, "Topics"); v1 allows `[A-Za-z0-9._-]{1,64}`.
+level (DESIGN-V2.md, "Topics"); v1 allows `[A-Za-z0-9._-]{1,64}`. Add the
+keepalive interval, default 15 s, and the number of missed keepalives after
+which a consumer treats the agent as gone, default 3 (#11 Q7).
 
 Keep: strict loading of keys and environment variables; validation that reports
 every problem at once; the credential rules; every check listed in DESIGN.md,
@@ -266,9 +268,11 @@ every agent and device visible from outside (DESIGN-V2.md, "Status channel").
 v1 publishes a heartbeat with some counters and no per-device events.
 
 Work.
-- Agent keepalive with the per-device counters listed in DESIGN-V2.md.
+- Agent keepalive with the per-device counters listed in DESIGN-V2.md, at the
+  configured interval, carrying `gone_after_s` (#11 Q7).
 - Device events on the device status topic: opened, closed, lost with its error
-  class, discard with reason and byte count.
+  class, a failed open on every attempt (#11 Q8), discarded bytes with reason
+  and byte count.
 - The will on the agent-level status topic.
 - Consumers derive liveness from the keepalive; RabbitMQ does not retain a will
   (docs/spikes/m0-mqtt5.md:106). Say so in the message format section.
@@ -410,8 +414,11 @@ Work.
   id is a UUID; a malformed tx gets a failed result with a code and a text.
 - One writer per port, which only writes while it holds the port open under the
   agent's own lock, and loops until every byte is written.
-- Results: accepted, then written or failed, each with a code, a text and the
-  detail at hand: the port's error class, bytes written, attempts made.
+- Results as DESIGN-V2.md, "Message formats", lists them, each with its code,
+  text and detail keys.
+- A tx whose id belongs to a tx still queued or being written is rejected with
+  `in_progress`, saying where that one stands and since when, and is not queued
+  (#11 Q6). Until #28, this is also how a sender asks about a tx (#11 Q5).
 - Retry opening the port, up to the configured count and at the configured
   interval, then fail the tx. Once writing has started, a failure is not
   retried: the result reports the bytes written (#23 Q17, Q17a).
@@ -443,7 +450,9 @@ kept so that references to T15 stay unambiguous.
 
 Work. Keep a bounded set of recently written tx ids. A tx whose id is in the set
 is not written, and gets a result saying it was a duplicate. The set lives in
-memory; a restart forgets it, and the message format section says so.
+memory; a restart forgets it, and the message format section says so. Whether
+written ids are kept at all is #11 Q6a; the maintainer's answer to #11 Q6 was
+that the agent keeps no record of ids beyond its current state.
 
 Intended result. The same id sent twice produces one write and two results.
 
@@ -472,6 +481,8 @@ Recorded so they are not lost:
 - #20: keeping tx through reconnects on a persistent session (formerly T15).
 - #26: the same counters on an HTTP endpoint for scraping.
 - #27: restricting tx ids to UUID version 4.
+- #28: asking the agent where a tx stands; until then a resend with the same id
+  is the enquiry (#11 Q5).
 
 - Exchange sessions and polling (DESIGN-V2.md, "Deferred beyond #4").
 - Port locking between processes (same).
