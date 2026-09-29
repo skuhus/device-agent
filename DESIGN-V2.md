@@ -79,9 +79,8 @@ directory, the release assets, the container image and the account inside it
 
 `[Decided]` That name is skuhus-device-agent. Source: maintainer, 2026-09-29.
 
-`[Proposed]` The environment variable prefix is SH_DEV_AGENT_, following the
-abbreviation pattern of the v1 prefix SH_DEV_SER_SCANNER_. The maintainer chose
-the name; the prefix is not yet confirmed.
+`[Decided]` The environment variable prefix is SH_DEV_AGENT_. Source:
+maintainer, 2026-09-29.
 
 ## Topics
 
@@ -431,8 +430,8 @@ Leave behind:
 
 ## Open decisions
 
-None blocks phase 1 except confirming the environment prefix, which T3 needs.
-Every item marked `[Proposed]` still needs a yes or no; each is marked in place.
+None. Every item marked `[Proposed]` still needs a yes or no; each is marked in
+place, and the task that depends on it names it.
 Decisions of 2026-09-29 are recorded in their sections above.
 
 Task numbers refer to PLAN-V2.md.

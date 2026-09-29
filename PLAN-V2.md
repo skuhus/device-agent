@@ -57,9 +57,8 @@ DESIGN-V2.md cites exists in a fresh clone.
 
 ### T2. Settle the open decisions
 
-Status: done on 2026-09-29 and recorded in DESIGN-V2.md, except confirming the
-environment prefix, which T3 needs. The items marked `[Proposed]` still need a
-yes or no.
+Status: done on 2026-09-29 and recorded in DESIGN-V2.md. The items marked
+`[Proposed]` still need a yes or no.
 
 Motivation. DESIGN-V2.md lists eight open decisions and a number of proposals.
 Each open decision blocks a named task; building on an unconfirmed proposal
@@ -85,7 +84,7 @@ Work.
 - Module path to github.com/skuhus/device-agent, and every import with it.
 - Binary, cmd/ directory, configuration directory, log directory, image name and
   the account inside the image, to skuhus-device-agent; the environment prefix to
-  SH_DEV_AGENT_ once confirmed.
+  SH_DEV_AGENT_.
 - Makefile, Dockerfile, .github/workflows/ci.yml and release.yml, README.md,
   config.sample.yaml, dev/agent.local.yaml.
 - `git remote set-url origin git@github.com:skuhus/device-agent.git` in each
@@ -93,11 +92,12 @@ Work.
 - No behaviour change in this pull request.
 
 Intended result. A search for device-serial-scanner and SH_DEV_SER_SCANNER finds
-them only in DESIGN.md's history sections. `make check` passes. The image's
+them only in DESIGN.md, the v1 record that T12 retires, and in DESIGN-V2.md and
+PLAN-V2.md where they cite v1 files at commit f97c736. `make check` passes. The image's
 `version` subcommand prints the new name. The asset names produced by the
 release workflow's build step use the new name.
 
-Depends on: the environment prefix being confirmed.
+Depends on: T1, T2.
 
 ### T4. Give spike/ its own module
 
