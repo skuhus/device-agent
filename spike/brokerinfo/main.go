@@ -123,12 +123,12 @@ func connectPacket(level byte, clientID string) []byte {
 	pkt := []byte{0x10}
 	remaining := len(body)
 	for {
-		body := byte(remaining % 128)
+		lengthDigit := byte(remaining % 128)
 		remaining /= 128
 		if remaining > 0 {
-			body |= 0x80
+			lengthDigit |= 0x80
 		}
-		pkt = append(pkt, body)
+		pkt = append(pkt, lengthDigit)
 		if remaining == 0 {
 			break
 		}

@@ -88,11 +88,11 @@ func main() {
 // runID keeps one spike run from colliding with another, and keeps retained
 // messages left behind by a failed run out of the next one.
 func runID() string {
-	var body [4]byte
-	if _, err := rand.Read(body[:]); err != nil {
+	var randomBytes [4]byte
+	if _, err := rand.Read(randomBytes[:]); err != nil {
 		return fmt.Sprintf("%d", time.Now().UnixNano())
 	}
-	return hex.EncodeToString(body[:])
+	return hex.EncodeToString(randomBytes[:])
 }
 
 type result struct {
@@ -509,7 +509,7 @@ func (runner *runner) checkExpiry(ctx context.Context) {
 		return
 	}
 	short, long := uint32(shortExpiry), uint32(longExpiry)
-	for _, master := range []struct {
+	for _, message := range []struct {
 		payload string
 		expiry  *uint32
 	}{
@@ -519,10 +519,10 @@ func (runner *runner) checkExpiry(ctx context.Context) {
 		if _, err := pub.paho.Publish(ctx, &paho.Publish{
 			Topic:      topic,
 			QoS:        1,
-			Payload:    []byte(master.payload),
-			Properties: &paho.PublishProperties{MessageExpiry: master.expiry},
+			Payload:    []byte(message.payload),
+			Properties: &paho.PublishProperties{MessageExpiry: message.expiry},
 		}); err != nil {
-			runner.record("expiry", false, "publish %s: %v", master.payload, err)
+			runner.record("expiry", false, "publish %s: %v", message.payload, err)
 			pub.close(ctx)
 			return
 		}
@@ -723,8 +723,8 @@ func (client *client) recv(d time.Duration) (*paho.Publish, error) {
 		return nil, errTimeout
 	}
 	select {
-	case master := <-client.msgs:
-		return master, nil
+	case msg := <-client.msgs:
+		return msg, nil
 	case <-time.After(d):
 		return nil, errTimeout
 	}
