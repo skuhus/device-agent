@@ -21,6 +21,36 @@ import (
 	goserial "go.bug.st/serial"
 )
 
+// ParityByName maps the configuration's parity names to the library's. The
+// configuration package owns the names; a test keeps the two in step.
+var ParityByName = map[string]goserial.Parity{
+	"none":  goserial.NoParity,
+	"odd":   goserial.OddParity,
+	"even":  goserial.EvenParity,
+	"mark":  goserial.MarkParity,
+	"space": goserial.SpaceParity,
+}
+
+// StopBitsByName maps the configuration's stop_bits values to the library's.
+// 1.5 is absent: the library refuses it on every Unix system.
+var StopBitsByName = map[string]goserial.StopBits{
+	"1": goserial.OneStopBit,
+	"2": goserial.TwoStopBits,
+}
+
+var (
+	parityNames   = invert(ParityByName)
+	stopBitsNames = invert(StopBitsByName)
+)
+
+func invert[V comparable](byName map[string]V) map[V]string {
+	names := make(map[V]string, len(byName))
+	for name, value := range byName {
+		names[value] = name
+	}
+	return names
+}
+
 // Backoff bounds for reopening an absent device.
 const (
 	DefaultBackoffInitial = 100 * time.Millisecond
@@ -37,9 +67,15 @@ type OpenFunc func(path string, mode *goserial.Mode) (goserial.Port, error)
 
 // Options configures a serial device.
 type Options struct {
-	ID               string
-	Path             string
-	Baud             int
+	ID   string
+	Path string
+	Baud int
+	// DataBits, Parity and StopBits set the line format. Their zero values are
+	// 8, none and 1, the format every device was opened with before they were
+	// configurable.
+	DataBits         int
+	Parity           goserial.Parity
+	StopBits         goserial.StopBits
 	Terminator       []byte
 	MaxFrameBytes    int
 	InterCharTimeout time.Duration
@@ -95,6 +131,12 @@ func New(opts Options) (*Device, error) {
 	if opts.InterCharTimeout <= 0 {
 		return nil, fmt.Errorf("device %s: inter-character timeout must be positive, got %s", opts.ID, opts.InterCharTimeout)
 	}
+	if opts.DataBits == 0 {
+		opts.DataBits = 8
+	}
+	if opts.DataBits < 5 || opts.DataBits > 8 {
+		return nil, fmt.Errorf("device %s: data bits must be 5 to 8, got %d", opts.ID, opts.DataBits)
+	}
 	if _, err := NewFramer(opts.Terminator, opts.MaxFrameBytes); err != nil {
 		return nil, fmt.Errorf("device %s: %w", opts.ID, err)
 	}
@@ -103,9 +145,9 @@ func New(opts Options) (*Device, error) {
 		opts: opts,
 		mode: &goserial.Mode{
 			BaudRate: opts.Baud,
-			DataBits: 8,
-			Parity:   goserial.NoParity,
-			StopBits: goserial.OneStopBit,
+			DataBits: opts.DataBits,
+			Parity:   opts.Parity,
+			StopBits: opts.StopBits,
 			// InitialStatusBits is deliberately left nil. Setting it makes the
 			// library query the modem lines during open and fail the open
 			// outright on any port without modem control. The lines are raised
@@ -200,7 +242,9 @@ func (dev *Device) session(ctx context.Context, sink chan<- device.Frame) (worke
 	}
 	dev.assertModemLines(port)
 	dev.logModemStatus(port)
-	dev.log.Info("device open", "baud", dev.opts.Baud, "read_chunk", dev.chunk,
+	dev.log.Info("device open", "baud", dev.opts.Baud,
+		"data_bits", dev.mode.DataBits, "parity", parityNames[dev.mode.Parity], "stop_bits", stopBitsNames[dev.mode.StopBits],
+		"read_chunk", dev.chunk,
 		"inter_char_timeout", dev.opts.InterCharTimeout.String(),
 		"max_frame_bytes", dev.opts.MaxFrameBytes,
 		"terminator_hex", hex.EncodeToString(dev.opts.Terminator))
