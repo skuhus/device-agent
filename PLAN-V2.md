@@ -179,7 +179,9 @@ Replace audit_file, audit_max_size_mb and audit_keep with the common log's keys,
 logging.file, logging.max_size_mb and logging.keep, and add logging.stdout; each
 destination is optional, and a configuration with neither is accepted
 (DESIGN-V2.md, "Logging: one common log"; #23 Q11, Q11a). Framing without a separator is #7 and
-not part of this task.
+not part of this task. If the T6 review confirms it, check identity.instance
+against the topic-level rule `[a-z0-9-]+`, since the instance is now a topic
+level (DESIGN-V2.md, "Topics"); v1 allows `[A-Za-z0-9._-]{1,64}`.
 
 Keep: strict loading of keys and environment variables; validation that reports
 every problem at once; the credential rules; every check listed in DESIGN.md,
