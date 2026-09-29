@@ -103,9 +103,8 @@ func TestOpenSucceedsWhenModemLinesAreUnsupported(t *testing.T) {
 	present, onPresence := presenceChan()
 
 	opts := serialOpts("no-modem-control", "/dev/fake", "\r")
-	opts.OnPresence = onPresence
 	opts.Open = func(string, *goserial.Mode) (goserial.Port, error) { return port, nil }
-	runDevice(t, opts, 1)
+	runDeviceReporting(t, opts, 1, onPresence)
 
 	select {
 	case p := <-present:
@@ -126,12 +125,11 @@ func captureLogs(t *testing.T, logPayloads bool, data string) string {
 	opts := serialOpts("payloads", "/dev/fake", "\r")
 	opts.LogPayloads = logPayloads
 	opts.InterCharTimeout = 20 * time.Millisecond
-	opts.OnPresence = onPresence
 	opts.Logger = slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	opts.Open = func(string, *goserial.Mode) (goserial.Port, error) {
 		return &scriptedPort{data: []byte(data)}, nil
 	}
-	runDevice(t, opts, 4)
+	runDeviceReporting(t, opts, 4, onPresence)
 
 	select {
 	case <-present:

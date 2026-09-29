@@ -52,6 +52,13 @@ func testLogger() *slog.Logger {
 // channel. It fails the test if the device goroutine outlives cancellation.
 func runDevice(t *testing.T, opts Options, sinkCap int) (chan device.Frame, context.CancelFunc) {
 	t.Helper()
+	return runDeviceReporting(t, opts, sinkCap, nil)
+}
+
+// runDeviceReporting is runDevice with a function that receives every port
+// event.
+func runDeviceReporting(t *testing.T, opts Options, sinkCap int, report func(device.Event)) (chan device.Frame, context.CancelFunc) {
+	t.Helper()
 	if opts.Logger == nil {
 		opts.Logger = testLogger()
 	}
@@ -71,7 +78,7 @@ func runDevice(t *testing.T, opts Options, sinkCap int) (chan device.Frame, cont
 	stopped := make(chan struct{})
 	go func() {
 		defer close(stopped)
-		if err := d.Run(ctx, frames); !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		if err := d.Run(ctx, frames, report); !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 			t.Errorf("Run returned %v, want a context error", err)
 		}
 	}()
@@ -132,9 +139,21 @@ func waitForOpen(t *testing.T, present <-chan bool) {
 	}
 }
 
-func presenceChan() (chan bool, func(bool, error)) {
+// presenceChan turns port events into the present/absent transitions these
+// tests were written against: opened is present, lost is absent. A failed open
+// is neither, because a port that never opened was never present.
+func presenceChan() (chan bool, func(device.Event)) {
 	ch := make(chan bool, 16)
-	return ch, func(present bool, _ error) {
+	return ch, func(event device.Event) {
+		var present bool
+		switch event.Kind {
+		case device.PortOpened:
+			present = true
+		case device.PortLost:
+			present = false
+		default:
+			return
+		}
 		select {
 		case ch <- present:
 		default:
@@ -175,8 +194,7 @@ func TestPTYReplayCaptures(t *testing.T) {
 			present, onPresence := presenceChan()
 
 			opts := serialOpts("replay", slave, tc.terminator)
-			opts.OnPresence = onPresence
-			frames, _ := runDevice(t, opts, 8)
+			frames, _ := runDeviceReporting(t, opts, 8, onPresence)
 			waitForOpen(t, present)
 
 			if _, err := master.Write(capture); err != nil {
@@ -206,8 +224,7 @@ func TestPTYFrameArrivesAcrossManyReads(t *testing.T) {
 	present, onPresence := presenceChan()
 	opts := serialOpts("drip", slave, "\r")
 	opts.InterCharTimeout = 500 * time.Millisecond
-	opts.OnPresence = onPresence
-	frames, _ := runDevice(t, opts, 4)
+	frames, _ := runDeviceReporting(t, opts, 4, onPresence)
 	waitForOpen(t, present)
 
 	for _, b := range []byte("SKU-9911\r") {
@@ -233,8 +250,7 @@ func TestPTYInterCharTimeoutDropsStalledFrame(t *testing.T) {
 	present, onPresence := presenceChan()
 	opts := serialOpts("stall", slave, "\r")
 	opts.InterCharTimeout = 50 * time.Millisecond
-	opts.OnPresence = onPresence
-	frames, _ := runDevice(t, opts, 4)
+	frames, _ := runDeviceReporting(t, opts, 4, onPresence)
 	waitForOpen(t, present)
 
 	if _, err := master.Write([]byte("STALL")); err != nil {
@@ -257,8 +273,7 @@ func TestPTYFullSinkBlocksReaderWithoutLoss(t *testing.T) {
 	master, slave := newPTY(t)
 	present, onPresence := presenceChan()
 	opts := serialOpts("backpressure", slave, "\r")
-	opts.OnPresence = onPresence
-	frames, _ := runDevice(t, opts, 0)
+	frames, _ := runDeviceReporting(t, opts, 0, onPresence)
 	waitForOpen(t, present)
 
 	want := []string{"ONE", "TWO", "THREE", "FOUR"}
@@ -281,8 +296,7 @@ func TestPTYDisconnectReportsAbsenceAndRetries(t *testing.T) {
 	master, slave := newPTY(t)
 	present, onPresence := presenceChan()
 	opts := serialOpts("unplug", slave, "\r")
-	opts.OnPresence = onPresence
-	frames, _ := runDevice(t, opts, 4)
+	frames, _ := runDeviceReporting(t, opts, 4, onPresence)
 	waitForOpen(t, present)
 
 	if _, err := master.Write([]byte("BEFORE\r")); err != nil {
@@ -345,7 +359,6 @@ func TestNoGoroutineLeakAcrossDeviceRestarts(t *testing.T) {
 		master, slave := newPTY(t)
 		present, onPresence := presenceChan()
 		opts := serialOpts("cycle", slave, "\r")
-		opts.OnPresence = onPresence
 
 		d, err := New(opts)
 		if err != nil {
@@ -356,7 +369,7 @@ func TestNoGoroutineLeakAcrossDeviceRestarts(t *testing.T) {
 		stopped := make(chan struct{})
 		go func() {
 			defer close(stopped)
-			d.Run(ctx, frames)
+			d.Run(ctx, frames, onPresence)
 		}()
 		waitForOpen(t, present)
 		if _, err := master.Write([]byte("CYCLE\r")); err != nil {

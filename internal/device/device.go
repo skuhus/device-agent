@@ -23,7 +23,34 @@ const (
 	Outbound Direction = "outbound"
 )
 
-// Frame is one complete terminator-delimited unit read from a device.
+// EventKind names what happened to a device's port.
+type EventKind string
+
+// Port events.
+const (
+	PortOpened     EventKind = "opened"
+	PortClosed     EventKind = "closed"
+	PortLost       EventKind = "lost"
+	PortOpenFailed EventKind = "open_failed"
+	BytesDiscarded EventKind = "discarded"
+)
+
+// Event is something that happened to a device's port. A reader reports every
+// one, so that whatever runs it can log, publish and count them without
+// knowing how the port works.
+type Event struct {
+	DeviceID string
+	Kind     EventKind
+	At       time.Time
+	// ErrorClass and Err say why, for PortLost and PortOpenFailed.
+	ErrorClass string
+	Err        error
+	// Reason and Bytes say what was thrown away, for BytesDiscarded.
+	Reason string
+	Bytes  int
+}
+
+// Frame is one complete separator-delimited unit read from a device.
 //
 // Raw holds bytes, not text. GS1-128 and Data Matrix payloads carry 0x1D group
 // separators, and treating them as a string corrupts them.
@@ -43,7 +70,8 @@ type Device interface {
 	Path() string
 	// Direction is the data flow direction.
 	Direction() Direction
-	// Run reads until ctx is cancelled, sending each complete frame to sink.
+	// Run reads until ctx is cancelled, sending each complete frame to sink and
+	// every port event to report. report is called inline and must not block.
 	//
 	// Run owns reopening the device: a disconnect is an expected condition and
 	// is retried with jittered backoff rather than returned. It returns only
@@ -52,5 +80,5 @@ type Device interface {
 	// Run blocks when sink is full. That is the intended backpressure: a human
 	// cannot scan faster than the publisher drains, so blocking the reader
 	// surfaces a stalled broker instead of hiding it behind a growing queue.
-	Run(ctx context.Context, sink chan<- Frame) error
+	Run(ctx context.Context, sink chan<- Frame, report func(Event)) error
 }

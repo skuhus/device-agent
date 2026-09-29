@@ -17,27 +17,20 @@ import (
 	"github.com/eclipse/paho.golang/paho"
 )
 
-// Delivery constants fixed by the specification rather than by configuration.
+// QoS levels, as DESIGN-V2.md, "Message formats", assigns them.
 const (
-	// HeartbeatInterval is section 5.6's "every 15s".
-	HeartbeatInterval = 15 * time.Second
-	// HeartbeatExpiry discards a heartbeat that has been queued for longer than
-	// four intervals. A heartbeat says "I am alive now"; delivered late it
-	// says something false.
-	HeartbeatExpiry = 60 * time.Second
-
-	// qosAtLeastOnce is used for scans, status and commands. The broker
-	// measured in docs/spikes/m0-mqtt5.md offers no QoS 2, and event_id dedup
-	// covers the redelivery QoS 1 allows.
+	// qosAtLeastOnce is used for readings, events, tx results and the offline
+	// message. The broker measured in docs/spikes/m0-mqtt5.md offers no QoS 2,
+	// and every message carries an id a consumer drops a redelivery by.
 	qosAtLeastOnce = 1
-	// qosAtMostOnce is used for heartbeats: the next one is 15 seconds away and
-	// carries the same counters, so a redelivery guarantee buys nothing.
+	// qosAtMostOnce is used for keepalives: the next one is an interval away
+	// and carries the same counters, so a redelivery guarantee buys nothing.
 	qosAtMostOnce = 0
 )
 
 // Options configures the connection. Everything here comes from the broker
-// section of the configuration, except Topics and Will, which the caller builds
-// from the station identity.
+// section of the configuration, except the will, which the caller builds from
+// the station identity.
 type Options struct {
 	URL      string
 	ClientID string
@@ -53,11 +46,11 @@ type Options struct {
 	BackoffMax     time.Duration
 	BackoffJitter  float64
 
-	Topics Topics
-	// Will is published by the broker on the status topic if this agent stops
-	// without disconnecting. Retained, so that section 5.5's "station 3 went
-	// offline" needs no subscriber to have been listening at the time.
-	Will []byte
+	// Will is the offline message the broker publishes on WillTopic if this
+	// agent stops without disconnecting. It is not retained: nothing the agent
+	// publishes is (#11 Q1), and RabbitMQ does not retain a will in any case.
+	WillTopic string
+	Will      []byte
 
 	Logger *slog.Logger
 	// OnUp and OnDown report connection transitions. They are called from the
@@ -69,9 +62,8 @@ type Options struct {
 
 // Client is the agent's connection to the broker.
 type Client struct {
-	cm     *autopaho.ConnectionManager
-	topics Topics
-	log    *slog.Logger
+	cm  *autopaho.ConnectionManager
+	log *slog.Logger
 }
 
 // Dial builds the connection manager and starts connecting. It returns as soon
@@ -97,7 +89,20 @@ func Dial(ctx context.Context, opts Options) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	if (opts.Will == nil) != (opts.WillTopic == "") {
+		return nil, errors.New("mqtt: a will needs both a topic and a payload")
+	}
 
+	cm, err := autopaho.NewConnection(ctx, clientConfig(opts, brokerURL, tlsCfg, log))
+	if err != nil {
+		return nil, fmt.Errorf("mqtt: %w", err)
+	}
+	return &Client{cm: cm, log: log}, nil
+}
+
+// clientConfig is the connection's whole configuration, built apart from Dial
+// so that a test can check it without a broker.
+func clientConfig(opts Options, brokerURL *url.URL, tlsCfg *tls.Config, log *slog.Logger) autopaho.ClientConfig {
 	cfg := autopaho.ClientConfig{
 		ServerUrls: []*url.URL{brokerURL},
 		TlsCfg:     tlsCfg,
@@ -141,19 +146,13 @@ func Dial(ctx context.Context, opts Options) (*Client, error) {
 	if opts.Will != nil {
 		var noDelay uint32 // Publish the will immediately; a delay only hides a death.
 		cfg.WillMessage = &paho.WillMessage{
-			Topic:   opts.Topics.Status(),
+			Topic:   opts.WillTopic,
 			QoS:     qosAtLeastOnce,
-			Retain:  true,
 			Payload: opts.Will,
 		}
-		cfg.WillProperties = &paho.WillProperties{WillDelayInterval: &noDelay}
+		cfg.WillProperties = &paho.WillProperties{WillDelayInterval: &noDelay, ContentType: "application/json"}
 	}
-
-	cm, err := autopaho.NewConnection(ctx, cfg)
-	if err != nil {
-		return nil, fmt.Errorf("mqtt: %w", err)
-	}
-	return &Client{cm: cm, topics: opts.Topics, log: log}, nil
+	return cfg
 }
 
 // AwaitConnection blocks until the connection is up or ctx ends.
@@ -161,49 +160,35 @@ func (client *Client) AwaitConnection(ctx context.Context) error {
 	return client.cm.AwaitConnection(ctx)
 }
 
-// PublishScan publishes one scan envelope at QoS 1, with the message expiry
-// interval set from ttl.
+// PublishRx publishes one reading at QoS 1, with the device's message expiry.
 //
-// The expiry is the perishability mechanism of section 6: the broker discards a
-// scan that outlived its session, so no consumer has to decide whether an old
-// scan is still meaningful. It returns an error when the broker did not
-// acknowledge within ctx, which the caller records as a failed delivery rather
-// than retrying: by the time a retry lands, the scan is stale anyway.
-func (client *Client) PublishScan(ctx context.Context, payload []byte, ttl time.Duration) error {
-	expiry := expirySeconds(ttl)
+// The expiry is what makes a reading perishable: the broker discards one that
+// outlived it, so no consumer has to decide whether an old reading still
+// means anything. It returns an error when the broker did not acknowledge
+// within ctx, which the caller records as a failed delivery rather than
+// retrying: by the time a retry lands, the reading is stale anyway.
+func (client *Client) PublishRx(ctx context.Context, topic string, payload []byte, expiry time.Duration) error {
+	seconds := expirySeconds(expiry)
 	return client.publish(ctx, &paho.Publish{
-		Topic:      client.topics.Scan(),
+		Topic:      topic,
 		QoS:        qosAtLeastOnce,
 		Payload:    payload,
-		Properties: &paho.PublishProperties{MessageExpiry: &expiry, ContentType: "application/json"},
+		Properties: &paho.PublishProperties{MessageExpiry: &seconds, ContentType: "application/json"},
 	})
 }
 
-// PublishStatus publishes the retained station status. No expiry: a retained
-// message that expires leaves a station with no state at all, which reads as
-// "never seen" rather than "last seen offline".
-func (client *Client) PublishStatus(ctx context.Context, payload []byte) error {
+// PublishOffline publishes the agent's offline message at QoS 1, with no
+// expiry, as the last thing before a clean disconnect.
+func (client *Client) PublishOffline(ctx context.Context, topic string, payload []byte) error {
 	return client.publish(ctx, &paho.Publish{
-		Topic:      client.topics.Status(),
+		Topic:      topic,
 		QoS:        qosAtLeastOnce,
-		Retain:     true,
 		Payload:    payload,
 		Properties: &paho.PublishProperties{ContentType: "application/json"},
 	})
 }
 
-// PublishHeartbeat publishes liveness counters at QoS 0.
-func (client *Client) PublishHeartbeat(ctx context.Context, payload []byte) error {
-	expiry := expirySeconds(HeartbeatExpiry)
-	return client.publish(ctx, &paho.Publish{
-		Topic:      client.topics.Heartbeat(),
-		QoS:        qosAtMostOnce,
-		Payload:    payload,
-		Properties: &paho.PublishProperties{MessageExpiry: &expiry, ContentType: "application/json"},
-	})
-}
-
-// Close publishes nothing. The caller publishes its offline status first, then
+// Close publishes nothing. The caller publishes its offline message first, then
 // calls this, so that the broker sees a clean DISCONNECT and discards the will.
 func (client *Client) Close(ctx context.Context) error {
 	if err := client.cm.Disconnect(ctx); err != nil {

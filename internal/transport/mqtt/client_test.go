@@ -2,6 +2,7 @@ package mqtt
 
 import (
 	"context"
+	"log/slog"
 	"math"
 	"net/url"
 	"os"
@@ -145,6 +146,8 @@ func TestDialRejectsUnusableOptions(t *testing.T) {
 			Options{URL: "tls://mq.internal:8883", ClientID: "pack-03", CAFile: "/nonexistent/ca.pem"},
 			"ca_file",
 		},
+		{"will without a topic", Options{URL: "tcp://localhost:1883", ClientID: "pack-03", Will: []byte("{}")}, "a will needs both"},
+		{"will topic without a payload", Options{URL: "tcp://localhost:1883", ClientID: "pack-03", WillTopic: "t"}, "a will needs both"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -158,5 +161,37 @@ func TestDialRejectsUnusableOptions(t *testing.T) {
 				t.Errorf("error = %v, want it to mention %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// The will is the offline message on the agent's status topic: QoS 1, not
+// retained, published without delay. The settings beside it are the measured
+// ones the connection depends on: clean start, no session, no publish queue.
+func TestConnectionConfiguration(t *testing.T) {
+	brokerURL, _ := url.Parse("tcp://skuhus-dev-rabbitmq:1883")
+	will := []byte(`{"schema":2,"kind":"offline","reason":"will"}`)
+	cfg := clientConfig(Options{
+		ClientID:  "pack-03",
+		WillTopic: "skuhus/acme/vasby/pack-03/agent/pack-03/status",
+		Will:      will,
+	}, brokerURL, nil, slog.New(slog.DiscardHandler))
+
+	message := cfg.WillMessage
+	if message == nil {
+		t.Fatal("no will registered")
+	}
+	if message.Topic != "skuhus/acme/vasby/pack-03/agent/pack-03/status" || message.QoS != 1 || message.Retain || string(message.Payload) != string(will) {
+		t.Errorf("will = topic %q, QoS %d, retain %t, payload %s", message.Topic, message.QoS, message.Retain, message.Payload)
+	}
+	if cfg.WillProperties == nil || cfg.WillProperties.WillDelayInterval == nil || *cfg.WillProperties.WillDelayInterval != 0 {
+		t.Errorf("will properties = %+v, want an immediate will", cfg.WillProperties)
+	}
+	if !cfg.CleanStartOnInitialConnection || cfg.SessionExpiryInterval != 0 || cfg.Queue != nil {
+		t.Errorf("clean start %t, session expiry %d, queue %v: want a clean connection with no session and no queue",
+			cfg.CleanStartOnInitialConnection, cfg.SessionExpiryInterval, cfg.Queue)
+	}
+
+	if withoutWill := clientConfig(Options{ClientID: "pack-03"}, brokerURL, nil, slog.New(slog.DiscardHandler)); withoutWill.WillMessage != nil {
+		t.Error("a will was registered without one being asked for")
 	}
 }

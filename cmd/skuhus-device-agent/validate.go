@@ -6,6 +6,7 @@ import (
 	"io"
 
 	"github.com/skuhus/device-agent/internal/config"
+	"github.com/skuhus/device-agent/internal/wire"
 )
 
 func runValidate(args []string, stdout, stderr io.Writer) error {
@@ -64,11 +65,21 @@ func runValidate(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
+	// Validation has checked every topic level, so building the topics cannot
+	// fail here; an error would be a bug, and is returned as one.
+	stationTopics, err := wire.NewStationTopics(cfg.Identity.Project, cfg.Identity.Site, cfg.Identity.Station)
+	if err != nil {
+		return err
+	}
+	agentTopics, err := stationTopics.Agent(cfg.Identity.Instance)
+	if err != nil {
+		return err
+	}
+
 	fmt.Fprintf(stdout, "configuration is valid\n")
 	fmt.Fprintf(stdout, "  station        %s/%s/%s\n", cfg.Identity.Project, cfg.Identity.Site, cfg.Identity.Station)
 	fmt.Fprintf(stdout, "  instance       %s (MQTT client id)\n", cfg.Identity.Instance)
-	fmt.Fprintf(stdout, "  topics         skuhus/%s/%s/%s/{scan,status,heartbeat,cmd,cmd/result}\n",
-		cfg.Identity.Project, cfg.Identity.Site, cfg.Identity.Station)
+	fmt.Fprintf(stdout, "  agent status   %s\n", agentTopics.Status())
 	fmt.Fprintf(stdout, "  broker         %s\n", cfg.Broker.RedactedURL())
 	fmt.Fprintf(stdout, "  devices        %d\n", len(cfg.Devices))
 	for _, deviceCfg := range cfg.Devices {
@@ -76,6 +87,11 @@ func runValidate(args []string, stdout, stderr io.Writer) error {
 			deviceCfg.ID, deviceCfg.Path, deviceCfg.Kind, deviceCfg.Baud,
 			deviceCfg.DataBits, deviceCfg.Parity, deviceCfg.StopBits, deviceCfg.Separator,
 			deviceCfg.MaxFrameBytes, deviceCfg.InterCharTimeout, deviceCfg.MessageExpiry, deviceCfg.DeviceType)
+		topics, err := stationTopics.Device(deviceCfg.ID)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "    %-16s rx %s status %s\n", "", topics.Rx(), topics.Status())
 	}
 	fmt.Fprintf(stdout, "  delivery       publish_timeout=%s buffer_size=%d\n",
 		cfg.Delivery.PublishTimeout, cfg.Delivery.BufferSize)

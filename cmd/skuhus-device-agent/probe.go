@@ -17,9 +17,9 @@ import (
 	"github.com/skuhus/device-agent/internal/config"
 	"github.com/skuhus/device-agent/internal/device"
 	serialdev "github.com/skuhus/device-agent/internal/device/serial"
-	"github.com/skuhus/device-agent/internal/event"
 	"github.com/skuhus/device-agent/internal/logging"
 	buildinfo "github.com/skuhus/device-agent/internal/version"
+	"github.com/skuhus/device-agent/internal/wire"
 	goserial "go.bug.st/serial"
 )
 
@@ -50,7 +50,7 @@ func runProbe(args []string, stdout, stderr io.Writer) error {
 	separator := fs.String("separator", `\r`, "frame separator, backslash escapes decoded")
 	maxFrame := fs.Int("max-frame-bytes", config.DefaultMaxFrameBytes, "discard a partial frame longer than this")
 	interChar := fs.Duration("inter-char-timeout", config.DefaultInterCharTimeout, "discard a partial frame idle for longer than this")
-	asJSON := fs.Bool("json", false, "print the scan envelope that would be published")
+	asJSON := fs.Bool("json", false, "print the rx message that would be published")
 	duration := fs.Duration("duration", 0, "stop after this long (0 means run until interrupted)")
 	logLevel := fs.String("log-level", "info", "log level for the structured log on stderr")
 	logPayloads := fs.Bool("log-payloads", false, "log frame and discarded-byte contents as hex at DEBUG; use this when a device frames nothing and the separator is unknown")
@@ -68,9 +68,9 @@ func runProbe(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("%w: pass exactly one of --device (with a config file) or --path", errUsage)
 	}
 
-	// InstanceID is filled from the config below when --device names one, so
-	// that --json prints the envelope run would publish rather than a lookalike.
-	identity := event.Identity{InstanceID: "probe", AgentVersion: buildinfo.Version()}
+	// The identity is filled from the config below when --device names one, so
+	// that --json prints the message run would publish rather than a lookalike.
+	identity := wire.Agent{InstanceID: "probe", AgentVersion: buildinfo.Version()}
 	// probe publishes nothing, so the message expiry only has to satisfy
 	// validation.
 	dev := config.Device{
@@ -154,14 +154,6 @@ func runProbe(args []string, stdout, stderr io.Writer) error {
 		InterCharTimeout: dev.InterCharTimeout.Duration(),
 		LogPayloads:      *logPayloads,
 		Logger:           log,
-		OnPresence: func(present bool, err error) {
-			devLog := log.With("device_id", dev.ID, "device_path", dev.Path)
-			if present {
-				devLog.Info("device present")
-				return
-			}
-			devLog.Warn("device absent", "error", errString(err))
-		},
 	})
 	if err != nil {
 		return err
@@ -175,11 +167,24 @@ func runProbe(args []string, stdout, stderr io.Writer) error {
 		defer cancel()
 	}
 
+	// The reader logs every port event itself; these two lines say, in one
+	// place, whether the device is there to probe at all.
+	devLog := log.With("device_id", dev.ID, "device_path", dev.Path)
+	report := func(event device.Event) {
+		switch event.Kind {
+		case device.PortOpened:
+			devLog.Info("device present")
+		case device.PortLost, device.PortOpenFailed:
+			devLog.Warn("device absent", "error_class", event.ErrorClass, "error", errString(event.Err))
+		}
+	}
 	frames := make(chan device.Frame, 16)
 	done := make(chan error, 1)
-	go func() { done <- sd.Run(ctx, frames) }()
+	go func() { done <- sd.Run(ctx, frames, report) }()
 
-	builder := event.NewBuilder(identity, nil)
+	builder := wire.NewBuilder(identity, nil)
+	wireDevice := wire.Device{ID: dev.ID, Type: dev.DeviceType, Expiry: dev.MessageExpiry.Duration()}
+	var seq uint64
 
 	fmt.Fprintf(stdout, "probing %s (%d baud %d/%s/%s, separator %q, max frame %d, inter-char %s); press Ctrl-C to stop\n",
 		dev.Path, dev.Baud, dev.DataBits, dev.Parity, dev.StopBits, dev.Separator, dev.MaxFrameBytes, dev.InterCharTimeout)
@@ -190,26 +195,26 @@ func runProbe(args []string, stdout, stderr io.Writer) error {
 			<-done
 			return nil
 		case frame := <-frames:
-			scan := builder.Scan(frame.Raw, frame.At, dev.ID)
-			if err := printScan(stdout, scan, frame.Raw, *asJSON); err != nil {
+			seq++
+			if err := printRx(stdout, builder.Rx(wireDevice, seq, frame.Raw, frame.At), frame.Raw, *asJSON); err != nil {
 				return err
 			}
 		}
 	}
 }
 
-func printScan(w io.Writer, scan event.Scan, raw []byte, asJSON bool) error {
+func printRx(w io.Writer, rx wire.Rx, raw []byte, asJSON bool) error {
 	if asJSON {
 		enc := json.NewEncoder(w)
 		enc.SetEscapeHTML(false)
-		return enc.Encode(scan)
+		return enc.Encode(rx)
 	}
 	text := "<not valid utf-8>"
-	if scan.Text != nil {
-		text = fmt.Sprintf("%q", *scan.Text)
+	if rx.Text != nil {
+		text = fmt.Sprintf("%q", *rx.Text)
 	}
 	fmt.Fprintf(w, "%s seq=%d frame_bytes=%d utf8=%t\n",
-		scan.AgentTS, scan.Seq, len(raw), scan.TextValid)
+		rx.AgentTS, rx.Seq, len(raw), rx.TextValid)
 	fmt.Fprintf(w, "  hex   %s\n", hex.EncodeToString(raw))
 	fmt.Fprintf(w, "  text  %s\n", text)
 	return nil

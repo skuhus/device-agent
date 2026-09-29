@@ -56,7 +56,9 @@ func TestRunValidateAcceptsGoodConfig(t *testing.T) {
 	if !strings.Contains(stdout, "configuration is valid") {
 		t.Errorf("stdout does not confirm validity:\n%s", stdout)
 	}
-	for _, want := range []string{"acme/vasby/pack-03", "scanner-main", "tls://mq.internal:8883"} {
+	for _, want := range []string{"acme/vasby/pack-03", "scanner-main", "tls://mq.internal:8883",
+		"agent status   skuhus/acme/vasby/pack-03/agent/pack-03/status",
+		"rx skuhus/acme/vasby/pack-03/scanner-main/rx status skuhus/acme/vasby/pack-03/scanner-main/status"} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("stdout does not mention %q:\n%s", want, stdout)
 		}

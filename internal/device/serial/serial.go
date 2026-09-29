@@ -84,9 +84,6 @@ type Options struct {
 	LogPayloads bool
 
 	Logger *slog.Logger
-	// OnPresence is called on every present/absent transition. It must not
-	// block; the read loop calls it inline.
-	OnPresence func(present bool, err error)
 
 	BackoffInitial time.Duration
 	BackoffMax     time.Duration
@@ -188,9 +185,13 @@ func (dev *Device) Path() string { return dev.opts.Path }
 func (dev *Device) Direction() device.Direction { return device.Inbound }
 
 // Run opens the device, frames what it reads and sends frames to sink until
-// ctx is cancelled. Open failures and disconnects are retried with jittered
-// exponential backoff; Run returns only on context cancellation.
-func (dev *Device) Run(ctx context.Context, sink chan<- device.Frame) error {
+// ctx is cancelled, reporting every port event to report, which may be nil.
+// Open failures and disconnects are retried with jittered exponential backoff;
+// Run returns only on context cancellation.
+func (dev *Device) Run(ctx context.Context, sink chan<- device.Frame, report func(device.Event)) error {
+	if report == nil {
+		report = func(device.Event) {}
+	}
 	backoff := dev.backoffI
 	for {
 		if err := ctx.Err(); err != nil {
@@ -198,7 +199,7 @@ func (dev *Device) Run(ctx context.Context, sink chan<- device.Frame) error {
 		}
 
 		started := time.Now()
-		worked, err := dev.session(ctx, sink)
+		worked, err := dev.session(ctx, sink, report)
 		lasted := time.Since(started)
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			dev.log.Info("device stopped", "reason", "context cancelled")
@@ -230,10 +231,13 @@ func (dev *Device) Run(ctx context.Context, sink chan<- device.Frame) error {
 // session opens the port and reads until it fails. It reports whether the port
 // ever read successfully, which is what distinguishes a working device that
 // went away from one that never came up.
-func (dev *Device) session(ctx context.Context, sink chan<- device.Frame) (worked bool, err error) {
+func (dev *Device) session(ctx context.Context, sink chan<- device.Frame, report func(device.Event)) (worked bool, err error) {
 	port, err := dev.open(dev.opts.Path, dev.mode)
 	if err != nil {
 		dev.log.Debug("device open failed", "error", err.Error(), "error_class", classify(err))
+		report(dev.event(device.PortOpenFailed, func(event *device.Event) {
+			event.ErrorClass, event.Err = classify(err), err
+		}))
 		return false, fmt.Errorf("open %s: %w", dev.opts.Path, err)
 	}
 	dev.assertModemLines(port)
@@ -244,7 +248,7 @@ func (dev *Device) session(ctx context.Context, sink chan<- device.Frame) (worke
 		"inter_char_timeout", dev.opts.InterCharTimeout.String(),
 		"max_frame_bytes", dev.opts.MaxFrameBytes,
 		"terminator_hex", hex.EncodeToString(dev.opts.Terminator))
-	dev.presence(true, nil)
+	report(dev.event(device.PortOpened, nil))
 
 	// Read blocks in select(2) and does not observe ctx. Closing the port is
 	// what unblocks it; the library signals pending reads through an internal
@@ -262,11 +266,15 @@ func (dev *Device) session(ctx context.Context, sink chan<- device.Frame) (worke
 		cancel()
 		<-closed
 		// A cancelled context means the agent is stopping, not that the device
-		// went away. Reporting absence there would put a station into the
+		// went away. Reporting it as lost would put a station into the
 		// device-missing state on every clean shutdown.
-		if ctx.Err() == nil {
-			dev.presence(false, err)
+		if ctx.Err() != nil {
+			report(dev.event(device.PortClosed, nil))
+			return
 		}
+		report(dev.event(device.PortLost, func(event *device.Event) {
+			event.ErrorClass, event.Err = classify(err), err
+		}))
 	}()
 
 	if terr := port.SetReadTimeout(dev.opts.InterCharTimeout); terr != nil {
@@ -299,7 +307,7 @@ func (dev *Device) session(ctx context.Context, sink chan<- device.Frame) (worke
 		if readBytes == 0 {
 			// Zero bytes with no error is the read timeout expiring.
 			if discard, ok := framer.Timeout(); ok {
-				dev.logDiscard(discard)
+				dev.logDiscard(discard, report)
 			}
 			continue
 		}
@@ -307,7 +315,7 @@ func (dev *Device) session(ctx context.Context, sink chan<- device.Frame) (worke
 		dev.log.Debug("device read", "bytes", readBytes, "pending", framer.Pending(), "resyncing", framer.Resyncing())
 		frames, discards := framer.Append(buf[:readBytes])
 		for _, discard := range discards {
-			dev.logDiscard(discard)
+			dev.logDiscard(discard, report)
 		}
 		for _, raw := range frames {
 			if dev.opts.LogPayloads {
@@ -355,10 +363,14 @@ func (dev *Device) logModemStatus(port goserial.Port) {
 	dev.log.Debug("modem status bits", "cts", bits.CTS, "dsr", bits.DSR, "dcd", bits.DCD, "ri", bits.RI)
 }
 
-// logDiscard reports thrown-away bytes. Oversize and timeout are WARN because
-// a scan was lost; resync and empty frames are DEBUG because they are the
-// expected consequence of the discard already reported.
-func (dev *Device) logDiscard(discard Discard) {
+// logDiscard logs and reports thrown-away bytes. Oversize and timeout are WARN
+// because a scan was lost; resync and empty frames are DEBUG because they are
+// the expected consequence of the discard already logged. Every one is reported,
+// so each can be counted.
+func (dev *Device) logDiscard(discard Discard, report func(device.Event)) {
+	report(dev.event(device.BytesDiscarded, func(event *device.Event) {
+		event.Reason, event.Bytes = string(discard.Reason), discard.Bytes
+	}))
 	switch discard.Reason {
 	case DiscardOversize, DiscardTimeout:
 		dev.log.Warn("discarded partial frame", "reason", string(discard.Reason), "bytes", discard.Bytes)
@@ -373,10 +385,14 @@ func (dev *Device) logDiscard(discard Discard) {
 	}
 }
 
-func (dev *Device) presence(present bool, err error) {
-	if dev.opts.OnPresence != nil {
-		dev.opts.OnPresence(present, err)
+// event builds a port event for this device, stamped now, with fill adding the
+// fields that depend on its kind.
+func (dev *Device) event(kind device.EventKind, fill func(*device.Event)) device.Event {
+	event := device.Event{DeviceID: dev.opts.ID, Kind: kind, At: time.Now()}
+	if fill != nil {
+		fill(&event)
 	}
+	return event
 }
 
 // classify names the failure so a log reader can tell a missing device from a
