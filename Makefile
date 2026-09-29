@@ -191,9 +191,10 @@ spike-cluster-up: broker-up
 	@docker exec skuhus-dev-rabbitmq-2 sh -c 'rabbitmqctl -q stop_app && rabbitmqctl -q reset && rabbitmqctl -q join_cluster rabbit@skuhus-dev-rabbitmq && rabbitmqctl -q start_app'
 	@docker exec skuhus-dev-rabbitmq rabbitmqctl -q cluster_status | grep -A3 "Running Nodes"
 
-# RabbitMQ never retains a will, so the spike clearing a stored will can only
-# be exercised against a broker that does. Mosquitto does, and here accepts any
-# credentials, so the spike targets work against it unchanged.
+# RabbitMQ 4.1.8 and 4.3.5 do not retain a will (docs/spikes/m0-mqtt5.md), so
+# the spike clearing a stored will can only be exercised against a broker that
+# does. Mosquitto does, and here accepts any credentials, so the spike targets
+# work against it unchanged.
 .PHONY: spike-mosquitto-up
 spike-mosquitto-up: network
 	@docker rm -f skuhus-dev-mosquitto >/dev/null 2>&1 || true

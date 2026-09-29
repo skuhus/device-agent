@@ -90,7 +90,7 @@ func main() {
 }
 
 // runID keeps one spike run from colliding with another, and keeps retained
-// messages left behind by a failed run out of the next one.
+// messages left behind by a killed run out of the next one.
 func runID() string {
 	var randomBytes [4]byte
 	if _, err := rand.Read(randomBytes[:]); err != nil {
@@ -164,9 +164,9 @@ func (runner *runner) report() bool {
 }
 
 // The topics, under the run's prefix, that checks store retained messages on.
-// checkLeftovers subscribes to each by name because RabbitMQ delivers a
-// retained message only to a subscription naming its exact topic, never
-// through a wildcard (docs/spikes/m0-mqtt5.md).
+// checkLeftovers subscribes to each by name because RabbitMQ 4.3.5 delivers a
+// retained message only to a subscription naming its exact topic, not to a
+// wildcard subscription (docs/spikes/m0-mqtt5.md).
 const (
 	statusSuffix        = "/status"
 	statusClusterSuffix = "/status-cluster"

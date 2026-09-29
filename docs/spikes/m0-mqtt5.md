@@ -185,8 +185,9 @@ published retained to `skuhus/acme/vasby/pack-03/oracle/control` reaches a
 subscription to that exact topic, with the retain flag set. Subscriptions to
 `skuhus/acme/vasby/pack-03/oracle/+`, `skuhus/acme/vasby/pack-03/oracle/#` and
 `skuhus/acme/vasby/pack-03/#` receive nothing. Two clients agree:
-`mosquitto_sub` 2.1.2 and `dev/consumer` on paho.golang. Mosquitto 2.1.2, as a
-broker, delivers the same message to a `#` subscription.
+`mosquitto_sub` 2.1.2 and `dev/consumer` on paho.golang. The same test against
+Mosquitto 2.1.2 as the broker delivers the message to the `oracle/#`
+subscription; `+` was not tried there.
 
 A consumer that subscribes with a wildcard therefore learns nothing from
 retained messages on this broker. It is also why the spike's `leftovers` check
@@ -252,9 +253,9 @@ that refuses MQTT 5 from a network fault:
 make spike-brokerinfo BROKER=10.9.21.23:1883 FLAGS="--amqp 10.9.21.23:5672"
 ```
 
-Against a broker that retains wills, which RabbitMQ never does, so that the
-spike clearing a stored will is exercised too. On Mosquitto 2.1.2
-`lwt-retained` passes. `make broker-down` removes it along with RabbitMQ:
+RabbitMQ 4.1.8 and 4.3.5 do not retain wills, so the spike clearing a stored
+will is exercised only against a broker that does. Mosquitto 2.1.2 does:
+`lwt-retained` passes on it. `make broker-down` removes it along with RabbitMQ:
 
 ```
 make spike-mosquitto-up
