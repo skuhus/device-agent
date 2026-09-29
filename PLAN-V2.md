@@ -237,6 +237,9 @@ Depends on: T2, T3.
 
 ### T7. Core: reading and publishing
 
+Status: done on branch gh-12-core, not yet merged. Until T8 the agent publishes
+rx and its offline message and will, but no keepalive or device events.
+
 Motivation. This is the part of v1 the maintainer judged easier to rewrite than
 to fix. The supervisor in internal/agent owns publishing, status, heartbeat,
 presence and the drain policy in one type. runAgent
