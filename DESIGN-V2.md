@@ -121,6 +121,12 @@ rule `[a-z0-9-]+` (internal/config/validate.go:24). v1 allows `[A-Za-z0-9._-]+`
 (validate.go:27), which was acceptable while the id only appeared inside
 payloads. Source: maintainer, 2026-09-29 (#23 Q1).
 
+`[Proposed]` The instance is a topic level too, `agent/<instance>/status`, so it
+follows the same rule for the same reason. v1 allows `[A-Za-z0-9._-]{1,64}`,
+because there the instance was only the MQTT client id (validate.go:30 and
+74-84). internal/wire refuses an instance outside the rule, and T5 would check
+it in the configuration.
+
 ## Message ids and execution results
 
 `[Decided]` Every rx and every tx message carries a UUID. Source: maintainer,
@@ -351,6 +357,371 @@ status. RabbitMQ delivers a will without retaining it, and does not replicate
 retained messages across cluster nodes (docs/spikes/m0-mqtt5.md:102-106). A
 consumer relying on the retained status sees a dead agent as online.
 
+## Message formats
+
+`[Proposed]` Everything in this section, until the maintainer reviews T6 (#11):
+the field names, the `kind` values, the codes, the tx contract's time limit and
+the publishing table. The decisions it builds on are cited where they are used.
+
+Every message is one JSON object in UTF-8, published with the content type
+`application/json`. Field names are snake_case and timestamps are RFC 3339 in
+UTC with milliseconds, both as in v1 (internal/event/scan.go). internal/wire
+builds every message below, and its tests hold this section and the code to
+each other: each example is what the code builds, value for value, and each
+code table lists exactly the codes the code defines.
+
+### Fields in every message the agent publishes
+
+| Field | Type | Null | Meaning |
+|---|---|---|---|
+| schema | integer | no | 2. v1's messages are schema 1 (internal/event/scan.go); consumers switch on it. |
+| kind | string | no | `rx`, `event`, `tx_result`, `keepalive` or `offline`. Each status topic carries two kinds. |
+| id | string | no | A UUID, version 4, new for every message. At QoS 1 a message can arrive twice; a consumer that has seen the id drops the copy. On rx it is the UUID every rx message carries ("Message ids and execution results"). |
+| project, site, station | string | no | The station, as in the topic. |
+| instance_id | string | no | The agent instance: the MQTT client id, and the `<instance>` level of the agent's topics. |
+| agent_version | string | no | |
+| agent_ts | string | no | When the agent built the message, by the host clock, which nothing vouches for ("Carried over from v1"). |
+
+The identity repeats the topic because a message copied into a log, a ticket or
+a database row loses its topic (v1's reason, internal/event/status.go).
+
+A message about one device also carries:
+
+| Field | Type | Null | Meaning |
+|---|---|---|---|
+| device_id | string | no | The device's topic level. |
+| device_type | string | yes | The configured device_type (#23 Q7), null when none is configured. The agent does not interpret it. |
+
+### rx
+
+On `<device>/rx`, one message per frame.
+
+```json rx
+{
+  "schema": 2,
+  "kind": "rx",
+  "id": "5b7b4f6e-2f0a-4c1e-9d3a-8f6e1c2b7a90",
+  "project": "acme",
+  "site": "vasby",
+  "station": "pack-03",
+  "instance_id": "pack-03",
+  "agent_version": "2.0.0",
+  "agent_ts": "2026-09-29T08:00:00.123Z",
+  "device_id": "scanner-1",
+  "device_type": "symbol-05e0-1701",
+  "seq": 1042,
+  "raw_b64": "NzMxMDQyNTAxMjM0NQ==",
+  "text": "7310425012345",
+  "text_valid": true
+}
+```
+
+| Field | Type | Null | Meaning |
+|---|---|---|---|
+| seq | integer | no | Counts this device's frames from 1 at process start. A gap between two received values means frames were lost between them. It does not survive a restart and is not a dedup key; `id` is. |
+| raw_b64 | string | no | The whole frame, separator excluded, in padded standard base64 (RFC 4648). Nothing is stripped ("Carried over from v1"). |
+| text | string | yes | The frame when it is valid UTF-8; null otherwise, rather than a lossy rendering. |
+| text_valid | boolean | no | Whether `text` is set. |
+
+v1's `symbology`, which was always null, is dropped.
+
+### Device events
+
+On `<device>/status`, with `kind` `event`.
+
+```json event
+{
+  "schema": 2,
+  "kind": "event",
+  "id": "c3a1e2d4-5f60-4b7a-8c9d-0e1f2a3b4c5d",
+  "project": "acme",
+  "site": "vasby",
+  "station": "pack-03",
+  "instance_id": "pack-03",
+  "agent_version": "2.0.0",
+  "agent_ts": "2026-09-29T08:00:00.123Z",
+  "device_id": "scanner-1",
+  "device_type": "symbol-05e0-1701",
+  "device_open": false,
+  "expiry_s": 30,
+  "code": "port_lost",
+  "text": "port lost: read /dev/serial/by-id/usb-Symbol_Technologies-if00: input/output error (disconnected)",
+  "detail": {
+    "error": "read /dev/serial/by-id/usb-Symbol_Technologies-if00: input/output error",
+    "error_class": "disconnected",
+    "path": "/dev/serial/by-id/usb-Symbol_Technologies-if00"
+  }
+}
+```
+
+| Field | Type | Null | Meaning |
+|---|---|---|---|
+| device_open | boolean | no | Whether the agent holds the port open after this event: what the agent knows, not what the hardware does ("Carried over from v1"). |
+| expiry_s | integer | no | The device's message expiry in seconds (#23 Q6). |
+| code | string | no | One of the codes below. |
+| text | string | no | A sentence for a person. Nothing should parse it. |
+| detail | object | no | Keys that depend on the code, below; `{}` for a code with none. |
+
+#### Event codes
+
+| Code | Detail keys |
+|---|---|
+| `port_opened` | `path` |
+| `port_closed` | `path` |
+| `port_lost` | `path`, `error_class`, `error` |
+| `open_failed` | `path`, `error_class`, `error` |
+| `discard` | `reason`, `bytes` |
+
+The list is a minimum (#23 Q8); codes are added, never renamed. `error_class` is
+one of `absent`, `busy`, `permission_denied`, `read_only`, `disconnected`,
+`port_error` and `unknown`, the classes v1 assigns
+(internal/device/serial/serial.go, classify). `error` is the operating system's
+message. `reason` is one of `oversize`, `inter_char_timeout`, `resync` and
+`empty_frame`, the framer's names (internal/device/serial/framer.go), and
+`bytes` is how many bytes were discarded. How often `open_failed` is published
+while an absent port is retried is T8's to decide.
+
+### tx
+
+On `<device>/tx`, published by senders. Reserved in 2.0.0: the agent subscribes
+to it from 2.1.0.
+
+```json tx
+{
+  "schema": 2,
+  "id": "0192a3b4-c5d6-7e8f-9a0b-1c2d3e4f5a6b",
+  "sender": "label-service",
+  "raw_b64": "XlhBXkZEU0tVLTEwNDJeRlNeWFo="
+}
+```
+
+| Field | Type | Meaning |
+|---|---|---|
+| schema | integer | 2. |
+| id | string | A UUID of any RFC 9562 version (#23 Q15, Q15a), and the idempotency key. |
+| sender | string | Who sent it, not empty. Recorded; nothing trusts it (#23 Q3). |
+| raw_b64 | string | The bytes to write, in padded standard base64. |
+
+All four are required and no other field is accepted, so a mistake in a sender
+gets a failed result instead of being ignored. Senders set an MQTT message
+expiry on every tx (#23 Q19).
+
+### tx results
+
+On `<device>/status`, with `kind` `tx_result`. A tx the agent can read gets
+`accepted`, then `written` or `failed`. A tx it cannot read, or whose id is not a
+UUID, gets `failed` alone.
+
+```json tx_result
+{
+  "schema": 2,
+  "kind": "tx_result",
+  "id": "7e6d5c4b-3a29-4817-9f6e-5d4c3b2a1f0e",
+  "project": "acme",
+  "site": "vasby",
+  "station": "pack-03",
+  "instance_id": "pack-03",
+  "agent_version": "2.0.0",
+  "agent_ts": "2026-09-29T08:00:00.123Z",
+  "device_id": "printer-1",
+  "device_type": "zebra-zt410",
+  "device_open": false,
+  "expiry_s": 30,
+  "tx_id": "0192a3b4-c5d6-7e8f-9a0b-1c2d3e4f5a6b",
+  "sender": "label-service",
+  "state": "failed",
+  "code": "port_unavailable",
+  "text": "the port could not be opened: open /dev/serial/by-id/usb-Zebra_ZT410-if00: device or resource busy",
+  "error_class": "busy",
+  "bytes_written": 0,
+  "attempts": 3
+}
+```
+
+| Field | Type | Null | Meaning |
+|---|---|---|---|
+| device_open | boolean | no | As in device events. |
+| expiry_s | integer | no | As in device events. |
+| tx_id | string | yes | The tx's id; null when the tx could not be read. |
+| sender | string | yes | The tx's sender; null when the tx could not be read. |
+| state | string | no | `accepted`, `written` or `failed` (#23 Q2). |
+| code | string | no | One of the codes below. |
+| text | string | no | A sentence for a person, with the cause when there is one. |
+| error_class | string | yes | The port's error class when a port error caused the result; null otherwise. |
+| bytes_written | integer | no | How many bytes reached the port. |
+| attempts | integer | no | Attempts made to open the port for this tx; 0 when it was open. |
+
+#### Tx result codes
+
+| State | Code | When |
+|---|---|---|
+| `accepted` | `accepted` | Received and queued for the port. |
+| `written` | `written` | Every byte reached the port. |
+| `written` | `already_written` | A tx with this id was written before, so it was not written again (#23 Q15). The agent remembers ids in memory only, so a restart forgets them (T16). |
+| `failed` | `invalid_message` | Not JSON, `schema` is not 2, a field is missing or unknown, or `raw_b64` is not base64. |
+| `failed` | `invalid_id` | `id` is not a UUID. |
+| `failed` | `port_unavailable` | The port could not be opened in the configured number of attempts (#23 Q17). |
+| `failed` | `write_failed` | Writing started and failed. It is not retried, and `bytes_written` says how far it got (#23 Q17a). |
+| `failed` | `expired` | The tx's message expiry passed before an attempt could start (#23 Q17a). |
+
+### The tx contract
+
+- A sender that receives no result at all within the tx's message expiry plus 5
+  seconds treats the tx as not written (#23 Q18). A tx published while the agent
+  is disconnected is lost and gets no result (#23 Q19a). The 5 seconds cover
+  the broker delivering the tx and the agent publishing `accepted`.
+- Sending the same tx again with the same id is safe while the agent remembers
+  the id: a tx already written is not written twice, and gets `already_written`.
+- `accepted` says the tx reached the agent. Only `written` says the bytes
+  reached the port, and it says nothing about the device ("Writing: tx").
+
+### Agent keepalive
+
+On `agent/<instance>/status`, with `kind` `keepalive`, every 15 seconds, v1's
+interval (internal/transport/mqtt/client.go:23).
+
+```json keepalive
+{
+  "schema": 2,
+  "kind": "keepalive",
+  "id": "9f8e7d6c-5b4a-4392-8170-6f5e4d3c2b1a",
+  "project": "acme",
+  "site": "vasby",
+  "station": "pack-03",
+  "instance_id": "pack-03",
+  "agent_version": "2.0.0",
+  "agent_ts": "2026-09-29T08:00:00.123Z",
+  "uptime_s": 3600,
+  "interval_s": 15,
+  "devices": [
+    {
+      "device_id": "scanner-1",
+      "device_type": "symbol-05e0-1701",
+      "device_open": true,
+      "expiry_s": 30,
+      "rx_frames": 1042,
+      "rx_bytes": 13546,
+      "discards": {
+        "oversize": 0,
+        "inter_char_timeout": 2,
+        "resync": 0,
+        "empty_frame": 0
+      },
+      "failed_opens": {
+        "absent": 0,
+        "busy": 0,
+        "permission_denied": 0,
+        "read_only": 0,
+        "disconnected": 0,
+        "port_error": 0,
+        "unknown": 0
+      },
+      "publish_failures": 0,
+      "tx_written": 0,
+      "tx_failed": 0,
+      "buffer_depth": 0
+    },
+    {
+      "device_id": "printer-1",
+      "device_type": "zebra-zt410",
+      "device_open": false,
+      "expiry_s": 30,
+      "rx_frames": 0,
+      "rx_bytes": 0,
+      "discards": {
+        "oversize": 0,
+        "inter_char_timeout": 0,
+        "resync": 0,
+        "empty_frame": 0
+      },
+      "failed_opens": {
+        "absent": 0,
+        "busy": 3,
+        "permission_denied": 0,
+        "read_only": 0,
+        "disconnected": 0,
+        "port_error": 0,
+        "unknown": 0
+      },
+      "publish_failures": 0,
+      "tx_written": 0,
+      "tx_failed": 1,
+      "buffer_depth": 0
+    }
+  ]
+}
+```
+
+| Field | Type | Null | Meaning |
+|---|---|---|---|
+| uptime_s | integer | no | Seconds since the process started. A restart loop shows as a count that keeps returning to zero. |
+| interval_s | integer | no | Seconds until the next keepalive. A consumer that has seen none for several intervals treats the agent as gone. |
+| devices | array | no | One entry per configured device, in configuration order; `[]` with none. |
+
+Each entry carries `device_id`, `device_type`, `device_open` and `expiry_s` as a
+device event does, and the device's counters since the process started, the
+list in "Status channel" (#23 Q9): `rx_frames`, `rx_bytes`, `discards` by
+reason, `failed_opens` by error class, `publish_failures`, `tx_written`,
+`tx_failed`, and `buffer_depth`, the frames waiting to be published now. Every
+reason and every class is present, at 0 when nothing happened, so a consumer
+can difference two keepalives without handling a missing key. The inverted
+separator ("Reading: rx") shows as `discards.inter_char_timeout` rising while
+`rx_frames` stays flat.
+
+### Agent offline
+
+On `agent/<instance>/status`, with `kind` `offline`. The agent publishes it
+itself when it stops cleanly (`reason` `shutdown`), because a clean disconnect
+discards the will. It is also registered as the will (`reason` `will`), which
+the broker publishes when the connection is lost without a disconnect.
+
+```json offline
+{
+  "schema": 2,
+  "kind": "offline",
+  "id": "1a2b3c4d-5e6f-4a0b-9c8d-7e6f5a4b3c2d",
+  "project": "acme",
+  "site": "vasby",
+  "station": "pack-03",
+  "instance_id": "pack-03",
+  "agent_version": "2.0.0",
+  "agent_ts": "2026-09-29T08:00:00.123Z",
+  "reason": "will"
+}
+```
+
+In a will, `agent_ts` is when the agent connected, not when it died: the broker
+sends a payload composed at connect time. The time of death is when the
+message arrives, which only the consumer knows.
+
+### Publishing
+
+| Message | Topic | QoS | Retained | Message expiry |
+|---|---|---|---|---|
+| rx | `<device>/rx` | 1 | no | the device's (#23 Q6) |
+| event, tx result | `<device>/status` | 1 | no | the device's |
+| keepalive | `agent/<instance>/status` | 0 | no | 60 s, four intervals, as v1 (internal/transport/mqtt/client.go:24-27) |
+| offline | `agent/<instance>/status` | 1 | no | none |
+| tx | `<device>/tx` | 1, by senders | no | set by the sender (#23 Q19) |
+
+`[Proposed]` Nothing is retained. v1 retains its status and its will
+(internal/transport/mqtt/client.go:141-149, 182-192), and three measurements
+leave that of little use on RabbitMQ: a will is delivered but not retained, so
+the last retained status of a dead agent reads online; a retained message is
+not visible through another cluster node; and on 4.3.5 a retained message
+reaches only a subscription naming its exact topic, not a wildcard one such as
+`+/status` (docs/spikes/m0-mqtt5.md). A consumer learns an agent's state, and
+every device's, from the next keepalive instead, within one interval.
+
+A consumer at a station subscribes to:
+
+- `skuhus/<project>/<site>/<station>/+/rx` for every device's readings;
+- `skuhus/<project>/<site>/<station>/+/status` for every device's events and tx
+  results. It does not match the agents' topics, which are one level deeper,
+  and no device can be called `agent`;
+- `skuhus/<project>/<site>/<station>/agent/+/status` for every agent's
+  keepalives and offline messages.
+
 ## Absent port at startup
 
 `[Decided]` The agent keeps running, reports the port as absent on the device
@@ -472,6 +843,8 @@ Measured in M0 (docs/spikes/m0-mqtt5.md):
   across cluster nodes.
 - A persistent session queues QoS 1 messages for a disconnected client and
   honours their message expiry.
+- On 4.3.5 a retained message reaches only a subscription naming its exact
+  topic, not a wildcard subscription. Measured on 2026-09-29, during T4.
 
 ## Implementation approach
 
@@ -504,8 +877,14 @@ Leave behind:
 
 ## Open decisions
 
-None. No item is open or proposed: the maintainer's answers to #23 on
-2026-09-29 settled every proposal and every follow-up.
-Decisions of 2026-09-29 are recorded in their sections above.
+No item is open. The maintainer's answers to #23 on 2026-09-29 settled every
+proposal and follow-up made up to then; they are recorded in their sections
+above.
+
+`[Proposed]` until the maintainer reviews T6 (#11):
+
+- the message formats ("Message formats"), including publishing nothing
+  retained;
+- the instance following the topic-level rule ("Topics").
 
 Task numbers refer to PLAN-V2.md.

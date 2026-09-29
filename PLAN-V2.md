@@ -85,8 +85,9 @@ DESIGN-V2.md cites exists in a fresh clone.
 ### T2. Settle the open decisions
 
 Status: done on 2026-09-29. The maintainer answered every question and
-follow-up in #23, the answers are recorded in DESIGN-V2.md, and no item there is
-open or proposed.
+follow-up in #23, the answers are recorded in DESIGN-V2.md, and when T2 closed
+no item there was open or proposed. T6 has since proposed the message formats
+and the instance rule, which its review settles.
 
 Motivation. DESIGN-V2.md lists eight open decisions and a number of proposals.
 Each open decision blocks a named task; building on an unconfirmed proposal
