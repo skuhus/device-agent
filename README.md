@@ -305,16 +305,16 @@ shows on its next start.
 
 ## Releasing
 
-The version lives in one place, `internal/version/version.go`:
+The version lives in one place, the `version` constant in
+`internal/version/version.go`. To release, raise it in a pull request. Merging
+that pull request to master runs the release workflow, which tags `v<version>`
+and publishes the release only after every build has passed, as "Continuous
+integration" describes. Nothing is tagged by hand.
 
-```go
-const version = "0.1.0"
-```
-
-Edit it, then tag. It is a constant rather than a linker flag so that `go build`,
-`go test`, an IDE and the Makefile all report the same version, and no binary
-can claim a version its source does not carry. The commit and build date are
-injected, because source cannot know them.
+It is a constant rather than a linker flag so that `go build`, `go test`, an
+IDE and the Makefile all report the same version, and no binary can claim a
+version its source does not carry. The commit and build date are injected,
+because source cannot know them.
 
 ## Configuration
 
