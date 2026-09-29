@@ -178,6 +178,20 @@ Other settings recorded from the same output, for the M2 design:
 Shared subscriptions are reported unavailable (`shared_sub=false`); the agent
 does not use them.
 
+### Retained messages reach only exact-topic subscriptions
+
+Measured on 2026-09-29 against the 4.3.5 development broker. A message
+published retained to `skuhus/acme/vasby/pack-03/oracle/control` reaches a
+subscription to that exact topic, with the retain flag set. Subscriptions to
+`skuhus/acme/vasby/pack-03/oracle/+`, `skuhus/acme/vasby/pack-03/oracle/#` and
+`skuhus/acme/vasby/pack-03/#` receive nothing. Two clients agree:
+`mosquitto_sub` 2.1.2 and `dev/consumer` on paho.golang. Mosquitto 2.1.2, as a
+broker, delivers the same message to a `#` subscription.
+
+A consumer that subscribes with a wildcard therefore learns nothing from
+retained messages on this broker. It is also why the spike's `leftovers` check
+subscribes to each of its topics by name.
+
 ## What this costs M2
 
 Both failures land on the same feature: retained status as a reliable way to ask
@@ -238,6 +252,21 @@ that refuses MQTT 5 from a network fault:
 make spike-brokerinfo BROKER=10.9.21.23:1883 FLAGS="--amqp 10.9.21.23:5672"
 ```
 
-The harness creates its topics under `skuhus/spike/<random>`, so one run cannot
-read another's leftovers, and it clears the retained messages it sets. The will
-topic needs no clearing on this broker, because nothing was retained there.
+Against a broker that retains wills, which RabbitMQ never does, so that the
+spike clearing a stored will is exercised too. On Mosquitto 2.1.2
+`lwt-retained` passes. `make broker-down` removes it along with RabbitMQ:
+
+```
+make spike-mosquitto-up
+make spike-mqtt5 BROKER=skuhus-dev-mosquitto:1883 FLAGS="--prefix skuhus/acme/vasby/pack-03"
+```
+
+The harness creates its topics under `<prefix>/<run id>`, with `skuhus/spike` as
+the default prefix, so one run cannot read another's leftovers. Every check that
+stores a retained message or a will clears it on every return path. The last
+check, `leftovers`, subscribes to each of those topics by name, clears anything
+still retained there and fails if it found something. `--timeout 1ns` makes
+checks fail after they have published, and `--peer` naming a closed port does
+the same for `retained-cluster`. Runs made to fail with the first on RabbitMQ
+and on Mosquitto, and with the second on RabbitMQ, left nothing behind. A run
+killed before it finishes can still leave messages behind.

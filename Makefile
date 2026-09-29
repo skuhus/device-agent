@@ -5,6 +5,7 @@
 
 GO_IMAGE       ?= golang:1.25
 RABBITMQ_IMAGE ?= rabbitmq:4.3.5-management
+MOSQUITTO_IMAGE ?= eclipse-mosquitto:2.1.2-alpine
 BIN            ?= skuhus-device-agent
 IMAGE          ?= skuhus-device-agent
 
@@ -56,6 +57,7 @@ help:
 	@echo "spike-brokerinfo   what a broker is, and which MQTT levels it answers"
 	@echo "spike-mqtt5        the M0 property spike; see docs/spikes/m0-mqtt5.md"
 	@echo "spike-cluster-up   add a second broker node, for the retained check"
+	@echo "spike-mosquitto-up a Mosquitto broker, which retains wills, for the spike"
 
 # --- build -----------------------------------------------------------------
 
@@ -162,12 +164,12 @@ broker-up: network
 .PHONY: broker-down
 broker-down:
 	$(COMPOSE) down
-	@docker rm -f skuhus-dev-rabbitmq-2 >/dev/null 2>&1 || true
+	@docker rm -f skuhus-dev-rabbitmq-2 skuhus-dev-mosquitto >/dev/null 2>&1 || true
 
 .PHONY: broker-reset
 broker-reset:
 	$(COMPOSE) down -v
-	@docker rm -f skuhus-dev-rabbitmq-2 >/dev/null 2>&1 || true
+	@docker rm -f skuhus-dev-rabbitmq-2 skuhus-dev-mosquitto >/dev/null 2>&1 || true
 
 .PHONY: broker-logs
 broker-logs:
@@ -188,6 +190,17 @@ spike-cluster-up: broker-up
 	@until docker exec skuhus-dev-rabbitmq-2 rabbitmq-diagnostics -q check_running >/dev/null 2>&1; do sleep 3; done
 	@docker exec skuhus-dev-rabbitmq-2 sh -c 'rabbitmqctl -q stop_app && rabbitmqctl -q reset && rabbitmqctl -q join_cluster rabbit@skuhus-dev-rabbitmq && rabbitmqctl -q start_app'
 	@docker exec skuhus-dev-rabbitmq rabbitmqctl -q cluster_status | grep -A3 "Running Nodes"
+
+# RabbitMQ never retains a will, so the spike clearing a stored will can only
+# be exercised against a broker that does. Mosquitto does, and here accepts any
+# credentials, so the spike targets work against it unchanged.
+.PHONY: spike-mosquitto-up
+spike-mosquitto-up: network
+	@docker rm -f skuhus-dev-mosquitto >/dev/null 2>&1 || true
+	@docker run -d --name skuhus-dev-mosquitto --network $(NETWORK) $(MOSQUITTO_IMAGE) \
+		sh -c 'printf "listener 1883\nallow_anonymous true\n" > /mosquitto/config/mosquitto.conf && exec mosquitto -c /mosquitto/config/mosquitto.conf' >/dev/null
+	@until docker logs skuhus-dev-mosquitto 2>&1 | grep -q " running"; do sleep 1; done
+	@echo "mosquitto at skuhus-dev-mosquitto:1883; use BROKER=skuhus-dev-mosquitto:1883"
 
 # The broker, the credentials and the topic to watch. Override any of them to
 # point these at something else.

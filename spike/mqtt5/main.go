@@ -18,6 +18,10 @@
 //	expiry           message expiry interval discards a stale queued message
 //	retained-cluster a retained message crosses cluster nodes (only with --peer)
 //
+// A last check, leftovers, is about the spike rather than the broker: when the
+// run ends, nothing a check stored may still be retained under its prefix. A
+// clear that fails is reported as cleanup.
+//
 // Exit status is 0 only when every check passed.
 package main
 
@@ -142,6 +146,7 @@ func (runner *runner) run(ctx context.Context) error {
 
 	runner.checkLWT(ctx)
 	runner.checkExpiry(ctx)
+	runner.checkLeftovers()
 	return nil
 }
 
@@ -156,6 +161,86 @@ func (runner *runner) report() bool {
 	}
 	fmt.Fprintf(runner.out, "\n%d passed, %d failed\n", passed, failed)
 	return failed == 0
+}
+
+// The topics, under the run's prefix, that checks store retained messages on.
+// checkLeftovers subscribes to each by name because RabbitMQ delivers a
+// retained message only to a subscription naming its exact topic, never
+// through a wildcard (docs/spikes/m0-mqtt5.md).
+const (
+	statusSuffix        = "/status"
+	statusClusterSuffix = "/status-cluster"
+	statusLWTSuffix     = "/status-lwt"
+)
+
+const (
+	// cleanupTimeout bounds each clear and the leftovers check on their own
+	// context, independently of the run's.
+	cleanupTimeout = 10 * time.Second
+	// leftoverWait is how long checkLeftovers listens. It is fixed rather than
+	// --timeout, so that a run made to fail with a short timeout is still
+	// checked properly.
+	leftoverWait = 3 * time.Second
+)
+
+// clearRetained removes whatever is stored retained on topic. Every check that
+// stores a message defers it, so every return path clears. It connects afresh
+// with its own context, because the check's connection may be what failed and
+// the run's context running out may be what ended the check. A failed clear
+// leaves a message behind, so it is recorded rather than dropped.
+func (runner *runner) clearRetained(topic string) {
+	ctx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
+	defer cancel()
+	cleaner, _, err := runner.connect(ctx, "cleanup", connectOptions{cleanStart: true})
+	if err != nil {
+		runner.record("cleanup", false, "connect to clear %s: %v", topic, err)
+		return
+	}
+	defer cleaner.close(ctx)
+	if _, err := cleaner.paho.Publish(ctx, &paho.Publish{Topic: topic, QoS: 1, Retain: true}); err != nil {
+		runner.record("cleanup", false, "clear %s: %v", topic, err)
+	}
+}
+
+// checkLeftovers is the run's evidence that it cleaned up after itself. A
+// message still retained on a check's topic is one the check failed to clear,
+// or a will the broker stored after the check had already cleared its topic.
+// Each is cleared here, so the run leaves nothing behind either way, and the
+// check fails if there was any.
+func (runner *runner) checkLeftovers() {
+	ctx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
+	defer cancel()
+	sweeper, _, err := runner.connect(ctx, "leftovers", connectOptions{cleanStart: true})
+	if err != nil {
+		runner.record("leftovers", false, "connect: %v", err)
+		return
+	}
+	defer sweeper.close(ctx)
+
+	topics := []string{runner.prefix + statusSuffix, runner.prefix + statusClusterSuffix, runner.prefix + statusLWTSuffix}
+	for _, topic := range topics {
+		if err := sweeper.subscribe(ctx, topic, 1); err != nil {
+			runner.record("leftovers", false, "subscribe %s: %v", topic, err)
+			return
+		}
+	}
+	var found []string
+	for {
+		msg, err := sweeper.recv(leftoverWait)
+		if err != nil {
+			break
+		}
+		if !msg.Retain {
+			continue
+		}
+		found = append(found, msg.Topic)
+		runner.clearRetained(msg.Topic)
+	}
+	if len(found) > 0 {
+		runner.record("leftovers", false, "still retained after the checks, now cleared: %s", strings.Join(found, ", "))
+		return
+	}
+	runner.record("leftovers", true, "nothing retained on %s", strings.Join(topics, ", "))
 }
 
 // checkConnack records what the broker says about itself. Nothing here is a
@@ -185,7 +270,7 @@ func (runner *runner) checkConnack(ca *paho.Connack) {
 // online since before a consumer started must still be discoverable, which is
 // what retained delivery provides, and going offline must be able to clear it.
 func (runner *runner) checkRetained(ctx context.Context, pub *client) {
-	topic := runner.prefix + "/status"
+	topic := runner.prefix + statusSuffix
 
 	if _, err := pub.paho.Publish(ctx, &paho.Publish{
 		Topic:   topic,
@@ -196,6 +281,9 @@ func (runner *runner) checkRetained(ctx context.Context, pub *client) {
 		runner.record("retained", false, "publish retained: %v", err)
 		return
 	}
+	// The clear further down is part of what this check measures. This one is
+	// what keeps a check that fails before it from leaving the message behind.
+	defer runner.clearRetained(topic)
 
 	// A subscriber that connects after the publish is the case that matters:
 	// the broker, not the publisher, has to hold the message.
@@ -257,7 +345,7 @@ func (runner *runner) checkRetainedAcrossNodes(ctx context.Context, pub *client)
 	if runner.peer == "" {
 		return
 	}
-	topic := runner.prefix + "/status-cluster"
+	topic := runner.prefix + statusClusterSuffix
 
 	if _, err := pub.paho.Publish(ctx, &paho.Publish{
 		Topic:   topic,
@@ -268,6 +356,9 @@ func (runner *runner) checkRetainedAcrossNodes(ctx context.Context, pub *client)
 		runner.record("retained-cluster", false, "publish retained on %s: %v", runner.addr, err)
 		return
 	}
+	// Leave no stale retained message behind on the publishing node, however
+	// the check ends.
+	defer runner.clearRetained(topic)
 
 	sub, _, err := runner.connect(ctx, "retained-peer", connectOptions{cleanStart: true, addr: runner.peer})
 	if err != nil {
@@ -299,19 +390,16 @@ func (runner *runner) checkRetainedAcrossNodes(ctx context.Context, pub *client)
 			}
 		}
 		runner.record("retained-cluster", false, detail, runner.addr, runner.peer)
-		// Leave no stale retained message behind on the publishing node.
-		_, _ = pub.paho.Publish(ctx, &paho.Publish{Topic: topic, QoS: 1, Retain: true})
 		return
 	}
 	runner.record("retained-cluster", msg.Retain, "peer %s delivered the retained message with retain=%t", runner.peer, msg.Retain)
-	_, _ = pub.paho.Publish(ctx, &paho.Publish{Topic: topic, QoS: 1, Retain: true})
 }
 
 // checkLWT covers section 5.5: the broker must publish the will when the agent
 // dies without disconnecting, which is the case that makes "station 3 went
 // offline" free. A graceful disconnect must not produce one.
 func (runner *runner) checkLWT(ctx context.Context) {
-	topic := runner.prefix + "/status-lwt"
+	topic := runner.prefix + statusLWTSuffix
 
 	observer, _, err := runner.connect(ctx, "lwt-observer", connectOptions{cleanStart: true})
 	if err != nil {
@@ -339,6 +427,10 @@ func (runner *runner) checkLWT(ctx context.Context) {
 		runner.record("lwt", false, "connect client with will: %v", err)
 		return
 	}
+	// From the socket close below, a broker that retains wills stores this one.
+	// The clear covers checkWillRetained as well, which runs inside this
+	// function, and every return in between.
+	defer runner.clearRetained(topic)
 
 	// Closing the socket without sending DISCONNECT is what a killed process or
 	// a pulled network cable looks like to the broker. A graceful Disconnect
