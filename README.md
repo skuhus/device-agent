@@ -400,4 +400,4 @@ docs/spikes/               spike results
 
 dev/ and spike/ are Go modules of their own, so `go vet ./...` and `go test
 ./...` in the repository root, and with them `make check` and CI, cover only
-the agent. gofmt still checks every file.
+the agent. gofmt still checks every Go file.
