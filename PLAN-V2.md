@@ -27,7 +27,7 @@ defects found in review, fixed within T11 and T4.
 | T1 | none, done | Commit the measurements in docs/ |
 | T2 | #23 | Settle the open decisions |
 | T3 | #8 | Rename to the device agent |
-| T4 | #9 | Give spike/ its own module |
+| T4 | #9 | Give spike/ and dev/ their own modules |
 | T5 | #10 | Configuration schema v2 |
 | T6 | #11 | Topics and message formats |
 | T7 | #12 | Core: reading and publishing |
@@ -46,7 +46,7 @@ defects found in review, fixed within T11 and T4.
 ## Order
 
     T1 commit docs ----+
-    T2 decisions ------+--> T3 rename --> T4 spike module
+    T2 decisions ------+--> T3 rename --> T4 tool modules
                        |        |
                        |        +--> T5 config --+
                        |        +--> T6 messages +--> T7 core --> T8 status --+
@@ -129,22 +129,33 @@ release workflow's build step use the new name.
 
 Depends on: T1, T2.
 
-### T4. Give spike/ its own module
+### T4. Give spike/ and dev/ their own modules
 
-Motivation. spike/mqtt5 and spike/brokerinfo are research tools from M0. They
-are part of the agent's module today, so `go vet ./...` and `go test ./...`
-compile them, and the M0 spike added paho.golang to go.mod before any agent
-code used it. Research code should not decide the agent's dependencies or break
-its build.
+Motivation. spike/mqtt5, spike/brokerinfo and dev/consumer are tools, not the
+agent, but they are packages of the agent's module. `go vet ./...` and `go test
+./...` compile them in CI, in the release workflow and in `make check`, so a
+tool that stops compiling, for example after a paho.golang update, fails those
+checks and blocks a release. They add no dependency: all three import only
+paho.golang, which the agent's transport imports too. DESIGN-V2.md,
+"Implementation approach", leaves both directories out of the agent's module.
 
-Work. Fix #25: the spike leaves retained messages behind, and brokerinfo shadows
-its packet body. Add a go.mod in spike/, making it a nested module; a parent module's
-`./...` excludes nested modules. Point the Makefile's spike targets at it. Keep
-it out of CI.
+Work.
+- Fix #25: the spike leaves retained messages behind on failure paths, and has
+  names damaged by a renaming pass.
+- Add a go.mod in spike/ and in dev/, making each a nested module. `./...` in
+  the repository root does not match a nested module's packages.
+- Run the Makefile's spike targets and `consume` inside their modules, for
+  example `go -C spike run ./mqtt5`. `go run ./spike/mqtt5` from the root fails
+  once spike/ is its own module.
+- gofmt keeps checking both directories, because `gofmt -l .` walks directories
+  rather than modules. `go vet`, `go test` and the tidy check stop covering
+  them, and nothing checks the nested go.sum files.
 
-Intended result. `go list -m all` in the repository root lists only what the
-agent imports. `go vet ./...` in the root does not compile spike/. `make
-spike-mqtt5` and `make spike-brokerinfo` still work.
+Intended result. `go list ./...` in the repository root lists no package under
+spike/ or dev/. A compile error in spike/ or dev/ no longer fails `go vet ./...`
+or `go test ./...` in the root. `go mod tidy` in the root leaves go.mod and
+go.sum unchanged. `make spike-brokerinfo`, `make spike-mqtt5` and `make consume`
+run against the development broker.
 
 Depends on: T1, T3.
 

@@ -498,8 +498,9 @@ Leave behind:
   assemble logging, audit, credentials, devices, transport and supervisor in one
   function;
 - validation duplicated between internal/config and agent.New;
-- dev/ and spike/ inside the agent's module, where the M0 spike put paho.golang
-  into go.mod before any agent code used it.
+- dev/ and spike/ inside the agent's module, where `go vet ./...` and `go test
+  ./...` compile them, so a tool that stops compiling fails the agent's checks
+  (T4).
 
 ## Open decisions
 
