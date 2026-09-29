@@ -69,9 +69,7 @@ which is a minor version under semantic versioning.
 ## Naming
 
 `[Decided]` The repository is skuhus/device-agent, renamed on 2026-09-29. The Go
-module path follows it and becomes github.com/skuhus/device-agent. go.mod and the
-git remote still carry device-serial-scanner; GitHub redirects the remote, but
-the module path has to be changed.
+module path follows it: github.com/skuhus/device-agent, changed by T3 (#8).
 
 `[Carried over]` One name for the binary, the configuration directory, the log
 directory, the release assets, the container image and the account inside it

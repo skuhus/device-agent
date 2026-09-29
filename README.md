@@ -358,7 +358,7 @@ is not written yet (M5).
 ## Layout
 
 ```
-cmd/skuhus-device-agent/          main, flags, subcommands
+cmd/skuhus-device-agent/   main, flags, subcommands
 internal/config/           load, validate, defaults
 internal/device/           Device interface
 internal/device/serial/    CDC / RS-232 implementation, framing, PTY harness

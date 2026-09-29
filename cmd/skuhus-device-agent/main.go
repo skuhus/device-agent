@@ -22,7 +22,7 @@ var (
 	date   string
 )
 
-const usage = `skuhus-device-agent - SKU Hus serial scanner device agent
+const usage = `skuhus-device-agent - SKU Hus device agent
 
 Usage:
   skuhus-device-agent <command> [flags]

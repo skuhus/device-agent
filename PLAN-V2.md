@@ -121,8 +121,10 @@ Work.
 - No behaviour change in this pull request.
 
 Intended result. A search for device-serial-scanner and SH_DEV_SER_SCANNER finds
-them only in DESIGN.md, the v1 record that T12 retires, and in DESIGN-V2.md and
-PLAN-V2.md where they cite v1 files at commit f97c736. `make check` passes. The image's
+them only in DESIGN.md, the v1 record that T12 retires; in DESIGN-V2.md and
+PLAN-V2.md where they cite v1 files at commit f97c736; and in
+device-agent-spec.md, which is the maintainer's document and which T3 does not
+edit. `make check` passes. The image's
 `version` subcommand prints the new name. The asset names produced by the
 release workflow's build step use the new name.
 
