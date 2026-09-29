@@ -44,13 +44,16 @@ func runProbe(args []string, stdout, stderr io.Writer) error {
 	deviceID := fs.String("device", "", "take settings from this device id in the config file")
 	path := fs.String("path", "", "device path, when not using --device")
 	baud := fs.Int("baud", config.DefaultBaud, "baud rate (ignored by USB-CDC devices)")
-	terminator := fs.String("terminator", `\r`, "frame terminator, backslash escapes decoded")
+	dataBits := fs.Int("data-bits", config.DefaultDataBits, "data bits, 5 to 8 (ignored by USB-CDC devices)")
+	parity := fs.String("parity", string(config.DefaultParity), "parity: none, odd, even, mark or space (ignored by USB-CDC devices)")
+	stopBits := fs.String("stop-bits", string(config.DefaultStopBits), "stop bits, 1 or 2 (ignored by USB-CDC devices)")
+	separator := fs.String("separator", `\r`, "frame separator, backslash escapes decoded")
 	maxFrame := fs.Int("max-frame-bytes", config.DefaultMaxFrameBytes, "discard a partial frame longer than this")
 	interChar := fs.Duration("inter-char-timeout", config.DefaultInterCharTimeout, "discard a partial frame idle for longer than this")
 	asJSON := fs.Bool("json", false, "print the scan envelope that would be published")
 	duration := fs.Duration("duration", 0, "stop after this long (0 means run until interrupted)")
 	logLevel := fs.String("log-level", "info", "log level for the structured log on stderr")
-	logPayloads := fs.Bool("log-payloads", false, "log frame and discarded-byte contents as hex at DEBUG; use this when a device frames nothing and the terminator is unknown")
+	logPayloads := fs.Bool("log-payloads", false, "log frame and discarded-byte contents as hex at DEBUG; use this when a device frames nothing and the separator is unknown")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -68,13 +71,19 @@ func runProbe(args []string, stdout, stderr io.Writer) error {
 	// InstanceID is filled from the config below when --device names one, so
 	// that --json prints the envelope run would publish rather than a lookalike.
 	identity := event.Identity{InstanceID: "probe", AgentVersion: buildinfo.Version()}
+	// probe publishes nothing, so the message expiry only has to satisfy
+	// validation.
 	dev := config.Device{
 		ID:               "probe",
 		Kind:             config.KindSerial,
 		Path:             *path,
 		Baud:             *baud,
+		DataBits:         *dataBits,
+		Parity:           config.Parity(*parity),
+		StopBits:         config.StopBits(*stopBits),
 		MaxFrameBytes:    *maxFrame,
 		InterCharTimeout: config.Duration(*interChar),
+		MessageExpiry:    config.Duration(config.DefaultMessageExpiry),
 	}
 
 	if *deviceID != "" {
@@ -101,11 +110,11 @@ func runProbe(args []string, stdout, stderr io.Writer) error {
 		identity.Station = cfg.Identity.Station
 		identity.InstanceID = cfg.Identity.Instance
 	} else {
-		term, err := parseTerminator(*terminator)
+		sep, err := parseSeparator(*separator)
 		if err != nil {
 			return fmt.Errorf("%w: %s", errUsage, err)
 		}
-		dev.Terminator = string(term)
+		dev.Separator = string(sep)
 	}
 
 	if warnings, err := config.ValidateDevice(dev); err != nil {
@@ -129,14 +138,20 @@ func runProbe(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
+	lineParity, lineStopBits, err := lineFormat(dev)
+	if err != nil {
+		return err
+	}
 	sd, err := serialdev.New(serialdev.Options{
 		ID:               dev.ID,
 		Path:             dev.Path,
 		Baud:             dev.Baud,
-		Terminator:       dev.TerminatorBytes(),
+		DataBits:         dev.DataBits,
+		Parity:           lineParity,
+		StopBits:         lineStopBits,
+		Terminator:       dev.SeparatorBytes(),
 		MaxFrameBytes:    dev.MaxFrameBytes,
 		InterCharTimeout: dev.InterCharTimeout.Duration(),
-		AssertConfig:     dev.AssertConfig,
 		LogPayloads:      *logPayloads,
 		Logger:           log,
 		OnPresence: func(present bool, err error) {
@@ -166,8 +181,8 @@ func runProbe(args []string, stdout, stderr io.Writer) error {
 
 	builder := event.NewBuilder(identity, nil)
 
-	fmt.Fprintf(stdout, "probing %s (terminator %q, max frame %d, inter-char %s); press Ctrl-C to stop\n",
-		dev.Path, dev.Terminator, dev.MaxFrameBytes, dev.InterCharTimeout)
+	fmt.Fprintf(stdout, "probing %s (%d baud %d/%s/%s, separator %q, max frame %d, inter-char %s); press Ctrl-C to stop\n",
+		dev.Path, dev.Baud, dev.DataBits, dev.Parity, dev.StopBits, dev.Separator, dev.MaxFrameBytes, dev.InterCharTimeout)
 
 	for {
 		select {

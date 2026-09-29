@@ -72,14 +72,18 @@ func runValidate(args []string, stdout, stderr io.Writer) error {
 	fmt.Fprintf(stdout, "  broker         %s\n", cfg.Broker.RedactedURL())
 	fmt.Fprintf(stdout, "  devices        %d\n", len(cfg.Devices))
 	for _, deviceCfg := range cfg.Devices {
-		fmt.Fprintf(stdout, "    %-16s %s kind=%s baud=%d terminator=%q max_frame=%d inter_char=%s\n",
-			deviceCfg.ID, deviceCfg.Path, deviceCfg.Kind, deviceCfg.Baud, deviceCfg.Terminator, deviceCfg.MaxFrameBytes, deviceCfg.InterCharTimeout)
+		fmt.Fprintf(stdout, "    %-16s %s kind=%s baud=%d format=%d/%s/%s separator=%q max_frame=%d inter_char=%s message_expiry=%s device_type=%q\n",
+			deviceCfg.ID, deviceCfg.Path, deviceCfg.Kind, deviceCfg.Baud,
+			deviceCfg.DataBits, deviceCfg.Parity, deviceCfg.StopBits, deviceCfg.Separator,
+			deviceCfg.MaxFrameBytes, deviceCfg.InterCharTimeout, deviceCfg.MessageExpiry, deviceCfg.DeviceType)
 	}
-	fmt.Fprintf(stdout, "  delivery       scan_ttl=%s publish_timeout=%s buffer_size=%d\n",
-		cfg.Delivery.ScanTTL, cfg.Delivery.PublishTimeout, cfg.Delivery.BufferSize)
-	fmt.Fprintf(stdout, "  logging        level=%s log_payloads=%t audit=%s max=%dMB keep=%d\n",
-		cfg.Logging.Level, cfg.Logging.LogPayloads, cfg.Logging.AuditFile,
-		cfg.Logging.AuditMaxSizeMB, cfg.Logging.AuditKeep)
+	fmt.Fprintf(stdout, "  delivery       publish_timeout=%s buffer_size=%d\n",
+		cfg.Delivery.PublishTimeout, cfg.Delivery.BufferSize)
+	fmt.Fprintf(stdout, "  status         keepalive_interval=%s missed_keepalives=%d\n",
+		cfg.Status.KeepaliveInterval, cfg.Status.MissedKeepalives)
+	fmt.Fprintf(stdout, "  logging        level=%s log_payloads=%t file=%q max=%dMB keep=%d stdout=%t\n",
+		cfg.Logging.Level, cfg.Logging.LogPayloads, cfg.Logging.File,
+		cfg.Logging.MaxSizeMB, cfg.Logging.Keep, cfg.Logging.Stdout)
 	if len(warnings) > 0 {
 		fmt.Fprintf(stdout, "  warnings       %d (listed on stderr)\n", len(warnings))
 	}

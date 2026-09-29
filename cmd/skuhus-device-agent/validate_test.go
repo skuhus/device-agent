@@ -8,8 +8,8 @@ import (
 	"testing"
 )
 
-// writeConfig lays down a config file plus the credentials and audit directory
-// that validation insists exist.
+// writeConfig lays down a config file plus the credentials file and log
+// directory that validation insists exist.
 func writeConfig(t *testing.T, body string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -18,7 +18,7 @@ func writeConfig(t *testing.T, body string) string {
 		t.Fatalf("write credentials: %v", err)
 	}
 	body = strings.ReplaceAll(body, "{{credentials}}", credentials)
-	body = strings.ReplaceAll(body, "{{audit}}", filepath.Join(dir, "audit.log"))
+	body = strings.ReplaceAll(body, "{{log}}", filepath.Join(dir, "agent.log"))
 
 	path := filepath.Join(dir, "config.yaml")
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
@@ -35,9 +35,9 @@ broker:
 devices:
   - id: scanner-main
     path: /dev/serial/by-id/usb-Honeywell_1470g-if00
-    terminator: "\r"
+    separator: "\r"
 logging:
-  audit_file: {{audit}}
+  file: {{log}}
 `
 
 func validate(t *testing.T, args ...string) (stdout, stderr string, err error) {
@@ -179,9 +179,23 @@ func TestRunProbeRejectsUnknownDeviceID(t *testing.T) {
 	}
 }
 
-func TestRunProbeRejectsBadTerminator(t *testing.T) {
-	_, _, err := probe(t, "--path", "/dev/serial/by-id/usb-x-if00", "--terminator", `\q`)
-	if err == nil {
-		t.Fatal("an undecodable terminator should be rejected")
+// The line format flags go through the same validation as the config file.
+func TestRunProbeRejectsBadLineFormat(t *testing.T) {
+	for flag, want := range map[string]string{
+		"--parity=high":   `devices.probe.parity "high" is unknown`,
+		"--stop-bits=1.5": `devices.probe.stop_bits 1.5 is not supported`,
+		"--data-bits=9":   `devices.probe.data_bits must be 5, 6, 7 or 8, got 9`,
+	} {
+		_, _, err := probe(t, "--path", "/dev/serial/by-id/usb-x-if00", flag)
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: err = %v, want it to contain %q", flag, err, want)
+		}
+	}
+}
+
+func TestRunProbeRejectsBadSeparator(t *testing.T) {
+	_, _, err := probe(t, "--path", "/dev/serial/by-id/usb-x-if00", "--separator", `\q`)
+	if err == nil || !strings.Contains(err.Error(), `cannot decode separator "\\q"`) {
+		t.Fatalf("err = %v, want the undecodable separator named", err)
 	}
 }

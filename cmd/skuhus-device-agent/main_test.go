@@ -8,7 +8,7 @@ import (
 // The terminator is bytes, and the command line can only carry text, so escapes
 // have to be decoded. Getting this wrong makes probe disagree with the config
 // file about what ends a frame.
-func TestParseTerminator(t *testing.T) {
+func TestParseSeparator(t *testing.T) {
 	cases := []struct {
 		in      string
 		want    []byte
@@ -25,7 +25,7 @@ func TestParseTerminator(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.in, func(t *testing.T) {
-			got, err := parseTerminator(tc.in)
+			got, err := parseSeparator(tc.in)
 			if gotErr := err != nil; gotErr != tc.wantErr {
 				t.Fatalf("error = %v, want error = %t", err, tc.wantErr)
 			}
@@ -33,7 +33,7 @@ func TestParseTerminator(t *testing.T) {
 				return
 			}
 			if !bytes.Equal(got, tc.want) {
-				t.Errorf("parseTerminator(%q) = % x, want % x", tc.in, got, tc.want)
+				t.Errorf("parseSeparator(%q) = % x, want % x", tc.in, got, tc.want)
 			}
 		})
 	}

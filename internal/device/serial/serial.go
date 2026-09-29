@@ -79,10 +79,6 @@ type Options struct {
 	Terminator       []byte
 	MaxFrameBytes    int
 	InterCharTimeout time.Duration
-	// AssertConfig requests re-applying the expected scanner serial
-	// configuration on every open. No per-model profiles exist, so the device
-	// logs that it could not honour the request rather than pretending it did.
-	AssertConfig bool
 	// LogPayloads allows frame and discarded-byte contents into the log at
 	// DEBUG. Default false: counts only. See section 7 of the specification.
 	LogPayloads bool
@@ -249,13 +245,6 @@ func (dev *Device) session(ctx context.Context, sink chan<- device.Frame) (worke
 		"max_frame_bytes", dev.opts.MaxFrameBytes,
 		"terminator_hex", hex.EncodeToString(dev.opts.Terminator))
 	dev.presence(true, nil)
-
-	if dev.opts.AssertConfig {
-		// Honouring this needs a per-model command set, which depends on
-		// knowing the fleet's scanner models. Saying so beats a silent no-op.
-		dev.log.Warn("assert_config requested but not asserted",
-			"reason", "no per-model scanner profile is implemented in v1")
-	}
 
 	// Read blocks in select(2) and does not observe ctx. Closing the port is
 	// what unblocks it; the library signals pending reads through an internal

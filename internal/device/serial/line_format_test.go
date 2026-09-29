@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/skuhus/device-agent/internal/config"
 	goserial "go.bug.st/serial"
 )
 
@@ -55,5 +56,26 @@ func TestNewRejectsDataBitsOutOfRange(t *testing.T) {
 		if _, err := New(opts); err == nil || !strings.Contains(err.Error(), "data bits must be 5 to 8") {
 			t.Errorf("data bits %d: err = %v, want a rejection", bits, err)
 		}
+	}
+}
+
+// Every parity and stop_bits value the configuration accepts has a library
+// value here, so validation and the port layer cannot drift apart.
+func TestLineFormatNamesCoverTheConfiguration(t *testing.T) {
+	for _, parity := range config.Parities {
+		if _, ok := ParityByName[string(parity)]; !ok {
+			t.Errorf("parity %q is accepted by the configuration but has no library value", parity)
+		}
+	}
+	if len(ParityByName) != len(config.Parities) {
+		t.Errorf("%d parities mapped, %d accepted by the configuration", len(ParityByName), len(config.Parities))
+	}
+	for _, stopBits := range []config.StopBits{config.StopBitsOne, config.StopBitsTwo} {
+		if _, ok := StopBitsByName[string(stopBits)]; !ok {
+			t.Errorf("stop_bits %q is accepted by the configuration but has no library value", stopBits)
+		}
+	}
+	if _, ok := StopBitsByName["1.5"]; ok {
+		t.Error("1.5 stop bits are mapped, but the library refuses them on every Unix system")
 	}
 }

@@ -1,0 +1,133 @@
+# skuhus-device-serial-scanner configuration.
+#
+# Install at /etc/skuhus-device-serial-scanner/config.yaml on Linux, or
+# /usr/local/etc/skuhus-device-serial-scanner/config.yaml on macOS.
+#
+# Precedence is CLI flags, then SH_DEV_SER_SCANNER_* environment variables, then this
+# file, then built-in defaults. Unknown keys are rejected: a typo that is
+# ignored leaves a station running settings nobody chose.
+#
+# Check a change before restarting the agent:
+#   skuhus-device-serial-scanner validate --config /etc/skuhus-device-serial-scanner/config.yaml
+
+identity:
+  # The station identity. It comes from here and nowhere else; the hostname is
+  # a logged attribute, not an identity. Each value must match [a-z0-9-]+
+  # because it is used verbatim as an MQTT topic segment.
+  project: acme
+  site: vasby
+  station: pack-03
+
+  # Names this agent process: it is the MQTT client id, and the instance_id
+  # field in every payload. Defaults to the station id, which is what the
+  # specification fixes the client id to, and only needs setting when two
+  # agents share a station: a client id must be unique per broker connection,
+  # and two processes sharing one disconnect each other in a loop.
+  #
+  # Not a topic segment, so [A-Za-z0-9._-] up to 64 characters. The topic to
+  # reach this agent stays skuhus/<project>/<site>/<station>/... whatever this
+  # is set to.
+  # instance: pack-03
+
+broker:
+  # Plaintext is refused unless insecure is set below.
+  url: tls://mq.internal:8883
+
+  # Per-station credentials, never a shared fleet user. Mode 0600; a file any
+  # other user can read is rejected at startup. Set SH_DEV_SER_SCANNER_MQTT_USERNAME
+  # and SH_DEV_SER_SCANNER_MQTT_PASSWORD instead if credentials come from the
+  # environment; they override the file. There is no CLI flag for credentials:
+  # ps would expose them.
+  #
+  # The file is two lines, and "#" starts a comment:
+  #
+  #   username=station-pack-03
+  #   password=...
+  #
+  # The password is everything after the first "=", including any trailing
+  # space, so that a password containing one still works.
+  credentials_file: /etc/skuhus-device-serial-scanner/credentials
+
+  # Pinned CA bundle for the broker certificate. Optional.
+  # ca_file: /etc/skuhus-device-serial-scanner/ca.pem
+
+  # Development only. Allows a plaintext URL and skips certificate
+  # verification, and is logged at WARN on every reconnect.
+  # insecure: false
+
+  keepalive: 30s
+  connect_backoff: { initial: 1s, max: 60s, jitter: 0.3 }
+
+devices:
+  - id: scanner-main
+
+    # serial is USB-CDC (virtual COM) or real RS-232. hid is rejected: keyboard
+    # mode needs scancode translation against an assumed keyboard layout, and a
+    # Swedish-layout host with a US-configured scanner corrupts non-alphanumeric
+    # payloads silently. Configure the scanner into CDC mode instead.
+    kind: serial
+
+    # A stable path. /dev/ttyACM0 moves between reboots and replug order, so it
+    # is accepted but warned about. Run "skuhus-device-serial-scanner probe --list" to see the
+    # by-id and by-path names this host offers.
+    path: /dev/serial/by-id/usb-Honeywell_1470g-if00
+
+    # Ignored by USB-CDC devices, required for real RS-232.
+    baud: 9600
+
+    # Write the terminator as a double-quoted scalar so escapes are decoded.
+    # 'terminator: \r' in single quotes is the two characters backslash and r,
+    # and is rejected.
+    #
+    # This must match the scanner exactly, and the value is per model, not a
+    # fleet constant: the Symbol 05e0:1701 measured for this repo transmits
+    # CRLF and needs "\r\n". Configuring CR against a CRLF device does not fail
+    # loudly. It corrupts one payload and drops another, but only when scanning
+    # faster than inter_char_timeout, so it looks fine at a desk. Check
+    # docs/scanners/ for the model before deploying, and probe with
+    # --log-payloads if the model is not documented there.
+    terminator: "\r"
+
+    # The largest payload accepted, excluding the terminator. A partial frame
+    # that grows past this is discarded rather than buffered.
+    max_frame_bytes: 4096
+
+    # A partial frame idle for longer than this is discarded. Set it above any
+    # gap that occurs inside a real scan burst; see DESIGN.md.
+    inter_char_timeout: 200ms
+
+    # Re-apply the expected scanner serial configuration on every open. No
+    # per-model profiles are implemented yet, so enabling this currently logs
+    # that it could not be honoured rather than doing nothing quietly.
+    assert_config: false
+
+    # There is no symbology setting. The agent publishes the complete frame with
+    # only the terminator removed, so any code identifier the scanner prefixes
+    # stays in the payload for the upstream side to decode using its per-device
+    # definitions. See DESIGN.md, "The whole frame is the payload".
+
+delivery:
+  # A scan is perishable: it has no meaning without the session bound to the
+  # station, and one replayed ten minutes later lands in a pick that has ended.
+  # Read DESIGN.md before raising any of these.
+  scan_ttl: 30s
+  publish_timeout: 2s
+  buffer_size: 64
+
+logging:
+  level: info
+
+  # Whether scan contents may reach the log at all. Default false keeps them out
+  # at every level: a scan is then logged as an event id, a device, a byte count
+  # and a validity flag, which traces delivery without recording barcodes. Set
+  # it, with the level at debug, when diagnosing a device that frames nothing.
+  log_payloads: false
+
+  # The record of what this station published, and of what it failed to publish.
+  # A scan the broker did not take is written here in full, because nothing else
+  # holds it; a scan that was delivered is recorded by length only. Not a replay
+  # source.
+  # The directory must already exist; the agent will not create it.
+  audit_file: /var/log/skuhus-device-serial-scanner/audit.log
+  audit_max_size_mb: 64
+  audit_keep: 7

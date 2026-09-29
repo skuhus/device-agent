@@ -37,10 +37,12 @@ devices:
     # Measured for this model in docs/scanners/symbol-05e0-1701.md. A scanner
     # sending CR against this setting corrupts payloads under load and looks
     # fine at a desk, so check the model before changing it.
-    terminator: "\r\n"
+    separator: "\r\n"
+
+    message_expiry: 30s
+    device_type: symbol-05e0-1701
 
 delivery:
-  scan_ttl: 30s
   publish_timeout: 2s
   buffer_size: 64
 
@@ -50,4 +52,4 @@ logging:
   # a device frames nothing.
   log_payloads: false
   # The directory must already exist; the agent will not create it.
-  audit_file: /tmp/skuhus-device-agent/audit.log
+  file: /tmp/skuhus-device-agent/agent.log

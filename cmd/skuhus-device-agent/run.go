@@ -19,6 +19,7 @@ import (
 	"github.com/skuhus/device-agent/internal/logging"
 	"github.com/skuhus/device-agent/internal/transport/mqtt"
 	buildinfo "github.com/skuhus/device-agent/internal/version"
+	goserial "go.bug.st/serial"
 )
 
 func runRun(args []string, stdout, stderr io.Writer) error {
@@ -88,9 +89,15 @@ func runRun(args []string, stdout, stderr io.Writer) error {
 // audit implementations. It is separate from flag parsing so the wiring can be
 // read without the flags around it.
 func runAgent(ctx context.Context, cfg *config.Config, stdout io.Writer) error {
+	// Until the common log (T9), logging.stdout decides whether this process
+	// log is written at all, and logging.file receives the delivery records.
+	processLog := stdout
+	if !cfg.Logging.Stdout {
+		processLog = io.Discard
+	}
 	log, err := logging.New(logging.Options{
 		Level:        cfg.Logging.Level,
-		Out:          stdout,
+		Out:          processLog,
 		Project:      cfg.Identity.Project,
 		Site:         cfg.Identity.Site,
 		Station:      cfg.Identity.Station,
@@ -110,20 +117,32 @@ func runAgent(ctx context.Context, cfg *config.Config, stdout io.Writer) error {
 	}
 
 	var audit *logging.Audit
-	if cfg.Logging.AuditFile != "" {
-		audit, err = logging.OpenAudit(cfg.Logging.AuditFile, cfg.Logging.AuditMaxSizeMB, cfg.Logging.AuditKeep)
+	if cfg.Logging.File != "" {
+		audit, err = logging.OpenAudit(cfg.Logging.File, cfg.Logging.MaxSizeMB, cfg.Logging.Keep)
 		if err != nil {
 			return err
 		}
 		defer func() {
 			if err := audit.Close(); err != nil {
-				log.Error("audit log close failed", "error", err.Error())
+				log.Error("log file close failed", "error", err.Error())
 			}
 		}()
-		log.Info("audit log open", "path", cfg.Logging.AuditFile,
-			"max_size_mb", cfg.Logging.AuditMaxSizeMB, "keep", cfg.Logging.AuditKeep)
+		log.Info("log file open for delivery records", "path", cfg.Logging.File,
+			"max_size_mb", cfg.Logging.MaxSizeMB, "keep", cfg.Logging.Keep)
 	} else {
-		log.Warn("no audit file configured; scan outcomes are recorded only in the process log")
+		log.Info("no logging.file configured; delivery outcomes are recorded only in the process log")
+	}
+
+	// The v1 supervisor publishes every device's frames with one expiry. Until
+	// the v2 core (T7) publishes per device, the shortest configured expiry is
+	// used: a reading may then be discarded early, never delivered late.
+	expiry := shortestExpiry(cfg.Devices)
+	for _, deviceCfg := range cfg.Devices {
+		if deviceCfg.MessageExpiry.Duration() != expiry {
+			log.Warn("devices set different message_expiry values; every device publishes with the shortest until the v2 core",
+				"message_expiry", expiry.String())
+			break
+		}
 	}
 
 	ids := make([]string, 0, len(cfg.Devices))
@@ -134,14 +153,20 @@ func runAgent(ctx context.Context, cfg *config.Config, stdout io.Writer) error {
 
 	devices := make([]device.Device, 0, len(cfg.Devices))
 	for _, deviceCfg := range cfg.Devices {
+		parity, stopBits, err := lineFormat(deviceCfg)
+		if err != nil {
+			return err
+		}
 		sd, err := serialdev.New(serialdev.Options{
 			ID:               deviceCfg.ID,
 			Path:             deviceCfg.Path,
 			Baud:             deviceCfg.Baud,
-			Terminator:       deviceCfg.TerminatorBytes(),
+			DataBits:         deviceCfg.DataBits,
+			Parity:           parity,
+			StopBits:         stopBits,
+			Terminator:       deviceCfg.SeparatorBytes(),
 			MaxFrameBytes:    deviceCfg.MaxFrameBytes,
 			InterCharTimeout: deviceCfg.InterCharTimeout.Duration(),
-			AssertConfig:     deviceCfg.AssertConfig,
 			LogPayloads:      cfg.Logging.LogPayloads,
 			Logger:           log,
 			OnPresence: func(present bool, _ error) {
@@ -223,7 +248,7 @@ func runAgent(ctx context.Context, cfg *config.Config, stdout io.Writer) error {
 		Builder:        event.NewBuilder(identity, nil),
 		Presence:       presence,
 		Connected:      connected,
-		ScanTTL:        cfg.Delivery.ScanTTL.Duration(),
+		ScanTTL:        expiry,
 		PublishTimeout: cfg.Delivery.PublishTimeout.Duration(),
 		BufferSize:     cfg.Delivery.BufferSize,
 		Identity:       identity,
@@ -240,4 +265,29 @@ func runAgent(ctx context.Context, cfg *config.Config, stdout io.Writer) error {
 		return err
 	}
 	return supervisor.Run(ctx)
+}
+
+// shortestExpiry is the smallest message_expiry among the devices. Validation
+// guarantees at least one device, each with an expiry of at least a second.
+func shortestExpiry(devices []config.Device) time.Duration {
+	shortest := devices[0].MessageExpiry.Duration()
+	for _, deviceCfg := range devices[1:] {
+		shortest = min(shortest, deviceCfg.MessageExpiry.Duration())
+	}
+	return shortest
+}
+
+// lineFormat maps a device's parity and stop bits to the serial library's
+// values. Validation accepts only mapped names, so a miss here is a bug, and
+// it fails rather than opening the port with the zero value, 8N1.
+func lineFormat(deviceCfg config.Device) (goserial.Parity, goserial.StopBits, error) {
+	parity, ok := serialdev.ParityByName[string(deviceCfg.Parity)]
+	if !ok {
+		return 0, 0, fmt.Errorf("device %s: parity %q has no serial library value", deviceCfg.ID, deviceCfg.Parity)
+	}
+	stopBits, ok := serialdev.StopBitsByName[string(deviceCfg.StopBits)]
+	if !ok {
+		return 0, 0, fmt.Errorf("device %s: stop_bits %q has no serial library value", deviceCfg.ID, deviceCfg.StopBits)
+	}
+	return parity, stopBits, nil
 }

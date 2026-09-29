@@ -9,21 +9,34 @@ import (
 // listed here so there is one place to read them from.
 const (
 	DefaultBaud             = 9600
+	DefaultDataBits         = 8
+	DefaultParity           = ParityNone
+	DefaultStopBits         = StopBitsOne
 	DefaultMaxFrameBytes    = 4096
 	DefaultInterCharTimeout = 200 * time.Millisecond
+	// DefaultMessageExpiry is v1's delivery.scan_ttl, now set per device.
+	DefaultMessageExpiry = 30 * time.Second
 
 	DefaultKeepalive      = 30 * time.Second
 	DefaultBackoffInitial = 1 * time.Second
 	DefaultBackoffMax     = 60 * time.Second
 	DefaultBackoffJitter  = 0.3
 
-	DefaultScanTTL        = 30 * time.Second
 	DefaultPublishTimeout = 2 * time.Second
 	DefaultBufferSize     = 64
 
-	DefaultLogLevel       = "info"
-	DefaultAuditMaxSizeMB = 64
-	DefaultAuditKeep      = 7
+	// DefaultKeepaliveInterval is v1's heartbeat interval, and three missed
+	// keepalives, 45 seconds, is when a consumer treats the agent as gone
+	// (#11 Q7).
+	DefaultKeepaliveInterval = 15 * time.Second
+	DefaultMissedKeepalives  = 3
+
+	DefaultLogLevel     = "info"
+	DefaultLogMaxSizeMB = 64
+	DefaultLogKeep      = 7
+	// DefaultLogStdout sends the log to stdout, where journald and docker logs
+	// collect it, unless the configuration says otherwise.
+	DefaultLogStdout = true
 
 	linuxConfigPath  = "/etc/skuhus-device-agent/config.yaml"
 	darwinConfigPath = "/usr/local/etc/skuhus-device-agent/config.yaml"
@@ -49,15 +62,19 @@ func Defaults() Config {
 			},
 		},
 		Delivery: Delivery{
-			ScanTTL:        Duration(DefaultScanTTL),
 			PublishTimeout: Duration(DefaultPublishTimeout),
 			BufferSize:     DefaultBufferSize,
 		},
+		Status: Status{
+			KeepaliveInterval: Duration(DefaultKeepaliveInterval),
+			MissedKeepalives:  DefaultMissedKeepalives,
+		},
 		Logging: Logging{
-			Level:          DefaultLogLevel,
-			LogPayloads:    false,
-			AuditMaxSizeMB: DefaultAuditMaxSizeMB,
-			AuditKeep:      DefaultAuditKeep,
+			Level:       DefaultLogLevel,
+			LogPayloads: false,
+			MaxSizeMB:   DefaultLogMaxSizeMB,
+			Keep:        DefaultLogKeep,
+			Stdout:      DefaultLogStdout,
 		},
 	}
 }
@@ -65,7 +82,7 @@ func Defaults() Config {
 // applyDeviceDefaults fills unset per-device fields. It runs after the file is
 // decoded, because a device entry may set only some of its fields.
 //
-// Terminator has no default on purpose: a scanner that suffixes CRLF where the
+// Separator has no default on purpose: a scanner that suffixes CRLF where the
 // previous one suffixed CR is exactly the substitution that produces a bug
 // nobody can reproduce, so the value must be stated per device.
 func applyDeviceDefaults(devices []Device) {
@@ -77,11 +94,23 @@ func applyDeviceDefaults(devices []Device) {
 		if deviceCfg.Baud == 0 {
 			deviceCfg.Baud = DefaultBaud
 		}
+		if deviceCfg.DataBits == 0 {
+			deviceCfg.DataBits = DefaultDataBits
+		}
+		if deviceCfg.Parity == "" {
+			deviceCfg.Parity = DefaultParity
+		}
+		if deviceCfg.StopBits == "" {
+			deviceCfg.StopBits = DefaultStopBits
+		}
 		if deviceCfg.MaxFrameBytes == 0 {
 			deviceCfg.MaxFrameBytes = DefaultMaxFrameBytes
 		}
 		if deviceCfg.InterCharTimeout == 0 {
 			deviceCfg.InterCharTimeout = Duration(DefaultInterCharTimeout)
+		}
+		if deviceCfg.MessageExpiry == 0 {
+			deviceCfg.MessageExpiry = Duration(DefaultMessageExpiry)
 		}
 	}
 }

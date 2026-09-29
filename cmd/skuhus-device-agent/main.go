@@ -126,19 +126,19 @@ func (flagValue *boolFlag) Set(raw string) error {
 
 func (flagValue *boolFlag) IsBoolFlag() bool { return true }
 
-// parseTerminator decodes a terminator written on the command line, so that
-// --terminator '\r' means a carriage return rather than two characters. A value
+// parseSeparator decodes a separator written on the command line, so that
+// --separator '\r' means a carriage return rather than two characters. A value
 // with no backslash is taken literally.
-func parseTerminator(raw string) ([]byte, error) {
+func parseSeparator(raw string) ([]byte, error) {
 	if raw == "" {
-		return nil, errors.New("terminator must not be empty")
+		return nil, errors.New("separator must not be empty")
 	}
 	if !strings.Contains(raw, `\`) {
 		return []byte(raw), nil
 	}
 	unquoted, err := strconv.Unquote(`"` + raw + `"`)
 	if err != nil {
-		return nil, fmt.Errorf("cannot decode terminator %q: %w (write it as \\r, \\n, \\r\\n or \\x1e)", raw, err)
+		return nil, fmt.Errorf("cannot decode separator %q: %w (write it as \\r, \\n, \\r\\n or \\x1e)", raw, err)
 	}
 	return []byte(unquoted), nil
 }

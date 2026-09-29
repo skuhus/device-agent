@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -18,7 +19,7 @@ const EnvPrefix = "SH_DEV_AGENT_"
 
 // legacyEnvPrefixes are the prefixes earlier releases used: SKUHUS_AGENT_ in
 // 0.1.0, SH_DEV_SER_SCANNER_ in 0.2.0 and 0.3.0. Every variable any of them
-// defined exists under EnvPrefix with the same suffix.
+// defined exists under EnvPrefix with the same suffix, or is in removedEnv.
 var legacyEnvPrefixes = []string{"SKUHUS_AGENT_", "SH_DEV_SER_SCANNER_"}
 
 // EnvConfigPath names the config file, equivalent to the --config flag.
@@ -133,12 +134,30 @@ func Load(opts Options) (*Config, []Warning, error) {
 	return cfg, warnings, nil
 }
 
-// decode reads YAML on top of the defaults, rejecting unknown keys.
+// removedKeys are the keys earlier releases accepted and 2.0.0 does not, each
+// with what replaces it. Strict decoding rejects them anyway, but only as a
+// field not found; naming the replacement is what lets an operator upgrading a
+// station learn what changed from the error rather than from the release notes.
+// "devices[]" matches the key in every device entry.
+var removedKeys = []struct{ path, instead string }{
+	{"delivery.scan_ttl", "set message_expiry on each device"},
+	{"logging.audit_file", "use logging.file"},
+	{"logging.audit_max_size_mb", "use logging.max_size_mb"},
+	{"logging.audit_keep", "use logging.keep"},
+	{"devices[].terminator", "rename it to separator"},
+	{"devices[].assert_config", "remove it; the agent does not configure devices"},
+}
+
+// decode reads YAML on top of the defaults, rejecting unknown keys and naming
+// the replacement of every removed one.
 func decode(r io.Reader) (*Config, error) {
-	cfg := Defaults()
-	dec := yaml.NewDecoder(r)
-	dec.KnownFields(true)
-	if err := dec.Decode(&cfg); err != nil {
+	body, err := io.ReadAll(r)
+	if err != nil {
+		return nil, err
+	}
+	var doc yaml.Node
+	dec := yaml.NewDecoder(bytes.NewReader(body))
+	if err := dec.Decode(&doc); err != nil {
 		if errors.Is(err, io.EOF) {
 			return nil, errors.New("file is empty")
 		}
@@ -151,7 +170,86 @@ func decode(r io.Reader) (*Config, error) {
 	} else if !errors.Is(err, io.EOF) {
 		return nil, err
 	}
+
+	removed, removedLines := findRemovedKeys(&doc)
+	cfg := Defaults()
+	strict := yaml.NewDecoder(bytes.NewReader(body))
+	strict.KnownFields(true)
+	problems := removed
+	if err := strict.Decode(&cfg); err != nil {
+		var typeErr *yaml.TypeError
+		if !errors.As(err, &typeErr) {
+			return nil, err
+		}
+		// A removed key is already reported above with its replacement; the
+		// decoder's own "not found" for the same line would only repeat it.
+		for _, message := range typeErr.Errors {
+			if !removedLines[lineOf(message)] {
+				problems = append(problems, errors.New(message))
+			}
+		}
+	}
+	if len(problems) > 0 {
+		return nil, errors.Join(problems...)
+	}
 	return &cfg, nil
+}
+
+// findRemovedKeys reports every removed key in the document, with its line,
+// and returns the lines so the decoder's errors for them can be dropped.
+func findRemovedKeys(doc *yaml.Node) ([]error, map[int]bool) {
+	var problems []error
+	lines := map[int]bool{}
+	if len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
+		return nil, lines
+	}
+	check := func(key *yaml.Node, generic, shown string) {
+		for _, removed := range removedKeys {
+			if removed.path == generic {
+				problems = append(problems, fmt.Errorf("line %d: %s was removed in 2.0.0; %s", key.Line, shown, removed.instead))
+				lines[key.Line] = true
+			}
+		}
+	}
+	root := doc.Content[0]
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		section, value := root.Content[i].Value, root.Content[i+1]
+		switch value.Kind {
+		case yaml.MappingNode:
+			for j := 0; j+1 < len(value.Content); j += 2 {
+				key := value.Content[j]
+				path := section + "." + key.Value
+				check(key, path, path)
+			}
+		case yaml.SequenceNode:
+			for index, entry := range value.Content {
+				if entry.Kind != yaml.MappingNode {
+					continue
+				}
+				for j := 0; j+1 < len(entry.Content); j += 2 {
+					key := entry.Content[j]
+					check(key, section+"[]."+key.Value, fmt.Sprintf("%s[%d].%s", section, index, key.Value))
+				}
+			}
+		}
+	}
+	return problems, lines
+}
+
+// lineOf reads the line number yaml.v3 puts at the start of a type error,
+// "line 12: field x not found in type config.Device", and returns 0 when
+// there is none.
+func lineOf(message string) int {
+	rest, found := strings.CutPrefix(message, "line ")
+	if !found {
+		return 0
+	}
+	number, _, _ := strings.Cut(rest, ":")
+	line, err := strconv.Atoi(number)
+	if err != nil {
+		return 0
+	}
+	return line
 }
 
 // rejectLegacyEnvironment fails on every variable that uses an earlier release's
@@ -177,6 +275,11 @@ func rejectLegacyEnvironment(environ []string) error {
 	for _, name := range names {
 		for _, legacy := range legacyEnvPrefixes {
 			if suffix, found := strings.CutPrefix(name, legacy); found {
+				if instead, gone := removedEnv[EnvPrefix+suffix]; gone {
+					problems = append(problems, fmt.Errorf(
+						"environment variable %s uses the prefix of an earlier release, and its setting was removed in 2.0.0; %s", name, instead))
+					break
+				}
 				problems = append(problems, fmt.Errorf(
 					"environment variable %s uses the prefix of an earlier release; rename it to %s", name, EnvPrefix+suffix))
 				break
@@ -222,16 +325,28 @@ func envTargets(cfg *Config) map[string]func(string) error {
 		EnvPrefix + "BROKER_INSECURE":         setBool(&cfg.Broker.Insecure),
 		EnvPrefix + "BROKER_KEEPALIVE":        setDuration(&cfg.Broker.Keepalive),
 
-		EnvPrefix + "DELIVERY_SCAN_TTL":        setDuration(&cfg.Delivery.ScanTTL),
 		EnvPrefix + "DELIVERY_PUBLISH_TIMEOUT": setDuration(&cfg.Delivery.PublishTimeout),
 		EnvPrefix + "DELIVERY_BUFFER_SIZE":     setInt(&cfg.Delivery.BufferSize),
 
-		EnvPrefix + "LOGGING_LEVEL":             setString(&cfg.Logging.Level),
-		EnvPrefix + "LOGGING_LOG_PAYLOADS":      setBool(&cfg.Logging.LogPayloads),
-		EnvPrefix + "LOGGING_AUDIT_FILE":        setString(&cfg.Logging.AuditFile),
-		EnvPrefix + "LOGGING_AUDIT_MAX_SIZE_MB": setInt(&cfg.Logging.AuditMaxSizeMB),
-		EnvPrefix + "LOGGING_AUDIT_KEEP":        setInt(&cfg.Logging.AuditKeep),
+		EnvPrefix + "STATUS_KEEPALIVE_INTERVAL": setDuration(&cfg.Status.KeepaliveInterval),
+		EnvPrefix + "STATUS_MISSED_KEEPALIVES":  setInt(&cfg.Status.MissedKeepalives),
+
+		EnvPrefix + "LOGGING_LEVEL":        setString(&cfg.Logging.Level),
+		EnvPrefix + "LOGGING_LOG_PAYLOADS": setBool(&cfg.Logging.LogPayloads),
+		EnvPrefix + "LOGGING_FILE":         setString(&cfg.Logging.File),
+		EnvPrefix + "LOGGING_MAX_SIZE_MB":  setInt(&cfg.Logging.MaxSizeMB),
+		EnvPrefix + "LOGGING_KEEP":         setInt(&cfg.Logging.Keep),
+		EnvPrefix + "LOGGING_STDOUT":       setBool(&cfg.Logging.Stdout),
 	}
+}
+
+// removedEnv are the variables earlier releases read and 2.0.0 does not, each
+// with what replaces it, for the same reason as removedKeys.
+var removedEnv = map[string]string{
+	EnvPrefix + "DELIVERY_SCAN_TTL":         "set message_expiry on each device in the config file",
+	EnvPrefix + "LOGGING_AUDIT_FILE":        "use " + EnvPrefix + "LOGGING_FILE",
+	EnvPrefix + "LOGGING_AUDIT_MAX_SIZE_MB": "use " + EnvPrefix + "LOGGING_MAX_SIZE_MB",
+	EnvPrefix + "LOGGING_AUDIT_KEEP":        "use " + EnvPrefix + "LOGGING_KEEP",
 }
 
 // applyEnv overlays environment variables and rejects unrecognised ones. A
@@ -250,6 +365,10 @@ func applyEnv(cfg *Config, env map[string]string) error {
 	var unknown []string
 	var problems []error
 	for _, name := range names {
+		if instead, gone := removedEnv[name]; gone {
+			problems = append(problems, fmt.Errorf("%s was removed in 2.0.0; %s", name, instead))
+			continue
+		}
 		set, ok := targets[name]
 		if !ok {
 			unknown = append(unknown, name)
