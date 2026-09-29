@@ -15,6 +15,34 @@ Postponed out of #4 into their own tickets: #5 flow control and write pacing
 (formerly T17), #6 reloading the configuration on SIGHUP, #7 framing for devices
 that send no separator.
 
+## Tracking
+
+Every task is a sub-issue of #4, in this order. T1 was finished before issues
+were created for the plan, so it has none. #6 and #7 are sub-issues of #4 too,
+postponed beyond it. #24 and #25 are defects found in review, fixed within T11
+and T4.
+
+| Task | Issue | Title |
+|---|---|---|
+| T1 | none, done | Commit the measurements in docs/ |
+| T2 | #23 | Settle the open decisions |
+| T3 | #8 | Rename to the device agent |
+| T4 | #9 | Give spike/ its own module |
+| T5 | #10 | Configuration schema v2 |
+| T6 | #11 | Topics and message formats |
+| T7 | #12 | Core: reading and publishing |
+| T8 | #13 | Status channel and counters |
+| T9 | #14 | Common log |
+| T10 | #15 | End-to-end test in CI |
+| T11 | #16 | Development environment for v2 |
+| T12 | #17 | Documentation |
+| T13 | #18 | Release 2.0.0 |
+| T14 | #19 | tx: receive and write |
+| T15 | #20 | tx across reconnects |
+| T16 | #21 | tx idempotency |
+| T17 | #5 | Flow control and write pacing, postponed out of #4 |
+| T18 | #22 | Release 2.1.0 |
+
 ## Order
 
     T1 commit docs ----+
@@ -57,8 +85,9 @@ DESIGN-V2.md cites exists in a fresh clone.
 
 ### T2. Settle the open decisions
 
-Status: done on 2026-09-29 and recorded in DESIGN-V2.md. The items marked
-`[Proposed]` still need a yes or no.
+Status: not done. The open decisions were settled on 2026-09-29 and recorded
+in DESIGN-V2.md, but 19 items are still `[Proposed]`, and 14 of them block phase
+1 tasks. #23 settles them.
 
 Motivation. DESIGN-V2.md lists eight open decisions and a number of proposals.
 Each open decision blocks a named task; building on an unconfirmed proposal
@@ -107,7 +136,8 @@ compile them, and the M0 spike added paho.golang to go.mod before any agent
 code used it. Research code should not decide the agent's dependencies or break
 its build.
 
-Work. Add a go.mod in spike/, making it a nested module; a parent module's
+Work. Fix #25: the spike leaves retained messages behind, and brokerinfo shadows
+its packet body. Add a go.mod in spike/, making it a nested module; a parent module's
 `./...` excludes nested modules. Point the Makefile's spike targets at it. Keep
 it out of CI.
 
@@ -295,7 +325,9 @@ Work.
   including the device segment; the ingest user may write `.tx`. Test the
   station user's existing pattern against device-level topics rather than
   assuming it matches.
-- dev/consumer prints rx, tx and status, decoding the payload.
+- dev/consumer prints rx, tx and status, decoding the payload. Fix #24 on the
+  way: it keeps running silently after a connection error, and has a dead
+  loop.
 - dev/agent.local.yaml in the v2 schema.
 
 Intended result. `make broker-up` and `make consume` show a v2 agent's rx and

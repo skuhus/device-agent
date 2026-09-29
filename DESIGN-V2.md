@@ -430,8 +430,9 @@ Leave behind:
 
 ## Open decisions
 
-None. Every item marked `[Proposed]` still needs a yes or no; each is marked in
-place, and the task that depends on it names it.
+No item is open. 19 items are still `[Proposed]`, 14 of them blocking phase 1
+tasks; #23 lists each with the tasks it blocks, and settles them. Until an item
+is marked `[Decided]`, the legend applies: do not build on it.
 Decisions of 2026-09-29 are recorded in their sections above.
 
 Task numbers refer to PLAN-V2.md.
