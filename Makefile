@@ -53,6 +53,7 @@ help:
 	@echo "broker-reset   stop it and discard its volume"
 	@echo "broker-logs    tail its log"
 	@echo "consume        subscribe and print what reaches the broker"
+	@echo "test-broker    publish the v2 messages through the broker and check each filter"
 	@echo
 	@echo "spike-brokerinfo   what a broker is, and which MQTT levels it answers"
 	@echo "spike-mqtt5        the M0 property spike; see docs/spikes/m0-mqtt5.md"
@@ -230,6 +231,14 @@ consume: caches network
 		-w /src -e GOFLAGS=-buildvcs=false $(GO_IMAGE) \
 		go -C dev run ./consumer --broker $(BROKER) --username ingest --password ingest-dev \
 			--topic '$(TOPIC)' $(FLAGS)
+
+# The consumer filters in internal/wire, checked against a real broker and its
+# topic permissions. Not part of check, which needs no broker: run broker-up
+# first.
+.PHONY: test-broker
+test-broker: caches network
+	$(GO_NET) env TEST_BROKER=$(BROKER) TEST_MQTT_USER=$(MQTT_USER) TEST_MQTT_PASS=$(MQTT_PASS) \
+		go test -count=1 -run Broker -v ./internal/wire/
 
 .PHONY: spike-brokerinfo
 spike-brokerinfo: caches network
