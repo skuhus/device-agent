@@ -50,10 +50,13 @@ func examples() map[string]any {
 			RawB64: base64.StdEncoding.EncodeToString([]byte("^XA^FDSKU-1042^FS^XZ")),
 		},
 		"tx_result": builderWithID("7e6d5c4b-3a29-4817-9f6e-5d4c3b2a1f0e").
-			TxResult(printer, false, exampleTx, "label-service", TxCodePortUnavailable,
-				TxOutcome{ErrorClass: ErrorBusy, Reason: "open " + printerTTY + ": device or resource busy", Attempts: 3}, exampleAt),
+			TxPortUnavailable(printer, false, TxRef{ID: exampleTx, Sender: "label-service"},
+				ErrorBusy, "open "+printerTTY+": device or resource busy", 3, exampleAt),
+		"tx_result_in_progress": builderWithID("2d3c4b5a-6978-4e5f-8a1b-0c9d8e7f6a5b").
+			TxInProgress(printer, true, TxRef{ID: exampleTx, Sender: "label-service"},
+				TxWriting, exampleAt.Add(-90*time.Second), 61440, exampleAt),
 		"keepalive": builderWithID("9f8e7d6c-5b4a-4392-8170-6f5e4d3c2b1a").
-			Keepalive(exampleAt.Add(-time.Hour), exampleAt, 15*time.Second, []DeviceState{
+			Keepalive(exampleAt.Add(-time.Hour), exampleAt, 15*time.Second, 3, []DeviceState{
 				{Device: scanner, Open: true, Counters: DeviceCounters{
 					RxFrames: 1042, RxBytes: 13546,
 					Discards:    DiscardCounts{InterCharTimeout: 2},
@@ -188,15 +191,10 @@ func TestDesignEventCodesMatchTheCode(t *testing.T) {
 		builder.PortOpened(scanner, scannerTTY, exampleAt),
 		builder.PortClosed(scanner, scannerTTY, exampleAt),
 		builder.PortLost(scanner, scannerTTY, ErrorDisconnected, "e", exampleAt),
-		builder.OpenFailed(scanner, scannerTTY, ErrorAbsent, "e", exampleAt),
-		builder.Discard(scanner, DiscardOversize, 1, exampleAt),
+		builder.PortOpenFailed(scanner, scannerTTY, ErrorAbsent, "e", exampleAt),
+		builder.BytesDiscarded(scanner, DiscardOversize, 1, exampleAt),
 	} {
-		var keys []string
-		for key := range event.Detail {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-		built[string(event.Code)] = keys
+		built[string(event.Code)] = strings.Split(sortedKeys(event.Detail), ",")
 	}
 	documented := map[string][]string{}
 	for _, row := range tableRows(t, readDesign(t), "#### Event codes") {
@@ -214,17 +212,28 @@ func TestDesignEventCodesMatchTheCode(t *testing.T) {
 
 func TestDesignTxCodesMatchTheCode(t *testing.T) {
 	built := map[string]string{}
-	for code, entry := range txCodes {
-		built[string(code)] = string(entry.state)
+	for _, result := range everyTxResult(builderWithID("id"), printer) {
+		built[string(result.Code)] = string(result.State) + " " + sortedKeys(result.Detail)
 	}
 	documented := map[string]string{}
 	for _, row := range tableRows(t, readDesign(t), "#### Tx result codes") {
-		if len(row) < 2 || len(row[0]) != 1 || len(row[1]) != 1 {
-			t.Fatalf("tx code row %v: want a state, then a code", row)
+		if len(row) < 3 || len(row[0]) != 1 || len(row[1]) != 1 {
+			t.Fatalf("tx code row %v: want a state, a code, then its detail keys", row)
 		}
-		documented[row[1][0]] = row[0][0]
+		keys := append([]string{}, row[2]...)
+		sort.Strings(keys)
+		documented[row[1][0]] = row[0][0] + " " + strings.Join(keys, ",")
 	}
 	if !reflect.DeepEqual(documented, built) {
-		t.Errorf("tx result codes and states differ.\ndocumented: %v\nbuilt:      %v", documented, built)
+		t.Errorf("tx result codes, states and detail keys differ.\ndocumented: %v\nbuilt:      %v", documented, built)
 	}
+}
+
+func sortedKeys(detail map[string]any) string {
+	keys := make([]string, 0, len(detail))
+	for key := range detail {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return strings.Join(keys, ",")
 }

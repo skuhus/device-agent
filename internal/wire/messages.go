@@ -91,11 +91,11 @@ type EventCode string
 
 // Event codes. The list is a minimum; codes are added, never renamed.
 const (
-	EventPortOpened EventCode = "port_opened"
-	EventPortClosed EventCode = "port_closed"
-	EventPortLost   EventCode = "port_lost"
-	EventOpenFailed EventCode = "open_failed"
-	EventDiscard    EventCode = "discard"
+	EventPortOpened     EventCode = "port_opened"
+	EventPortClosed     EventCode = "port_closed"
+	EventPortLost       EventCode = "port_lost"
+	EventPortOpenFailed EventCode = "port_open_failed"
+	EventBytesDiscarded EventCode = "bytes_discarded"
 )
 
 // ErrorClass names a port failure the way v1 classifies one
@@ -132,9 +132,10 @@ type Event struct {
 	deviceHeader
 	// DeviceOpen is whether the agent holds the port open after the event. It
 	// is what the agent knows, not what the hardware is doing.
-	DeviceOpen bool      `json:"device_open"`
-	ExpiryS    int64     `json:"expiry_s"`
-	Code       EventCode `json:"code"`
+	DeviceOpen bool `json:"device_open"`
+	// MessageExpiryS is the device's MQTT message expiry, in seconds.
+	MessageExpiryS int64     `json:"message_expiry_s"`
+	Code           EventCode `json:"code"`
 	// Text is a sentence for a person; nothing should parse it.
 	Text string `json:"text"`
 	// Detail holds the facts at hand, with keys that depend on the code. It is
@@ -150,6 +151,9 @@ const (
 	TxAccepted TxState = "accepted"
 	TxWritten  TxState = "written"
 	TxFailed   TxState = "failed"
+	// TxRejected is for a tx the agent did not take on because a tx with the
+	// same id is still being processed. The earlier one carries on.
+	TxRejected TxState = "rejected"
 )
 
 // TxCode says why a tx result has its state.
@@ -160,6 +164,7 @@ const (
 	TxCodeAccepted        TxCode = "accepted"
 	TxCodeWritten         TxCode = "written"
 	TxCodeAlreadyWritten  TxCode = "already_written"
+	TxCodeInProgress      TxCode = "in_progress"
 	TxCodeInvalidMessage  TxCode = "invalid_message"
 	TxCodeInvalidID       TxCode = "invalid_id"
 	TxCodePortUnavailable TxCode = "port_unavailable"
@@ -167,53 +172,52 @@ const (
 	TxCodeExpired         TxCode = "expired"
 )
 
-// txCodes gives each code its state and the sentence its result opens with. A
-// code missing here is a programming error, which TxResult reports by
-// panicking.
-var txCodes = map[TxCode]struct {
-	state TxState
-	text  string
-}{
-	TxCodeAccepted:        {TxAccepted, "received and queued for the port"},
-	TxCodeWritten:         {TxWritten, "every byte reached the port"},
-	TxCodeAlreadyWritten:  {TxWritten, "a tx with this id was written before, so it was not written again"},
-	TxCodeInvalidMessage:  {TxFailed, "not a valid tx"},
-	TxCodeInvalidID:       {TxFailed, "the id is not a UUID"},
-	TxCodePortUnavailable: {TxFailed, "the port could not be opened"},
-	TxCodeWriteFailed:     {TxFailed, "writing to the port failed after it had started"},
-	TxCodeExpired:         {TxFailed, "the message expiry passed before the port could be written"},
+// txCodeStates is the state each code reports.
+var txCodeStates = map[TxCode]TxState{
+	TxCodeAccepted:        TxAccepted,
+	TxCodeWritten:         TxWritten,
+	TxCodeAlreadyWritten:  TxWritten,
+	TxCodeInProgress:      TxRejected,
+	TxCodeInvalidMessage:  TxFailed,
+	TxCodeInvalidID:       TxFailed,
+	TxCodePortUnavailable: TxFailed,
+	TxCodeWriteFailed:     TxFailed,
+	TxCodeExpired:         TxFailed,
+}
+
+// TxStage is where a tx that is still being processed stands.
+type TxStage string
+
+// Tx stages.
+const (
+	TxQueued  TxStage = "queued"
+	TxWriting TxStage = "writing"
+)
+
+// TxRef identifies the tx a result is about. Both fields are empty when the tx
+// could not be read, and are then published as null.
+type TxRef struct {
+	ID     string
+	Sender string
 }
 
 // TxResult reports what happened to one tx, on the device's status topic.
 type TxResult struct {
 	header
 	deviceHeader
-	DeviceOpen bool  `json:"device_open"`
-	ExpiryS    int64 `json:"expiry_s"`
+	DeviceOpen     bool  `json:"device_open"`
+	MessageExpiryS int64 `json:"message_expiry_s"`
 	// TxID and Sender are copied from the tx, and null when it could not be
 	// read.
 	TxID   *string `json:"tx_id"`
 	Sender *string `json:"sender"`
 	State  TxState `json:"state"`
 	Code   TxCode  `json:"code"`
-	Text   string  `json:"text"`
-	// ErrorClass is set when a port error caused the result, and null
-	// otherwise.
-	ErrorClass   *ErrorClass `json:"error_class"`
-	BytesWritten int         `json:"bytes_written"`
-	// Attempts counts the attempts made to open the port for this tx; it is 0
-	// when the port was already open.
-	Attempts int `json:"attempts"`
-}
-
-// TxOutcome is what the write path knows about one tx when it reports on it.
-type TxOutcome struct {
-	// ErrorClass is set when a port error caused the result.
-	ErrorClass ErrorClass
-	// Reason is added to the result's text: a parse error, the port's error.
-	Reason       string
-	BytesWritten int
-	Attempts     int
+	// Text is a sentence for a person, with the cause when there is one.
+	Text string `json:"text"`
+	// Detail holds the facts at hand, with keys that depend on the code; an
+	// empty object, never null, for a code that has none.
+	Detail map[string]any `json:"detail"`
 }
 
 // Tx is what a sender publishes on a device's tx topic. The agent reads it from
@@ -269,8 +273,8 @@ type DeviceState struct {
 // KeepaliveDevice is one device's entry in a keepalive.
 type KeepaliveDevice struct {
 	deviceHeader
-	DeviceOpen bool  `json:"device_open"`
-	ExpiryS    int64 `json:"expiry_s"`
+	DeviceOpen     bool  `json:"device_open"`
+	MessageExpiryS int64 `json:"message_expiry_s"`
 	DeviceCounters
 }
 
@@ -281,10 +285,12 @@ type Keepalive struct {
 	// UptimeS counts from process start, so a restart loop shows as a counter
 	// that keeps returning to zero.
 	UptimeS int64 `json:"uptime_s"`
-	// IntervalS is the time until the next keepalive. A consumer that has seen
-	// none for several intervals treats the agent as gone.
-	IntervalS int64             `json:"interval_s"`
-	Devices   []KeepaliveDevice `json:"devices"`
+	// IntervalS is the time until the next keepalive.
+	IntervalS int64 `json:"interval_s"`
+	// GoneAfterS is how long a consumer waits without a keepalive before it
+	// treats the agent as gone: the configured number of missed intervals.
+	GoneAfterS int64             `json:"gone_after_s"`
+	Devices    []KeepaliveDevice `json:"devices"`
 }
 
 // OfflineReason says why an agent went offline.
@@ -355,67 +361,122 @@ func (builder *Builder) PortLost(device Device, path string, class ErrorClass, e
 		map[string]any{"path": path, "error_class": class, "error": errText}, at)
 }
 
-// OpenFailed reports that opening the port failed, with the operating
-// system's message.
-func (builder *Builder) OpenFailed(device Device, path string, class ErrorClass, errText string, at time.Time) Event {
-	return builder.event(device, false, EventOpenFailed, fmt.Sprintf("could not open the port: %s (%s)", errText, class),
+// PortOpenFailed reports one failed attempt to open the port, with the
+// operating system's message. It is published on every attempt.
+func (builder *Builder) PortOpenFailed(device Device, path string, class ErrorClass, errText string, at time.Time) Event {
+	return builder.event(device, false, EventPortOpenFailed, fmt.Sprintf("could not open the port: %s (%s)", errText, class),
 		map[string]any{"path": path, "error_class": class, "error": errText}, at)
 }
 
-// Discard reports bytes the framer threw away. The port is open, since the
-// bytes were read from it.
-func (builder *Builder) Discard(device Device, reason DiscardReason, bytes int, at time.Time) Event {
-	return builder.event(device, true, EventDiscard, fmt.Sprintf("discarded %d bytes: %s", bytes, reason),
+// BytesDiscarded reports bytes the framer threw away. The port is open, since
+// the bytes were read from it.
+func (builder *Builder) BytesDiscarded(device Device, reason DiscardReason, bytes int, at time.Time) Event {
+	return builder.event(device, true, EventBytesDiscarded, fmt.Sprintf("discarded %d bytes: %s", bytes, reason),
 		map[string]any{"reason": reason, "bytes": bytes}, at)
 }
 
-// TxResult reports on one tx. txID and sender are empty when the tx could not
-// be read, and are then published as null. The state follows from the code.
-func (builder *Builder) TxResult(device Device, deviceOpen bool, txID, sender string, code TxCode, outcome TxOutcome, at time.Time) TxResult {
-	entry, known := txCodes[code]
-	if !known {
-		panic(fmt.Sprintf("wire: tx result code %q has no state", code))
-	}
-	text := entry.text
-	if outcome.Reason != "" {
-		text += ": " + outcome.Reason
-	}
-	result := TxResult{
-		header:       builder.header(KindTxResult, at),
-		deviceHeader: deviceHeaderOf(device),
-		DeviceOpen:   deviceOpen,
-		ExpiryS:      expirySeconds(device.Expiry),
-		TxID:         nullable(txID),
-		Sender:       nullable(sender),
-		State:        entry.state,
-		Code:         code,
-		Text:         text,
-		BytesWritten: outcome.BytesWritten,
-		Attempts:     outcome.Attempts,
-	}
-	if outcome.ErrorClass != "" {
-		class := outcome.ErrorClass
-		result.ErrorClass = &class
-	}
-	return result
+// TxAccepted reports that a tx was received and queued for the port.
+func (builder *Builder) TxAccepted(device Device, deviceOpen bool, tx TxRef, at time.Time) TxResult {
+	return builder.txResult(device, deviceOpen, tx, TxCodeAccepted, "received and queued for the port",
+		map[string]any{}, at)
 }
 
-// Keepalive reports the agent and every device, in the order given.
-func (builder *Builder) Keepalive(started, at time.Time, interval time.Duration, devices []DeviceState) Keepalive {
+// TxWritten reports that every byte of a tx reached the port. openAttempts is
+// how many times the port had to be opened for it, 0 when it was open.
+func (builder *Builder) TxWritten(device Device, deviceOpen bool, tx TxRef, bytesWritten, openAttempts int, at time.Time) TxResult {
+	return builder.txResult(device, deviceOpen, tx, TxCodeWritten, fmt.Sprintf("all %d bytes reached the port", bytesWritten),
+		map[string]any{"bytes_written": bytesWritten, "open_attempts": openAttempts}, at)
+}
+
+// TxAlreadyWritten reports that a tx with this id was written before, so this
+// one was not.
+func (builder *Builder) TxAlreadyWritten(device Device, deviceOpen bool, tx TxRef, writtenAt, at time.Time) TxResult {
+	written := writtenAt.UTC().Format(TimeFormat)
+	return builder.txResult(device, deviceOpen, tx, TxCodeAlreadyWritten,
+		fmt.Sprintf("a tx with this id was written at %s, so this one was not written", written),
+		map[string]any{"written_at": written}, at)
+}
+
+// TxInProgress rejects a tx whose id belongs to a tx still queued or being
+// written, and says where that one stands and since when.
+func (builder *Builder) TxInProgress(device Device, deviceOpen bool, tx TxRef, stage TxStage, since time.Time, bytesWritten int, at time.Time) TxResult {
+	sinceText := since.UTC().Format(TimeFormat)
+	text := fmt.Sprintf("a tx with this id is queued for the port since %s; this one was not taken", sinceText)
+	if stage == TxWriting {
+		text = fmt.Sprintf("a tx with this id is being written since %s, %d bytes so far; this one was not taken", sinceText, bytesWritten)
+	}
+	return builder.txResult(device, deviceOpen, tx, TxCodeInProgress, text,
+		map[string]any{"stage": stage, "since": sinceText, "bytes_written": bytesWritten}, at)
+}
+
+// TxInvalidMessage reports a tx that could not be read. errText says why.
+func (builder *Builder) TxInvalidMessage(device Device, deviceOpen bool, tx TxRef, errText string, at time.Time) TxResult {
+	return builder.txResult(device, deviceOpen, tx, TxCodeInvalidMessage, "not a valid tx: "+errText,
+		map[string]any{"error": errText}, at)
+}
+
+// TxInvalidID reports a tx whose id is not a UUID.
+func (builder *Builder) TxInvalidID(device Device, deviceOpen bool, tx TxRef, at time.Time) TxResult {
+	return builder.txResult(device, deviceOpen, tx, TxCodeInvalidID, "the id is not a UUID",
+		map[string]any{}, at)
+}
+
+// TxPortUnavailable reports a tx given up because the port could not be
+// opened within the configured attempts.
+func (builder *Builder) TxPortUnavailable(device Device, deviceOpen bool, tx TxRef, class ErrorClass, errText string, openAttempts int, at time.Time) TxResult {
+	return builder.txResult(device, deviceOpen, tx, TxCodePortUnavailable,
+		fmt.Sprintf("the port could not be opened in %d attempts: %s (%s)", openAttempts, errText, class),
+		map[string]any{"error_class": class, "error": errText, "open_attempts": openAttempts}, at)
+}
+
+// TxWriteFailed reports a write that failed after it had started. It is not
+// retried; bytesWritten says how far it got.
+func (builder *Builder) TxWriteFailed(device Device, deviceOpen bool, tx TxRef, class ErrorClass, errText string, bytesWritten, openAttempts int, at time.Time) TxResult {
+	return builder.txResult(device, deviceOpen, tx, TxCodeWriteFailed,
+		fmt.Sprintf("writing failed after %d bytes: %s (%s)", bytesWritten, errText, class),
+		map[string]any{"error_class": class, "error": errText, "bytes_written": bytesWritten, "open_attempts": openAttempts}, at)
+}
+
+// TxExpired reports a tx whose message expiry passed before an attempt to
+// write it could start.
+func (builder *Builder) TxExpired(device Device, deviceOpen bool, tx TxRef, openAttempts int, at time.Time) TxResult {
+	return builder.txResult(device, deviceOpen, tx, TxCodeExpired, "the message expiry passed before the port could be written",
+		map[string]any{"open_attempts": openAttempts}, at)
+}
+
+func (builder *Builder) txResult(device Device, deviceOpen bool, tx TxRef, code TxCode, text string, detail map[string]any, at time.Time) TxResult {
+	return TxResult{
+		header:         builder.header(KindTxResult, at),
+		deviceHeader:   deviceHeaderOf(device),
+		DeviceOpen:     deviceOpen,
+		MessageExpiryS: expirySeconds(device.Expiry),
+		TxID:           nullable(tx.ID),
+		Sender:         nullable(tx.Sender),
+		State:          txCodeStates[code],
+		Code:           code,
+		Text:           text,
+		Detail:         detail,
+	}
+}
+
+// Keepalive reports the agent and every device, in the order given. missed is
+// how many intervals a consumer waits for before it treats the agent as gone.
+func (builder *Builder) Keepalive(started, at time.Time, interval time.Duration, missed int, devices []DeviceState) Keepalive {
 	entries := make([]KeepaliveDevice, 0, len(devices))
 	for _, state := range devices {
 		entries = append(entries, KeepaliveDevice{
 			deviceHeader:   deviceHeaderOf(state.Device),
 			DeviceOpen:     state.Open,
-			ExpiryS:        expirySeconds(state.Device.Expiry),
+			MessageExpiryS: expirySeconds(state.Device.Expiry),
 			DeviceCounters: state.Counters,
 		})
 	}
 	return Keepalive{
-		header:    builder.header(KindKeepalive, at),
-		UptimeS:   int64(at.Sub(started) / time.Second),
-		IntervalS: int64(interval / time.Second),
-		Devices:   entries,
+		header:     builder.header(KindKeepalive, at),
+		UptimeS:    int64(at.Sub(started) / time.Second),
+		IntervalS:  int64(interval / time.Second),
+		GoneAfterS: int64(interval/time.Second) * int64(missed),
+		Devices:    entries,
 	}
 }
 
@@ -428,13 +489,13 @@ func (builder *Builder) Offline(reason OfflineReason, at time.Time) Offline {
 
 func (builder *Builder) event(device Device, open bool, code EventCode, text string, detail map[string]any, at time.Time) Event {
 	return Event{
-		header:       builder.header(KindEvent, at),
-		deviceHeader: deviceHeaderOf(device),
-		DeviceOpen:   open,
-		ExpiryS:      expirySeconds(device.Expiry),
-		Code:         code,
-		Text:         text,
-		Detail:       detail,
+		header:         builder.header(KindEvent, at),
+		deviceHeader:   deviceHeaderOf(device),
+		DeviceOpen:     open,
+		MessageExpiryS: expirySeconds(device.Expiry),
+		Code:           code,
+		Text:           text,
+		Detail:         detail,
 	}
 }
 

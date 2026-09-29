@@ -75,7 +75,7 @@ func TestBrokerFiltersDeliverTheirOwnMessages(t *testing.T) {
 		{devices[first.ID].Rx(), builder.Rx(first, 1, []byte("7310425012345"), now)},
 		{devices[second.ID].Rx(), builder.Rx(second, 1, []byte("1.250 kg"), now)},
 		{devices[first.ID].Status(), builder.PortOpened(first, "/dev/ttyACM0", now)},
-		{agentTopics.Status(), builder.Keepalive(now, now, 15*time.Second, []DeviceState{{Device: first}, {Device: second}})},
+		{agentTopics.Status(), builder.Keepalive(now, now, 15*time.Second, 3, []DeviceState{{Device: first}, {Device: second}})},
 	}
 	publisher := connect(ctx, t, addr, user, pass, "wire-test-"+run+"-pub")
 	for _, item := range sent {
