@@ -156,10 +156,10 @@ func (core *Core) Run(ctx context.Context) error {
 			core.log.Info("device starting", "device_id", reader.ID(), "device_kind", reader.Kind(), "device_path", reader.Path(),
 				"rx_topic", line.device.Topics.Rx(), "message_expiry", line.device.Wire.Expiry.String())
 			if err := reader.Run(readerCtx, line.frames, core.report); err != nil && !errors.Is(err, context.Canceled) {
-				core.log.Error("device stopped", "device_id", reader.ID(), "error", err.Error())
+				core.log.Error("device reader failed", "device_id", reader.ID(), "error", err.Error())
 				return
 			}
-			core.log.Info("device stopped", "device_id", reader.ID())
+			core.log.Info("device reader stopped", "device_id", reader.ID())
 		}(line)
 		publishers.Add(1)
 		go func(line *pipeline) {
