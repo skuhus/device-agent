@@ -33,6 +33,10 @@ const (
 	PortLost       EventKind = "lost"
 	PortOpenFailed EventKind = "open_failed"
 	BytesDiscarded EventKind = "discarded"
+	// BytesRead is reported for every read that returned bytes, framed or not.
+	// It is counted, not published: an inverted separator shows as bytes read
+	// while no frame comes out (DESIGN-V2.md, #23 Q5).
+	BytesRead EventKind = "read"
 )
 
 // Event is something that happened to a device's port. A reader reports every
@@ -45,7 +49,8 @@ type Event struct {
 	// ErrorClass and Err say why, for PortLost and PortOpenFailed.
 	ErrorClass string
 	Err        error
-	// Reason and Bytes say what was thrown away, for BytesDiscarded.
+	// Reason says what was thrown away, for BytesDiscarded. Bytes is how many
+	// bytes were thrown away, for BytesDiscarded, or read, for BytesRead.
 	Reason string
 	Bytes  int
 }

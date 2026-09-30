@@ -314,6 +314,7 @@ func (dev *Device) session(ctx context.Context, sink chan<- device.Frame, report
 		}
 
 		dev.log.Debug("device read", "bytes", readBytes, "pending", framer.Pending(), "resyncing", framer.Resyncing())
+		report(dev.event(device.BytesRead, func(event *device.Event) { event.Bytes = readBytes }))
 		frames, discards := framer.Append(buf[:readBytes])
 		for _, discard := range discards {
 			dev.logDiscard(discard, report)

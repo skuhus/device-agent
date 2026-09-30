@@ -125,6 +125,44 @@ func TestReportsClosedNotLostOnStop(t *testing.T) {
 	}
 }
 
+// Every byte read is reported, whether it ends up in a frame or is discarded:
+// rx_bytes rising while no frame comes out is how an inverted separator shows
+// (#23 Q5). The data is longer than one read, so it arrives in several.
+func TestReportsEveryByteRead(t *testing.T) {
+	recorder := &eventRecorder{}
+	opts := serialOpts("scanner-1", "/dev/fake", "\r")
+	opts.MaxFrameBytes = 64
+	data := []byte(strings.Repeat("A7393481008232\r", 8) + "no-separator-" + strings.Repeat("x", 60))
+	port := &scriptedPort{blockingPort: blockingPort{hold: time.Hour}, data: append([]byte(nil), data...)}
+	opts.Open = func(string, *goserial.Mode) (goserial.Port, error) { return port, nil }
+	frames, _ := runDeviceReporting(t, opts, 16, recorder.report)
+
+	deadline := time.Now().Add(3 * time.Second)
+	var read, reads int
+	for time.Now().Before(deadline) {
+		read, reads = 0, 0
+		for _, event := range recorder.snapshot() {
+			if event.Kind == device.BytesRead {
+				read += event.Bytes
+				reads++
+			}
+		}
+		if read >= len(data) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if read != len(data) {
+		t.Fatalf("reported %d bytes read in %d reads, want %d", read, reads, len(data))
+	}
+	if reads < 2 {
+		t.Errorf("reported %d reads, want the data split across several", reads)
+	}
+	if got := len(frames); got != 8 {
+		t.Errorf("%d frames, want 8: the reads are counted, not only the frames", got)
+	}
+}
+
 // Every discard is reported with its reason and byte count, so that it can be
 // counted: an oversize frame, and a partial frame the device stopped sending.
 func TestReportsEveryDiscard(t *testing.T) {
