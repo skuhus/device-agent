@@ -251,16 +251,16 @@ Work. A new core with one responsibility per part:
 - Port reader: open, read, frame, reopen with backoff. Carry the framer, its
   tests and the captures in internal/device/serial/testdata unchanged. The
   reader reports what happens to its port: opened, closed, lost and a failed
-  open, each with its error class, and discarded bytes with reason and count.
-  The core logs each; T8 publishes and counts them.
+  open, the last two with their error class, and discarded bytes with reason
+  and count. The core logs each; T8 publishes and counts them.
 - Per-device pipeline: reader to bounded channel to publisher, publishing to
   that device's rx topic with the device's message expiry.
 - Transport: carry the connection handling from internal/transport/mqtt, whose
   properties were each measured: the connection outlives the run context, the
   disconnect is bounded, there is no publish queue, and the connection is safe
   for concurrent publishing (autopaho wraps it in packets.NewThreadSafeConn).
-  It publishes the messages of DESIGN-V2.md, "Message formats", as its
-  publishing table says, and registers the will.
+  It publishes rx and the offline message as DESIGN-V2.md, "Message formats",
+  says, and registers the will; T8 adds keepalive and events.
 - The will and the offline message on the agent's status topic. Both are part
   of the connection's life, which this task builds: the will goes in the
   CONNECT packet, and the offline message is part of shutdown.
