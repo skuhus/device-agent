@@ -58,7 +58,7 @@ func examples() map[string]any {
 		"keepalive": builderWithID("9f8e7d6c-5b4a-4392-8170-6f5e4d3c2b1a").
 			Keepalive(exampleAt.Add(-time.Hour), exampleAt, 15*time.Second, 3, []DeviceState{
 				{Device: scanner, Open: true, Counters: DeviceCounters{
-					RxFrames: 1042, RxBytes: 13546,
+					RxFrames: 1042, RxBytes: 15656,
 					Discards:    DiscardCounts{InterCharTimeout: 2},
 					BufferDepth: 0,
 				}},

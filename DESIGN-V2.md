@@ -494,6 +494,19 @@ unplugged overnight, retried every 30 s at most (v1's backoff limit,
 internal/device/serial/serial.go:27), publishes about 1,440 of them in 12
 hours.
 
+A device's events are published in the order they happened, with `agent_ts`
+the time they happened. The agent holds up to 64 of them per device while the
+broker is slow; an event that does not fit is logged and not published, so that
+the reader never waits on its own status. The keepalive counts every event
+either way.
+
+`[Open]` Whether an event that happens while the broker connection is down is
+published once it is up (#13 Q1). Until that is decided it is logged and not
+published, as a reading is, and the keepalive that goes out when the connection
+comes up carries the device's state and counters. The port opens before the
+connection on every start, so `port_opened` never reaches a consumer (measured
+in #13).
+
 ### tx
 
 On `<device>/tx`, published by senders. Reserved in 2.0.0: the agent subscribes
@@ -665,7 +678,7 @@ rather than a number of its own. Source: maintainer, 2026-09-29 (#11 Q7).
       "device_open": true,
       "message_expiry_s": 30,
       "rx_frames": 1042,
-      "rx_bytes": 13546,
+      "rx_bytes": 15656,
       "discards": {
         "oversize": 0,
         "inter_char_timeout": 2,
@@ -726,13 +739,26 @@ rather than a number of its own. Source: maintainer, 2026-09-29 (#11 Q7).
 
 Each entry carries `device_id`, `device_type`, `device_open` and `message_expiry_s` as a
 device event does, and the device's counters since the process started, the
-list in "Status channel" (#23 Q9): `rx_frames`, `rx_bytes`, `discards` by
-reason, `failed_opens` by error class, `publish_failures`, `tx_written`,
-`tx_failed`, and `buffer_depth`, the frames waiting to be published now. Every
-reason and every class is present, at 0 when nothing happened, so a consumer
-can difference two keepalives without handling a missing key. The inverted
-separator ("Reading: rx") shows as `discards.inter_char_timeout` rising while
-`rx_frames` stays flat.
+list in "Status channel" (#23 Q9):
+
+| Counter | Counts |
+|---|---|
+| rx_frames | Frames taken for publishing, whatever became of them: the last rx `seq`. |
+| rx_bytes | Every byte read from the port, separators and discarded bytes included, so that it rises while `rx_frames` stays flat when nothing is framed (#23 Q5). |
+| discards | Discards by reason, one per `bytes_discarded` event. |
+| failed_opens | Failed attempts to open the port by error class, one per `port_open_failed` event. |
+| publish_failures | Readings the broker did not take: failed, or dropped at the shutdown drain. Each has a record in the log file. |
+| tx_written, tx_failed | Tx results, from 2.1.0; 0 until then. |
+| buffer_depth | Frames waiting to be published now. |
+
+Every reason and every class is present, at 0 when nothing happened, so a
+consumer can difference two keepalives without handling a missing key. The
+inverted separator ("Reading: rx") shows as `discards.inter_char_timeout` and
+`rx_bytes` rising while `rx_frames` stays flat.
+
+Besides every interval, a keepalive goes out as soon as the broker connection
+comes up. The first one does not wait an interval, and a consumer that saw a
+will learns within a moment that the agent is back.
 
 ### Agent offline
 

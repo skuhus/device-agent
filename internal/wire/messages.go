@@ -250,15 +250,20 @@ type OpenFailureCounts struct {
 	Unknown          uint64 `json:"unknown"`
 }
 
-// DeviceCounters are one device's counters since the process started.
+// DeviceCounters are one device's counters since the process started, as
+// DESIGN-V2.md, "Agent keepalive", defines them.
 type DeviceCounters struct {
-	RxFrames        uint64            `json:"rx_frames"`
-	RxBytes         uint64            `json:"rx_bytes"`
-	Discards        DiscardCounts     `json:"discards"`
-	FailedOpens     OpenFailureCounts `json:"failed_opens"`
-	PublishFailures uint64            `json:"publish_failures"`
-	TxWritten       uint64            `json:"tx_written"`
-	TxFailed        uint64            `json:"tx_failed"`
+	// RxFrames counts frames taken for publishing: the last rx seq.
+	RxFrames uint64 `json:"rx_frames"`
+	// RxBytes counts every byte read from the port, framed or not, so that it
+	// rises while RxFrames stays flat when nothing is framed.
+	RxBytes     uint64            `json:"rx_bytes"`
+	Discards    DiscardCounts     `json:"discards"`
+	FailedOpens OpenFailureCounts `json:"failed_opens"`
+	// PublishFailures counts readings the broker did not take.
+	PublishFailures uint64 `json:"publish_failures"`
+	TxWritten       uint64 `json:"tx_written"`
+	TxFailed        uint64 `json:"tx_failed"`
 	// BufferDepth is how many frames are waiting to be published now.
 	BufferDepth int `json:"buffer_depth"`
 }
