@@ -480,9 +480,10 @@ func (builder *Builder) Keepalive(started, at time.Time, interval time.Duration,
 	}
 }
 
-// Offline says the agent stopped. For the will, at is when the connection it
-// is composed for was made: the broker publishes the payload it was given at
-// connect time, so a will's agent_ts is not the time of death.
+// Offline says the agent stopped, or, as the will, that its connection was
+// lost. For the will, at is when the connection it is composed for was made:
+// the broker publishes the payload it was given at connect time, so a will's
+// agent_ts is not the time of death.
 func (builder *Builder) Offline(reason OfflineReason, at time.Time) Offline {
 	return Offline{header: builder.header(KindOffline, at), Reason: reason}
 }

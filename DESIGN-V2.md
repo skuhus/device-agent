@@ -761,6 +761,12 @@ the agent composes the will for each connection, and the broker sends the one
 it was given. The time of death is when the message arrives, which only the
 consumer knows.
 
+A will says that a connection was lost, not that the agent stopped. Restarted,
+Mosquitto 2.1.2 published the will of the connection it dropped, and the agent
+reconnected a second later and went on publishing (#12); RabbitMQ was not
+restarted for that measurement. Liveness comes from the keepalive ("Status
+channel").
+
 ### Publishing
 
 | Message | Topic | QoS | Retained | Message expiry |
