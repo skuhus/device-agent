@@ -288,6 +288,10 @@ Depends on: T5, T6.
 
 ### T8. Status channel and counters
 
+Status: done on branch gh-13-status, not yet merged. #13 Q1 is open: an event
+that happens while the broker connection is down is not published, so
+`port_opened` at start never reaches a consumer.
+
 Motivation. The maintainer wants device problems visible outside the host, and
 every agent and device visible from outside (DESIGN-V2.md, "Status channel").
 v1 publishes a heartbeat with some counters and no per-device events.
