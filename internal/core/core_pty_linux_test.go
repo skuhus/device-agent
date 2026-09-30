@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/skuhus/device-agent/internal/device"
 	"github.com/skuhus/device-agent/internal/device/serial"
+	"github.com/skuhus/device-agent/internal/wire"
 	"golang.org/x/sys/unix"
 )
 
@@ -138,5 +140,139 @@ func TestEveryFrameIsOneRxMessageOnItsDeviceTopic(t *testing.T) {
 				t.Errorf("%s message %d = %q seq %d device %s, want %q seq %d", capture.topic, i, raw, rx[i].Seq, rx[i].DeviceID, want, i+1)
 			}
 		}
+	}
+}
+
+// runPTYCore starts a core over one serial reader on a pseudo-terminal and
+// stops it when the test ends.
+func runPTYCore(t *testing.T, opts Options) {
+	t.Helper()
+	running := newCore(t, opts)
+	ctx, cancel := context.WithCancel(context.Background())
+	errc := make(chan error, 1)
+	go func() { errc <- running.Run(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-errc:
+		case <-time.After(10 * time.Second):
+			t.Error("Run did not return within 10s of cancellation")
+		}
+	})
+}
+
+func ptyReader(t *testing.T, id, slave string, separator string) device.Device {
+	t.Helper()
+	reader, err := serial.New(serial.Options{
+		ID: id, Path: slave, Baud: 9600, Terminator: []byte(separator),
+		MaxFrameBytes: 4096, InterCharTimeout: 50 * time.Millisecond,
+		BackoffInitial: 5 * time.Millisecond, BackoffMax: 20 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("serial.New: %v", err)
+	}
+	return reader
+}
+
+func eventsWithCode(events []wire.Event, code wire.EventCode) []wire.Event {
+	var out []wire.Event
+	for _, event := range events {
+		if event.Code == code {
+			out = append(out, event)
+		}
+	}
+	return out
+}
+
+// Closing the pseudo-terminal, as pulling a scanner's cable does, publishes a
+// port_lost event with its error class on the device's status topic.
+func TestClosingThePTYPublishesPortLost(t *testing.T) {
+	master, slave := newPTY(t)
+	transport := &fakeTransport{}
+	runPTYCore(t, testOptions(t, transport, coreDevice(t, ptyReader(t, "scanner-main", slave, "\r\n"), "symbol-05e0-1701")))
+
+	topic := "skuhus/acme/vasby/pack-03/scanner-main/status"
+	waitUntil(t, "port_opened", func() bool { return len(eventsWithCode(transport.eventsOn(topic), wire.EventPortOpened)) > 0 })
+	master.Close()
+	waitUntil(t, "port_lost", func() bool { return len(eventsWithCode(transport.eventsOn(topic), wire.EventPortLost)) > 0 })
+
+	lost := eventsWithCode(transport.eventsOn(topic), wire.EventPortLost)[0]
+	if lost.DeviceOpen || lost.Detail["error_class"] != "disconnected" || lost.Detail["path"] != slave || lost.Detail["error"] == "" {
+		t.Errorf("port_lost device_open %v detail %v, want closed, class disconnected, path %s, the error", lost.DeviceOpen, lost.Detail, slave)
+	}
+}
+
+// A separator configured the wrong way round frames nothing. Each scan ends in
+// one inter-character timeout discard, and consecutive keepalives show the
+// signature DESIGN-V2.md describes: timeout discards and bytes read rising,
+// rx frames at zero. The scans are the real Symbol 05e0:1701 capture, which
+// ends each one in CRLF, sent one at a time as a person scans them.
+func TestInvertedSeparatorShowsInConsecutiveKeepalives(t *testing.T) {
+	master, slave := newPTY(t)
+	transport := &fakeTransport{}
+	connected := make(chan struct{}, 1)
+	opts := testOptions(t, transport, coreDevice(t, ptyReader(t, "scanner-main", slave, "\n\r"), "symbol-05e0-1701"))
+	opts.Connected = connected
+	runPTYCore(t, opts)
+
+	topic := "skuhus/acme/vasby/pack-03/scanner-main/status"
+	waitUntil(t, "port_opened", func() bool { return len(eventsWithCode(transport.eventsOn(topic), wire.EventPortOpened)) > 0 })
+
+	body, err := os.ReadFile(filepath.Join("..", "device", "serial", "testdata", "symbol-05e0-1701-crlf.bin"))
+	if err != nil {
+		t.Fatalf("read capture: %v", err)
+	}
+	var scans [][]byte
+	for _, scan := range bytes.SplitAfter(body, []byte("\r\n")) {
+		if len(scan) > 0 {
+			scans = append(scans, scan)
+		}
+	}
+	if len(scans) != 6 {
+		t.Fatalf("capture holds %d scans, want 6", len(scans))
+	}
+
+	timeouts := func() int {
+		count := 0
+		for _, event := range eventsWithCode(transport.eventsOn(topic), wire.EventBytesDiscarded) {
+			if event.Detail["reason"] == string(wire.DiscardInterCharTimeout) {
+				count++
+			}
+		}
+		return count
+	}
+	sent := 0
+	keepaliveAfter := func(batch [][]byte, keepalives int) wire.KeepaliveDevice {
+		t.Helper()
+		for _, scan := range batch {
+			if _, err := master.Write(scan); err != nil {
+				t.Fatalf("write scan: %v", err)
+			}
+			sent += len(scan)
+			// Three inter-character timeouts: the scan is discarded, and the
+			// resynchronisation after it ends before the next one.
+			time.Sleep(150 * time.Millisecond)
+		}
+		waitUntil(t, "a timeout discard per scan", func() bool { return timeouts() == 3*keepalives })
+		connected <- struct{}{}
+		waitUntil(t, "a keepalive", func() bool { return transport.calls("keepalive") == keepalives })
+		return transport.keepalives()[keepalives-1].Devices[0]
+	}
+
+	first := keepaliveAfter(scans[:3], 1)
+	sentFirst := sent
+	second := keepaliveAfter(scans[3:], 2)
+
+	if first.RxFrames != 0 || second.RxFrames != 0 || len(transport.of("rx", "")) != 0 {
+		t.Errorf("rx_frames %d then %d, %d rx messages, want no frame at all", first.RxFrames, second.RxFrames, len(transport.of("rx", "")))
+	}
+	if first.Discards.InterCharTimeout != 3 || second.Discards.InterCharTimeout != 6 {
+		t.Errorf("inter_char_timeout discards %d then %d, want 3 then 6", first.Discards.InterCharTimeout, second.Discards.InterCharTimeout)
+	}
+	if first.RxBytes != uint64(sentFirst) || second.RxBytes != uint64(sent) {
+		t.Errorf("rx_bytes %d then %d, want every byte sent: %d then %d", first.RxBytes, second.RxBytes, sentFirst, sent)
+	}
+	if other := second.Discards.Oversize + second.Discards.Resync + second.Discards.EmptyFrame; other != 0 {
+		t.Errorf("discards = %+v, want only inter_char_timeout", second.Discards)
 	}
 }

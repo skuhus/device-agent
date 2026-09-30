@@ -190,6 +190,33 @@ func (client *Client) PublishRx(ctx context.Context, topic string, payload []byt
 	})
 }
 
+// PublishEvent publishes a device event at QoS 1, with the device's message
+// expiry, as DESIGN-V2.md, "Publishing", assigns it. Like a reading, an event
+// is not retried: the keepalive counts what it reported either way.
+func (client *Client) PublishEvent(ctx context.Context, topic string, payload []byte, expiry time.Duration) error {
+	seconds := expirySeconds(expiry)
+	return client.publish(ctx, &paho.Publish{
+		Topic:      topic,
+		QoS:        qosAtLeastOnce,
+		Payload:    payload,
+		Properties: &paho.PublishProperties{MessageExpiry: &seconds, ContentType: "application/json"},
+	})
+}
+
+// PublishKeepalive publishes a keepalive at QoS 0. Its expiry is the keepalive's
+// gone_after_s, because a keepalive older than that says nothing true. At QoS 0
+// nothing is acknowledged, so a nil error means the packet was written, not
+// that the broker took it.
+func (client *Client) PublishKeepalive(ctx context.Context, topic string, payload []byte, expiry time.Duration) error {
+	seconds := expirySeconds(expiry)
+	return client.publish(ctx, &paho.Publish{
+		Topic:      topic,
+		QoS:        qosAtMostOnce,
+		Payload:    payload,
+		Properties: &paho.PublishProperties{MessageExpiry: &seconds, ContentType: "application/json"},
+	})
+}
+
 // PublishOffline publishes the agent's offline message at QoS 1, with no
 // expiry, as the last thing before a clean disconnect.
 func (client *Client) PublishOffline(ctx context.Context, topic string, payload []byte) error {

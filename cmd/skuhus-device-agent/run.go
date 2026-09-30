@@ -86,9 +86,10 @@ func runRun(args []string, stdout, stderr io.Writer) error {
 
 // runAgent assembles the agent from its parts and runs it: the log, the
 // credentials, the delivery record file, the topics, a reader per device, the
-// connection with its will, and the core. It builds and does nothing else;
+// connection with its will, and the core with its keepalive settings. It builds and does nothing else;
 // every rule it relies on was checked when the configuration loaded.
 func runAgent(ctx context.Context, cfg *config.Config, stdout io.Writer) error {
+	started := time.Now()
 	// Until the common log (T9), logging.stdout decides whether this process
 	// log is written at all, and logging.file receives the delivery records.
 	processLog := stdout
@@ -184,7 +185,9 @@ func runAgent(ctx context.Context, cfg *config.Config, stdout io.Writer) error {
 			Topics: topics,
 		})
 	}
-	log.Info("topics", "agent_status", agentTopics.Status(), "every_device_rx", station.EveryDeviceRx())
+	log.Info("topics", "agent_status", agentTopics.Status(), "every_device_rx", station.EveryDeviceRx(),
+		"every_device_status", station.EveryDeviceStatus(),
+		"keepalive_interval", cfg.Status.KeepaliveInterval.Duration().String(), "missed_keepalives", cfg.Status.MissedKeepalives)
 
 	// The will is composed for every connection attempt, because the broker
 	// takes it in the CONNECT packet; its agent_ts is therefore when that
@@ -200,6 +203,10 @@ func runAgent(ctx context.Context, cfg *config.Config, stdout io.Writer) error {
 	// crash where there was an orderly stop.
 	connCtx, closeConn := context.WithCancel(context.Background())
 	defer closeConn()
+	// connected tells the core the connection came up, so that a keepalive goes
+	// out at once. OnUp must not block, and one pending signal says all a
+	// second would.
+	connected := make(chan struct{}, 1)
 	client, err := mqtt.Dial(connCtx, mqtt.Options{
 		URL:            cfg.Broker.URL,
 		ClientID:       cfg.Identity.Instance,
@@ -214,6 +221,12 @@ func runAgent(ctx context.Context, cfg *config.Config, stdout io.Writer) error {
 		WillTopic:      agentTopics.Status(),
 		Will:           will,
 		Logger:         log,
+		OnUp: func() {
+			select {
+			case connected <- struct{}{}:
+			default:
+			}
+		},
 	})
 	if err != nil {
 		return err
@@ -223,16 +236,20 @@ func runAgent(ctx context.Context, cfg *config.Config, stdout io.Writer) error {
 	// that returns without a DISCONNECT makes the broker publish the will,
 	// which tells consumers a station crashed when it in fact refused to start.
 	running, err := core.New(core.Options{
-		Devices:        devices,
-		Transport:      client,
-		Builder:        builder,
-		AgentStatus:    agentTopics.Status(),
-		PublishTimeout: cfg.Delivery.PublishTimeout.Duration(),
-		BufferSize:     cfg.Delivery.BufferSize,
-		Station:        cfg.Identity.Station,
-		LogPayloads:    cfg.Logging.LogPayloads,
-		Logger:         log,
-		Deliveries:     deliveries,
+		Devices:           devices,
+		Transport:         client,
+		Builder:           builder,
+		AgentStatus:       agentTopics.Status(),
+		PublishTimeout:    cfg.Delivery.PublishTimeout.Duration(),
+		BufferSize:        cfg.Delivery.BufferSize,
+		KeepaliveInterval: cfg.Status.KeepaliveInterval.Duration(),
+		MissedKeepalives:  cfg.Status.MissedKeepalives,
+		Connected:         connected,
+		Started:           started,
+		Station:           cfg.Identity.Station,
+		LogPayloads:       cfg.Logging.LogPayloads,
+		Logger:            log,
+		Deliveries:        deliveries,
 	})
 	if err != nil {
 		closeCtx, cancelClose := context.WithTimeout(context.Background(), cfg.Delivery.PublishTimeout.Duration())

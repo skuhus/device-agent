@@ -22,7 +22,7 @@ import (
 
 // published is one message the fake transport accepted.
 type published struct {
-	kind    string // "rx" or "offline"
+	kind    string // "rx", "event", "keepalive" or "offline"
 	topic   string
 	payload []byte
 	expiry  time.Duration
@@ -43,15 +43,28 @@ type fakeTransport struct {
 	closeHadDeadline bool
 
 	rxErr error
-	// gate, when non-nil, blocks every rx publish until it is closed.
-	gate chan struct{}
+	// failRx fails every rx publish to the topics it names, so that one device
+	// can fail while another succeeds.
+	failRx map[string]bool
+	// gate, when non-nil, blocks every rx publish until it is closed, and
+	// gated receives a value as each publish starts waiting.
+	gate  chan struct{}
+	gated chan struct{}
+	// eventGate, when non-nil, blocks every event publish until it is closed.
+	eventGate chan struct{}
 	// closeBlocks makes Close wait for its context, as a disconnect does on a
 	// network that has gone away.
 	closeBlocks bool
+	// offlineHold keeps the offline publish in progress for a while after it
+	// is recorded, so that anything still running shows up after it.
+	offlineHold time.Duration
 }
 
 func (fake *fakeTransport) PublishRx(ctx context.Context, topic string, payload []byte, expiry time.Duration) error {
 	if fake.gate != nil {
+		if fake.gated != nil {
+			fake.gated <- struct{}{}
+		}
 		select {
 		case <-fake.gate:
 		case <-ctx.Done():
@@ -60,20 +73,47 @@ func (fake *fakeTransport) PublishRx(ctx context.Context, topic string, payload 
 	}
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
-	if fake.rxErr != nil {
+	if fake.rxErr != nil || fake.failRx[topic] {
 		fake.order = append(fake.order, "rx-failed")
-		return fake.rxErr
+		if fake.rxErr != nil {
+			return fake.rxErr
+		}
+		return errors.New("publish to " + topic + " refused with reason 0x87: not authorized")
 	}
 	fake.messages = append(fake.messages, published{"rx", topic, payload, expiry})
 	fake.order = append(fake.order, "rx")
 	return nil
 }
 
-func (fake *fakeTransport) PublishOffline(_ context.Context, topic string, payload []byte) error {
+func (fake *fakeTransport) PublishEvent(ctx context.Context, topic string, payload []byte, expiry time.Duration) error {
+	if fake.eventGate != nil {
+		select {
+		case <-fake.eventGate:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
+	fake.messages = append(fake.messages, published{"event", topic, payload, expiry})
+	fake.order = append(fake.order, "event")
+	return nil
+}
+
+func (fake *fakeTransport) PublishKeepalive(_ context.Context, topic string, payload []byte, expiry time.Duration) error {
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	fake.messages = append(fake.messages, published{"keepalive", topic, payload, expiry})
+	fake.order = append(fake.order, "keepalive")
+	return nil
+}
+
+func (fake *fakeTransport) PublishOffline(_ context.Context, topic string, payload []byte) error {
+	fake.mu.Lock()
 	fake.messages = append(fake.messages, published{"offline", topic, payload, 0})
 	fake.order = append(fake.order, "offline")
+	fake.mu.Unlock()
+	time.Sleep(fake.offlineHold)
 	return nil
 }
 
@@ -96,28 +136,75 @@ func (fake *fakeTransport) snapshot() ([]published, []string) {
 }
 
 func (fake *fakeTransport) rxOn(topic string) []wire.Rx {
+	return decodeAll[wire.Rx](fake.of("rx", topic))
+}
+
+func (fake *fakeTransport) eventsOn(topic string) []wire.Event {
+	return decodeAll[wire.Event](fake.of("event", topic))
+}
+
+func (fake *fakeTransport) keepalives() []wire.Keepalive {
+	return decodeAll[wire.Keepalive](fake.of("keepalive", ""))
+}
+
+// of returns the messages of one kind, on topic when it is not empty.
+func (fake *fakeTransport) of(kind, topic string) []published {
 	messages, _ := fake.snapshot()
-	var out []wire.Rx
+	var out []published
 	for _, message := range messages {
-		if message.kind != "rx" || message.topic != topic {
-			continue
+		if message.kind == kind && (topic == "" || message.topic == topic) {
+			out = append(out, message)
 		}
-		var rx wire.Rx
-		if err := json.Unmarshal(message.payload, &rx); err != nil {
-			panic(err)
-		}
-		out = append(out, rx)
 	}
 	return out
 }
 
+// calls counts the calls of one kind in the order record.
+func (fake *fakeTransport) calls(kind string) int {
+	_, order := fake.snapshot()
+	count := 0
+	for _, call := range order {
+		if call == kind {
+			count++
+		}
+	}
+	return count
+}
+
+func decodeAll[T any](messages []published) []T {
+	out := make([]T, 0, len(messages))
+	for _, message := range messages {
+		var decoded T
+		if err := json.Unmarshal(message.payload, &decoded); err != nil {
+			panic(err)
+		}
+		out = append(out, decoded)
+	}
+	return out
+}
+
+// waitUntil polls cond for up to 3s and fails the test with what if it never
+// holds.
+func waitUntil(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 // fakeReader emits a fixed set of frames and then waits for cancellation,
 // which is what a real scanner between scans looks like. It reports the port
-// events it is given before the first frame.
+// events it is given before the first frame, and onStop once cancelled, as the
+// serial reader reports its port closed.
 type fakeReader struct {
 	id     string
 	frames [][]byte
 	events []device.Event
+	onStop []device.Event
 	// sent is closed once every frame has been handed to the sink.
 	sent chan struct{}
 }
@@ -148,6 +235,9 @@ func (reader *fakeReader) Run(ctx context.Context, sink chan<- device.Frame, rep
 	}
 	close(reader.sent)
 	<-ctx.Done()
+	for _, event := range reader.onStop {
+		report(event)
+	}
 	return ctx.Err()
 }
 
@@ -194,7 +284,10 @@ func testOptions(t *testing.T, transport Transport, devices ...Device) Options {
 		PublishTimeout: time.Second,
 		BufferSize:     8,
 		DrainTimeout:   2 * time.Second,
-		Station:        "pack-03",
+		// An hour, so that no keepalive goes out unless a test asks for one.
+		KeepaliveInterval: time.Hour,
+		MissedKeepalives:  3,
+		Station:           "pack-03",
 	}
 }
 
@@ -506,6 +599,8 @@ func TestNewRejectsUnusableOptions(t *testing.T) {
 		{"no agent status topic", func(o *Options) { o.AgentStatus = "" }, "status topic is required"},
 		{"zero publish timeout", func(o *Options) { o.PublishTimeout = 0 }, "publish timeout must be positive"},
 		{"zero buffer", func(o *Options) { o.BufferSize = 0 }, "buffer size must be positive"},
+		{"zero keepalive interval", func(o *Options) { o.KeepaliveInterval = 0 }, "keepalive interval must be positive"},
+		{"no missed keepalives", func(o *Options) { o.MissedKeepalives = 0 }, "missed keepalives must be at least 1"},
 		{"device without a reader", func(o *Options) { o.Devices[0].Reader = nil }, "has no reader"},
 		{"device without topics", func(o *Options) { o.Devices[0].Topics = wire.DeviceTopics{} }, "has no topics"},
 	}
