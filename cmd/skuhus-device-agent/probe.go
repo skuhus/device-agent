@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -167,20 +168,10 @@ func runProbe(args []string, stdout, stderr io.Writer) error {
 		defer cancel()
 	}
 
-	// The reader logs every port event itself; these two lines say, in one
-	// place, whether the device is there to probe at all.
-	devLog := log.With("device_id", dev.ID, "device_path", dev.Path)
-	report := func(event device.Event) {
-		switch event.Kind {
-		case device.PortOpened:
-			devLog.Info("device present")
-		case device.PortLost, device.PortOpenFailed:
-			devLog.Warn("device absent", "error_class", event.ErrorClass, "error", errString(event.Err))
-		}
-	}
+	presence := &presenceLog{log: log.With("device_id", dev.ID, "device_path", dev.Path)}
 	frames := make(chan device.Frame, 16)
 	done := make(chan error, 1)
-	go func() { done <- sd.Run(ctx, frames, report) }()
+	go func() { done <- sd.Run(ctx, frames, presence.report) }()
 
 	builder := wire.NewBuilder(identity, nil)
 	wireDevice := wire.Device{ID: dev.ID, Type: dev.DeviceType, Expiry: dev.MessageExpiry.Duration()}
@@ -201,6 +192,39 @@ func runProbe(args []string, stdout, stderr io.Writer) error {
 			}
 		}
 	}
+}
+
+// presenceLog says whether the probed device is there, once per change. The
+// reader reports a failed open on every retry, and a line per retry would bury
+// the one that matters; a change of error class, such as absent becoming
+// permission_denied, is a change worth a line. It is called only from the
+// reader's goroutine.
+type presenceLog struct {
+	log     *slog.Logger
+	known   bool
+	present bool
+	class   string
+}
+
+func (presence *presenceLog) report(event device.Event) {
+	switch event.Kind {
+	case device.PortOpened:
+		presence.set(true, event)
+	case device.PortLost, device.PortOpenFailed:
+		presence.set(false, event)
+	}
+}
+
+func (presence *presenceLog) set(present bool, event device.Event) {
+	if presence.known && presence.present == present && presence.class == event.ErrorClass {
+		return
+	}
+	presence.known, presence.present, presence.class = true, present, event.ErrorClass
+	if present {
+		presence.log.Info("device present")
+		return
+	}
+	presence.log.Warn("device absent", "error_class", event.ErrorClass, "error", errString(event.Err))
 }
 
 func printRx(w io.Writer, rx wire.Rx, raw []byte, asJSON bool) error {

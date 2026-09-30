@@ -2,10 +2,15 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+
+	"github.com/skuhus/device-agent/internal/device"
 )
 
 // writeConfig lays down a config file plus the credentials file and log
@@ -199,5 +204,39 @@ func TestRunProbeRejectsBadSeparator(t *testing.T) {
 	_, _, err := probe(t, "--path", "/dev/serial/by-id/usb-x-if00", "--separator", `\q`)
 	if err == nil || !strings.Contains(err.Error(), `cannot decode separator "\\q"`) {
 		t.Fatalf("err = %v, want the undecodable separator named", err)
+	}
+}
+
+// probe says a device is absent once, not on every retry, and says so again
+// only when something changes.
+func TestProbePresenceLogsOnlyChanges(t *testing.T) {
+	var logged bytes.Buffer
+	presence := &presenceLog{log: slog.New(slog.NewJSONHandler(&logged, nil))}
+	absent := device.Event{Kind: device.PortOpenFailed, ErrorClass: "absent", Err: syscall.ENOENT}
+	for _, event := range []device.Event{
+		absent, absent, absent,
+		{Kind: device.PortOpenFailed, ErrorClass: "permission_denied", Err: syscall.EACCES},
+		{Kind: device.PortOpened},
+		{Kind: device.BytesDiscarded, Reason: "oversize", Bytes: 9},
+		{Kind: device.PortLost, ErrorClass: "disconnected", Err: syscall.EIO},
+		absent, absent,
+	} {
+		presence.report(event)
+	}
+	var got []string
+	for _, line := range strings.Split(strings.TrimSpace(logged.String()), "\n") {
+		var record struct {
+			Msg        string `json:"msg"`
+			ErrorClass string `json:"error_class"`
+		}
+		if err := json.Unmarshal([]byte(line), &record); err != nil {
+			t.Fatalf("log line %q: %v", line, err)
+		}
+		got = append(got, record.Msg+"/"+record.ErrorClass)
+	}
+	want := []string{"device absent/absent", "device absent/permission_denied", "device present/",
+		"device absent/disconnected", "device absent/absent"}
+	if strings.Join(got, " | ") != strings.Join(want, " | ") {
+		t.Errorf("logged\n  %s\nwant\n  %s", strings.Join(got, "\n  "), strings.Join(want, "\n  "))
 	}
 }
