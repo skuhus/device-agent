@@ -2,6 +2,8 @@ package mqtt
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"math"
 	"net/url"
@@ -10,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/eclipse/paho.golang/paho"
 )
 
 func TestExpirySecondsRoundsUp(t *testing.T) {
@@ -146,7 +150,7 @@ func TestDialRejectsUnusableOptions(t *testing.T) {
 			Options{URL: "tls://mq.internal:8883", ClientID: "pack-03", CAFile: "/nonexistent/ca.pem"},
 			"ca_file",
 		},
-		{"will without a topic", Options{URL: "tcp://localhost:1883", ClientID: "pack-03", Will: []byte("{}")}, "a will needs both"},
+		{"will without a topic", Options{URL: "tcp://localhost:1883", ClientID: "pack-03", Will: func() ([]byte, error) { return []byte("{}"), nil }}, "a will needs both"},
 		{"will topic without a payload", Options{URL: "tcp://localhost:1883", ClientID: "pack-03", WillTopic: "t"}, "a will needs both"},
 	}
 	for _, tc := range tests {
@@ -165,33 +169,57 @@ func TestDialRejectsUnusableOptions(t *testing.T) {
 }
 
 // The will is the offline message on the agent's status topic: QoS 1, not
-// retained, published without delay. The settings beside it are the measured
-// ones the connection depends on: clean start, no session, no publish queue.
+// retained, published without delay, and composed afresh for every connection
+// attempt, so that after a reconnection it says when that connection was made.
+// The settings beside it are the measured ones the connection depends on: clean
+// start, no session, no publish queue.
 func TestConnectionConfiguration(t *testing.T) {
 	brokerURL, _ := url.Parse("tcp://skuhus-dev-rabbitmq:1883")
-	will := []byte(`{"schema":2,"kind":"offline","reason":"will"}`)
+	composed := 0
 	cfg := clientConfig(Options{
 		ClientID:  "pack-03",
 		WillTopic: "skuhus/acme/vasby/pack-03/agent/pack-03/status",
-		Will:      will,
+		Will: func() ([]byte, error) {
+			composed++
+			return []byte(fmt.Sprintf(`{"kind":"offline","reason":"will","attempt":%d}`, composed)), nil
+		},
 	}, brokerURL, nil, slog.New(slog.DiscardHandler))
 
-	message := cfg.WillMessage
-	if message == nil {
+	if cfg.WillMessage == nil || cfg.WillProperties == nil || cfg.ConnectPacketBuilder == nil {
 		t.Fatal("no will registered")
 	}
-	if message.Topic != "skuhus/acme/vasby/pack-03/agent/pack-03/status" || message.QoS != 1 || message.Retain || string(message.Payload) != string(will) {
-		t.Errorf("will = topic %q, QoS %d, retain %t, payload %s", message.Topic, message.QoS, message.Retain, message.Payload)
-	}
-	if cfg.WillProperties == nil || cfg.WillProperties.WillDelayInterval == nil || *cfg.WillProperties.WillDelayInterval != 0 {
+	if cfg.WillProperties.WillDelayInterval == nil || *cfg.WillProperties.WillDelayInterval != 0 {
 		t.Errorf("will properties = %+v, want an immediate will", cfg.WillProperties)
+	}
+	// Two connection attempts, each through the builder autopaho calls, with the
+	// packet holding the configured will by pointer as autopaho's does.
+	for attempt := 1; attempt <= 2; attempt++ {
+		packet, err := cfg.ConnectPacketBuilder(&paho.Connect{WillMessage: cfg.WillMessage, WillProperties: cfg.WillProperties}, brokerURL)
+		if err != nil {
+			t.Fatalf("attempt %d: %v", attempt, err)
+		}
+		message := packet.WillMessage
+		want := fmt.Sprintf(`{"kind":"offline","reason":"will","attempt":%d}`, attempt)
+		if message.Topic != "skuhus/acme/vasby/pack-03/agent/pack-03/status" || message.QoS != 1 || message.Retain || string(message.Payload) != want {
+			t.Errorf("attempt %d: will = topic %q, QoS %d, retain %t, payload %s; want payload %s",
+				attempt, message.Topic, message.QoS, message.Retain, message.Payload, want)
+		}
+	}
+	if cfg.WillMessage.Payload != nil {
+		t.Errorf("the configured will was changed to %s; each packet should get a copy", cfg.WillMessage.Payload)
 	}
 	if !cfg.CleanStartOnInitialConnection || cfg.SessionExpiryInterval != 0 || cfg.Queue != nil {
 		t.Errorf("clean start %t, session expiry %d, queue %v: want a clean connection with no session and no queue",
 			cfg.CleanStartOnInitialConnection, cfg.SessionExpiryInterval, cfg.Queue)
 	}
 
-	if withoutWill := clientConfig(Options{ClientID: "pack-03"}, brokerURL, nil, slog.New(slog.DiscardHandler)); withoutWill.WillMessage != nil {
+	failing := clientConfig(Options{ClientID: "pack-03", WillTopic: "t", Will: func() ([]byte, error) { return nil, errors.New("encoder broke") }},
+		brokerURL, nil, slog.New(slog.DiscardHandler))
+	if _, err := failing.ConnectPacketBuilder(&paho.Connect{WillMessage: failing.WillMessage}, brokerURL); err == nil || !strings.Contains(err.Error(), "compose will: encoder broke") {
+		t.Errorf("a will that cannot be composed: err = %v, want the connection attempt to fail naming it", err)
+	}
+
+	if withoutWill := clientConfig(Options{ClientID: "pack-03"}, brokerURL, nil, slog.New(slog.DiscardHandler)); withoutWill.WillMessage != nil || withoutWill.ConnectPacketBuilder != nil {
 		t.Error("a will was registered without one being asked for")
 	}
 }

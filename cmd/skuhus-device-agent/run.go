@@ -186,12 +186,11 @@ func runAgent(ctx context.Context, cfg *config.Config, stdout io.Writer) error {
 	}
 	log.Info("topics", "agent_status", agentTopics.Status(), "every_device_rx", station.EveryDeviceRx())
 
-	// The will is built before the connection, because the broker needs it in
-	// the CONNECT packet; its agent_ts is therefore when the agent connected,
-	// as DESIGN-V2.md, "Message formats", says.
-	will, err := json.Marshal(builder.Offline(wire.OfflineWill, time.Now()))
-	if err != nil {
-		return fmt.Errorf("encode will: %w", err)
+	// The will is composed for every connection attempt, because the broker
+	// takes it in the CONNECT packet; its agent_ts is therefore when that
+	// connection was made, as DESIGN-V2.md, "Message formats", says.
+	will := func() ([]byte, error) {
+		return json.Marshal(builder.Offline(wire.OfflineWill, time.Now()))
 	}
 
 	// The connection is dialled with its own context, not the run context. The

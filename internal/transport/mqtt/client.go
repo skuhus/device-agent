@@ -46,11 +46,14 @@ type Options struct {
 	BackoffMax     time.Duration
 	BackoffJitter  float64
 
-	// Will is the offline message the broker publishes on WillTopic if this
-	// agent stops without disconnecting. It is not retained: nothing the agent
-	// publishes is (#11 Q1), and RabbitMQ does not retain a will in any case.
+	// Will composes the offline message the broker publishes on WillTopic if
+	// this agent stops without disconnecting. It is called for every connection
+	// attempt, because the broker takes the will in the CONNECT packet: a will
+	// composed once would carry the first connection's time after every
+	// reconnection. It is not retained: nothing the agent publishes is
+	// (#11 Q1), and RabbitMQ does not retain a will in any case.
 	WillTopic string
-	Will      []byte
+	Will      func() ([]byte, error)
 
 	Logger *slog.Logger
 	// OnUp and OnDown report connection transitions. They are called from the
@@ -90,7 +93,7 @@ func Dial(ctx context.Context, opts Options) (*Client, error) {
 		return nil, err
 	}
 	if (opts.Will == nil) != (opts.WillTopic == "") {
-		return nil, errors.New("mqtt: a will needs both a topic and a payload")
+		return nil, errors.New("mqtt: a will needs both a topic and a way to compose it")
 	}
 
 	cm, err := autopaho.NewConnection(ctx, clientConfig(opts, brokerURL, tlsCfg, log))
@@ -145,12 +148,22 @@ func clientConfig(opts Options, brokerURL *url.URL, tlsCfg *tls.Config, log *slo
 	}
 	if opts.Will != nil {
 		var noDelay uint32 // Publish the will immediately; a delay only hides a death.
-		cfg.WillMessage = &paho.WillMessage{
-			Topic:   opts.WillTopic,
-			QoS:     qosAtLeastOnce,
-			Payload: opts.Will,
-		}
+		cfg.WillMessage = &paho.WillMessage{Topic: opts.WillTopic, QoS: qosAtLeastOnce}
 		cfg.WillProperties = &paho.WillProperties{WillDelayInterval: &noDelay, ContentType: "application/json"}
+		// autopaho builds a CONNECT packet for every attempt, and passes it here
+		// before sending it (autopaho/net.go, buildConnectPacket). The packet
+		// holds the configured WillMessage by pointer, so the payload goes into
+		// a copy rather than into the shared message.
+		cfg.ConnectPacketBuilder = func(packet *paho.Connect, _ *url.URL) (*paho.Connect, error) {
+			payload, err := opts.Will()
+			if err != nil {
+				return nil, fmt.Errorf("compose will: %w", err)
+			}
+			will := *packet.WillMessage
+			will.Payload = payload
+			packet.WillMessage = &will
+			return packet, nil
+		}
 	}
 	return cfg
 }

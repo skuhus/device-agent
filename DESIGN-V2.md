@@ -756,9 +756,10 @@ the broker publishes when the connection is lost without a disconnect.
 }
 ```
 
-In a will, `agent_ts` is when the agent connected, not when it died: the broker
-sends a payload composed at connect time. The time of death is when the
-message arrives, which only the consumer knows.
+In a will, `agent_ts` is when the lost connection was made, not when it died:
+the agent composes the will for each connection, and the broker sends the one
+it was given. The time of death is when the message arrives, which only the
+consumer knows.
 
 ### Publishing
 
