@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/skuhus/device-agent/internal/device"
+	"github.com/skuhus/device-agent/internal/wire"
 	goserial "go.bug.st/serial"
 )
 
@@ -396,25 +397,26 @@ func (dev *Device) event(kind device.EventKind, fill func(*device.Event)) device
 }
 
 // classify names the failure so a log reader can tell a missing device from a
-// permissions problem from a device that was pulled out mid-read.
+// permissions problem from a device that was pulled out mid-read. The names are
+// internal/wire's error classes, which every event and keepalive carries.
 func classify(err error) string {
 	if err == nil {
 		return "none"
 	}
 	switch {
 	case errors.Is(err, syscall.EIO), errors.Is(err, syscall.ENODEV), errors.Is(err, syscall.ENXIO):
-		return "disconnected"
+		return string(wire.ErrorDisconnected)
 	case errors.Is(err, syscall.ENOENT):
-		return "absent"
+		return string(wire.ErrorAbsent)
 	case errors.Is(err, syscall.EACCES), errors.Is(err, syscall.EPERM):
-		return "permission_denied"
+		return string(wire.ErrorPermissionDenied)
 	case errors.Is(err, syscall.EROFS):
 		// Seen when a device node is bind-mounted read-only into a container.
 		// The port is opened read-write because a scanner may need commands
 		// sent to it, so a read-only mount fails at open.
-		return "read_only"
+		return string(wire.ErrorReadOnly)
 	case errors.Is(err, syscall.EBUSY):
-		return "busy"
+		return string(wire.ErrorBusy)
 	}
 	var pe *goserial.PortError
 	if errors.As(err, &pe) {
@@ -422,18 +424,18 @@ func classify(err error) string {
 		case goserial.PortClosed:
 			// The library also returns this when a read finds the port in the
 			// zero-length-readable state a disconnect leaves behind.
-			return "disconnected"
+			return string(wire.ErrorDisconnected)
 		case goserial.PortNotFound:
-			return "absent"
+			return string(wire.ErrorAbsent)
 		case goserial.PermissionDenied:
-			return "permission_denied"
+			return string(wire.ErrorPermissionDenied)
 		case goserial.PortBusy:
-			return "busy"
+			return string(wire.ErrorBusy)
 		default:
-			return "port_error"
+			return string(wire.ErrorPortError)
 		}
 	}
-	return "unknown"
+	return string(wire.ErrorUnknown)
 }
 
 func errText(err error) string {
