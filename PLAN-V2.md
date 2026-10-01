@@ -69,7 +69,7 @@ Status: done on branch gh-4-docs, committed at the maintainer's request on
 
 Motivation. DESIGN-V2.md cites docs/spikes/m0-mqtt5.md for every broker
 constraint and docs/scanners/symbol-05e0-1701.md for the signature of an
-inverted separator. Neither file is tracked: at f97c736, `git status` shows
+unmatched separator. Neither file is tracked: at f97c736, `git status` shows
 `?? docs/`, `?? dev/` and `?? spike/`. A clone of the repository does not
 contain them, so those citations point at nothing. The measurements took a
 scanner on the desk and access to the fleet broker to produce, and cannot be
@@ -306,9 +306,10 @@ Work.
 
 Intended result, each checked end to end against the development broker:
 - Closing the pseudo-terminal publishes a port-lost event with its error class.
-- A device configured with a separator it never sends shows timeout discards
-  rising and rx frames at zero in consecutive keepalives: the inverted-separator
-  signature, visible without reading a log on the station.
+- A device whose separator never appears in what it sends, misconfigured or
+  missing from the data, shows timeout discards rising and rx frames at zero in
+  consecutive keepalives: the unmatched-separator signature, visible without
+  reading a log on the station.
 
 Depends on: T6, T7.
 

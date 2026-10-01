@@ -208,10 +208,18 @@ Source: maintainer, 2026-09-29. v1 logs oversize and timeout discards at WARN an
 resync and empty-frame discards at DEBUG, and counts none of them
 (internal/device/serial/serial.go:328-341).
 
-`[Decided]` The failure that matters most is a separator configured the wrong way
-round, so that no reading is ever emitted. Source: maintainer, 2026-09-29. The
-Symbol 05e0:1701 capture shows what it looks like: one inter_char_timeout
-discard per scan and no frames (docs/scanners/symbol-05e0-1701.md:32).
+`[Decided]` The failure that matters most is an unmatched separator: the
+configured separator never appears in what the device sends, so no reading is
+ever emitted. It has two causes. The separator is misconfigured, such as `\n\r`
+for a device that sends CRLF, or it is missing from the data, as from a scanner
+set up without a suffix. Source: maintainer, 2026-09-29 and 2026-10-01. The
+Symbol 05e0:1701 capture shows the second: no suffix, one inter_char_timeout
+discard per scan, and no frames (docs/scanners/symbol-05e0-1701.md:32).
+
+A separator configured as only part of what the device sends, such as CR for a
+device that sends CRLF, is a different failure. Frames still come out, and the
+stray byte is discarded or prepended to the next reading (DESIGN.md, "A CR/CRLF
+mismatch is the one wrong terminator that is not loud").
 
 `[Decided]` That failure is detected upstream from the counters, not in the
 agent: for one device, rx bytes rising, rx frames flat, timeout discards rising.
@@ -752,8 +760,8 @@ list in "Status channel" (#23 Q9):
 | buffer_depth | Frames waiting to be published now. |
 
 Every reason and every class is present, at 0 when nothing happened, so a
-consumer can difference two keepalives without handling a missing key. The
-inverted separator ("Reading: rx") shows as `discards.inter_char_timeout` and
+consumer can difference two keepalives without handling a missing key. An
+unmatched separator ("Reading: rx") shows as `discards.inter_char_timeout` and
 `rx_bytes` rising while `rx_frames` stays flat.
 
 Besides every interval, a keepalive goes out as soon as the broker connection

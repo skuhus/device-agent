@@ -321,7 +321,7 @@ func TestUnknownErrorClassIsCountedAsUnknownAndLogged(t *testing.T) {
 
 // Every discard reason the serial framer produces, and every error class the
 // wire defines, has a counter of its own. A reason or class that fell through
-// to another's counter would make the inverted-separator signature unreadable.
+// to another's counter would make the unmatched-separator signature unreadable.
 func TestEveryReasonAndClassHasItsOwnCounter(t *testing.T) {
 	var discards wire.DiscardCounts
 	for _, reason := range []serial.DiscardReason{serial.DiscardOversize, serial.DiscardTimeout, serial.DiscardResync, serial.DiscardEmpty} {

@@ -202,16 +202,33 @@ func TestClosingThePTYPublishesPortLost(t *testing.T) {
 	}
 }
 
-// A separator configured the wrong way round frames nothing. Each scan ends in
-// one inter-character timeout discard, and consecutive keepalives show the
-// signature DESIGN-V2.md describes: timeout discards and bytes read rising,
-// rx frames at zero. The scans are the real Symbol 05e0:1701 capture, which
-// ends each one in CRLF, sent one at a time as a person scans them.
-func TestInvertedSeparatorShowsInConsecutiveKeepalives(t *testing.T) {
+// An unmatched separator frames nothing: the configured separator never
+// appears in what the device sends, because it is misconfigured or because the
+// device sends none. Each scan ends in one inter-character timeout discard, and
+// consecutive keepalives show the signature DESIGN-V2.md describes: timeout
+// discards and bytes read rising, rx frames at zero. The scans are the real
+// Symbol 05e0:1701 capture, sent one at a time as a person scans them.
+func TestUnmatchedSeparatorShowsInConsecutiveKeepalives(t *testing.T) {
+	t.Run("misconfigured", func(t *testing.T) {
+		// The scanner ends each scan in CRLF; the separator is configured the
+		// other way round.
+		unmatchedSeparator(t, "\n\r", false)
+	})
+	t.Run("missing from the data", func(t *testing.T) {
+		// The separator is configured as CRLF, and the scanner sends none, as
+		// one set up without a suffix does.
+		unmatchedSeparator(t, "\r\n", true)
+	})
+}
+
+// unmatchedSeparator sends the capture's six scans to a reader configured with
+// separator, each without its CRLF when strip is set, and checks two
+// keepalives, one after three scans and one after all six.
+func unmatchedSeparator(t *testing.T, separator string, strip bool) {
 	master, slave := newPTY(t)
 	transport := &fakeTransport{}
 	connected := make(chan struct{}, 1)
-	opts := testOptions(t, transport, coreDevice(t, ptyReader(t, "scanner-main", slave, "\n\r"), "symbol-05e0-1701"))
+	opts := testOptions(t, transport, coreDevice(t, ptyReader(t, "scanner-main", slave, separator), "symbol-05e0-1701"))
 	opts.Connected = connected
 	runPTYCore(t, opts)
 
@@ -224,6 +241,9 @@ func TestInvertedSeparatorShowsInConsecutiveKeepalives(t *testing.T) {
 	}
 	var scans [][]byte
 	for _, scan := range bytes.SplitAfter(body, []byte("\r\n")) {
+		if strip {
+			scan = bytes.TrimSuffix(scan, []byte("\r\n"))
+		}
 		if len(scan) > 0 {
 			scans = append(scans, scan)
 		}

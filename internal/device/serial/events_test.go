@@ -126,7 +126,7 @@ func TestReportsClosedNotLostOnStop(t *testing.T) {
 }
 
 // Every byte read is reported, whether it ends up in a frame or is discarded:
-// rx_bytes rising while no frame comes out is how an inverted separator shows
+// rx_bytes rising while no frame comes out is how an unmatched separator shows
 // (#23 Q5). The data is longer than one read, so it arrives in several.
 func TestReportsEveryByteRead(t *testing.T) {
 	recorder := &eventRecorder{}

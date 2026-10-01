@@ -34,7 +34,7 @@ const (
 	PortOpenFailed EventKind = "open_failed"
 	BytesDiscarded EventKind = "discarded"
 	// BytesRead is reported for every read that returned bytes, framed or not.
-	// It is counted, not published: an inverted separator shows as bytes read
+	// It is counted, not published: an unmatched separator shows as bytes read
 	// while no frame comes out (DESIGN-V2.md, #23 Q5).
 	BytesRead EventKind = "read"
 )
