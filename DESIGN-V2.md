@@ -503,17 +503,20 @@ internal/device/serial/serial.go:27), publishes about 1,440 of them in 12
 hours.
 
 A device's events are published in the order they happened, with `agent_ts`
-the time they happened. The agent holds up to 64 of them per device while the
-broker is slow; an event that does not fit is logged and not published, so that
-the reader never waits on its own status. The keepalive counts every event
-either way.
+the time they happened.
 
-`[Open]` Whether an event that happens while the broker connection is down is
-published once it is up (#13 Q1). Until that is decided it is logged and not
-published, as a reading is, and the keepalive that goes out when the connection
-comes up carries the device's state and counters. The port opens before the
-connection on every start, so `port_opened` never reaches a consumer (measured
-in #13).
+`[Decided]` An event that happens while the broker connection is down waits,
+and is published once the connection is up. Each device keeps only its most
+recent events, so that a long outage does not end in a flood. Source:
+maintainer, 2026-10-01 (#13 Q1). How many is `status.event_buffer_size`, 64 by
+default; when it is full the oldest is dropped and logged. An event that waited
+longer than the device's message expiry is dropped as well, and one within it
+is published with what remains of its expiry. The keepalive counts every event,
+published or not. Readings do not wait: a reading while the connection is down
+fails and is recorded, as before (DESIGN.md, "Scans are perishable").
+
+The port opens before the broker connection on every start, so `port_opened` is
+one of the events that waits (measured in #13).
 
 ### tx
 

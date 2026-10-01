@@ -288,9 +288,9 @@ Depends on: T5, T6.
 
 ### T8. Status channel and counters
 
-Status: done on branch gh-13-status, not yet merged. #13 Q1 is open: an event
-that happens while the broker connection is down is not published, so
-`port_opened` at start never reaches a consumer.
+Status: done on branch gh-13-status, not yet merged. #13 Q2 is open: whether
+readings wait for the broker connection as events do; until it is answered they
+do not.
 
 Motivation. The maintainer wants device problems visible outside the host, and
 every agent and device visible from outside (DESIGN-V2.md, "Status channel").
@@ -302,6 +302,8 @@ Work.
 - Device events on the device status topic: opened, closed, lost with its error
   class, a failed open on every attempt (#11 Q8), discarded bytes with reason
   and byte count, from the port events T7's reader reports.
+- Events that happen while the broker connection is down wait for it, each
+  device keeping only its most recent `status.event_buffer_size` (#13 Q1).
 - Count, per device, what the keepalive reports.
 
 Intended result, each checked end to end against the development broker:
