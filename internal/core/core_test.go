@@ -58,6 +58,21 @@ type fakeTransport struct {
 	// offlineHold keeps the offline publish in progress for a while after it
 	// is recorded, so that anything still running shows up after it.
 	offlineHold time.Duration
+	// down, when non-nil, keeps AwaitConnection waiting until it is closed, as
+	// a broker connection that is not up yet does.
+	down chan struct{}
+}
+
+func (fake *fakeTransport) AwaitConnection(ctx context.Context) error {
+	if fake.down == nil {
+		return nil
+	}
+	select {
+	case <-fake.down:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (fake *fakeTransport) PublishRx(ctx context.Context, topic string, payload []byte, expiry time.Duration) error {
@@ -199,7 +214,8 @@ func waitUntil(t *testing.T, what string, cond func() bool) {
 // fakeReader emits a fixed set of frames and then waits for cancellation,
 // which is what a real scanner between scans looks like. It reports the port
 // events it is given before the first frame, and onStop once cancelled, as the
-// serial reader reports its port closed.
+// serial reader reports its port closed. An event without a time is stamped
+// when it is reported, as a real reader stamps every event.
 type fakeReader struct {
 	id     string
 	frames [][]byte
@@ -224,7 +240,7 @@ func (reader *fakeReader) Direction() device.Direction { return device.Inbound }
 
 func (reader *fakeReader) Run(ctx context.Context, sink chan<- device.Frame, report func(device.Event)) error {
 	for _, event := range reader.events {
-		report(event)
+		report(stamped(event))
 	}
 	for _, raw := range reader.frames {
 		select {
@@ -236,9 +252,16 @@ func (reader *fakeReader) Run(ctx context.Context, sink chan<- device.Frame, rep
 	close(reader.sent)
 	<-ctx.Done()
 	for _, event := range reader.onStop {
-		report(event)
+		report(stamped(event))
 	}
 	return ctx.Err()
+}
+
+func stamped(event device.Event) device.Event {
+	if event.At.IsZero() {
+		event.At = time.Now()
+	}
+	return event
 }
 
 var station = mustStation()
@@ -277,13 +300,14 @@ func agentStatus(t *testing.T) string {
 func testOptions(t *testing.T, transport Transport, devices ...Device) Options {
 	t.Helper()
 	return Options{
-		Devices:        devices,
-		Transport:      transport,
-		Builder:        wire.NewBuilder(wire.Agent{Project: "acme", Site: "vasby", Station: "pack-03", InstanceID: "pack-03", AgentVersion: "test"}, nil),
-		AgentStatus:    agentStatus(t),
-		PublishTimeout: time.Second,
-		BufferSize:     8,
-		DrainTimeout:   2 * time.Second,
+		Devices:         devices,
+		Transport:       transport,
+		Builder:         wire.NewBuilder(wire.Agent{Project: "acme", Site: "vasby", Station: "pack-03", InstanceID: "pack-03", AgentVersion: "test"}, nil),
+		AgentStatus:     agentStatus(t),
+		PublishTimeout:  time.Second,
+		BufferSize:      8,
+		DrainTimeout:    2 * time.Second,
+		EventBufferSize: 8,
 		// An hour, so that no keepalive goes out unless a test asks for one.
 		KeepaliveInterval: time.Hour,
 		MissedKeepalives:  3,
@@ -599,6 +623,8 @@ func TestNewRejectsUnusableOptions(t *testing.T) {
 		{"no agent status topic", func(o *Options) { o.AgentStatus = "" }, "status topic is required"},
 		{"zero publish timeout", func(o *Options) { o.PublishTimeout = 0 }, "publish timeout must be positive"},
 		{"zero buffer", func(o *Options) { o.BufferSize = 0 }, "buffer size must be positive"},
+		{"zero event buffer", func(o *Options) { o.EventBufferSize = 0 }, "event buffer size must be positive"},
+		{"device without message expiry", func(o *Options) { o.Devices[0].Wire.Expiry = 0 }, "has no message expiry"},
 		{"zero keepalive interval", func(o *Options) { o.KeepaliveInterval = 0 }, "keepalive interval must be positive"},
 		{"no missed keepalives", func(o *Options) { o.MissedKeepalives = 0 }, "missed keepalives must be at least 1"},
 		{"device without a reader", func(o *Options) { o.Devices[0].Reader = nil }, "has no reader"},

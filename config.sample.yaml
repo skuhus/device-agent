@@ -135,6 +135,12 @@ status:
   # consumers follow this setting. The interval is in whole seconds.
   keepalive_interval: 15s
   missed_keepalives: 3
+  # Each device's events (port opened, lost, bytes discarded) wait here while
+  # the broker connection is down, and go out once it is back. Only the most
+  # recent event_buffer_size are kept, and one older than the device's
+  # message_expiry by then is dropped, so a long outage does not end in a
+  # flood.
+  event_buffer_size: 64
 
 logging:
   level: info

@@ -31,16 +31,12 @@ import (
 // reading a stale pick.
 const DefaultDrainTimeout = 5 * time.Second
 
-// DefaultEventBufferSize is how many port events each device holds for its
-// event publisher. The reader hands events over inline and must not block, so
-// an event that finds the buffer full is logged and not published. Nothing is
-// lost from the keepalive, which counted the event before it was queued.
-const DefaultEventBufferSize = 64
-
 // Transport is the broker connection as the core uses it. Each method publishes
 // one kind of message with the QoS and expiry DESIGN-V2.md, "Publishing",
 // assigns it.
 type Transport interface {
+	// AwaitConnection blocks until the connection is up or ctx ends.
+	AwaitConnection(ctx context.Context) error
 	PublishRx(ctx context.Context, topic string, payload []byte, expiry time.Duration) error
 	PublishEvent(ctx context.Context, topic string, payload []byte, expiry time.Duration) error
 	PublishKeepalive(ctx context.Context, topic string, payload []byte, expiry time.Duration) error
@@ -79,7 +75,9 @@ type Options struct {
 	// broker shows as a stalled device rather than as a queue growing unseen.
 	BufferSize   int
 	DrainTimeout time.Duration
-	// EventBufferSize defaults to DefaultEventBufferSize.
+	// EventBufferSize is how many port events each device keeps while they
+	// cannot be published. A full queue drops its oldest event, so that a long
+	// broker outage ends with the most recent ones rather than a flood.
 	EventBufferSize int
 
 	// KeepaliveInterval is how often the keepalive goes out, and
@@ -115,12 +113,12 @@ type Core struct {
 	drainDeadlineMS atomic.Int64
 }
 
-// pipeline is one device's channels, the sequence number of its frames, and
-// what the keepalive reports about it.
+// pipeline is one device's frames and events, the sequence number of its
+// frames, and what the keepalive reports about it.
 type pipeline struct {
 	device Device
 	frames chan device.Frame
-	events chan device.Event
+	events *eventQueue
 	// seq is written only by the device's rx publisher.
 	seq uint64
 
@@ -147,6 +145,8 @@ func New(opts Options) (*Core, error) {
 		return nil, fmt.Errorf("core: publish timeout must be positive, got %s", opts.PublishTimeout)
 	case opts.BufferSize <= 0:
 		return nil, fmt.Errorf("core: buffer size must be positive, got %d", opts.BufferSize)
+	case opts.EventBufferSize <= 0:
+		return nil, fmt.Errorf("core: event buffer size must be positive, got %d", opts.EventBufferSize)
 	case opts.KeepaliveInterval <= 0:
 		return nil, fmt.Errorf("core: keepalive interval must be positive, got %s", opts.KeepaliveInterval)
 	case opts.MissedKeepalives < 1:
@@ -159,12 +159,13 @@ func New(opts Options) (*Core, error) {
 		if dev.Topics.Rx() == "" {
 			return nil, fmt.Errorf("core: device %s has no topics", dev.Wire.ID)
 		}
+		if dev.Wire.Expiry <= 0 {
+			// Every event would be older than its expiry, and none published.
+			return nil, fmt.Errorf("core: device %s has no message expiry", dev.Wire.ID)
+		}
 	}
 	if opts.DrainTimeout <= 0 {
 		opts.DrainTimeout = DefaultDrainTimeout
-	}
-	if opts.EventBufferSize <= 0 {
-		opts.EventBufferSize = DefaultEventBufferSize
 	}
 	if opts.Logger == nil {
 		opts.Logger = slog.New(slog.DiscardHandler)
@@ -183,18 +184,25 @@ func New(opts Options) (*Core, error) {
 // Shutdown order matters and is deliberate. The keepalive stops, so none
 // follows the offline message. The readers stop, so nothing new arrives; each
 // reports its port closed. The publishers drain what is already framed and
-// queued, for at most the drain timeout. The offline message goes out, and only
-// then does the connection close. Closing first would make the broker publish
-// the will instead, reporting a crash where there was an orderly stop.
+// queued, for at most the drain timeout, including events still waiting for
+// the connection. The offline message goes out, and only then does the
+// connection close. Closing first would make the broker publish the will
+// instead, reporting a crash where there was an orderly stop.
 func (core *Core) Run(ctx context.Context) error {
 	pipelines := make([]*pipeline, 0, len(core.opts.Devices))
 	for _, dev := range core.opts.Devices {
 		pipelines = append(pipelines, &pipeline{
 			device: dev,
 			frames: make(chan device.Frame, core.opts.BufferSize),
-			events: make(chan device.Event, core.opts.EventBufferSize),
+			events: newEventQueue(core.opts.EventBufferSize),
 		})
 	}
+
+	// drained ends the event publishers' wait for the connection when the
+	// shutdown drain runs out, so that a broker that is down cannot hold the
+	// process open.
+	drained, endDrain := context.WithCancel(context.Background())
+	defer endDrain()
 
 	// The readers run on their own context, not ctx, so that Run decides when
 	// they stop relative to everything else.
@@ -223,7 +231,7 @@ func (core *Core) Run(ctx context.Context) error {
 		}(line)
 		go func(line *pipeline) {
 			defer publishers.Done()
-			core.publishEvents(line)
+			core.publishEvents(line, drained)
 		}(line)
 	}
 
@@ -242,9 +250,11 @@ func (core *Core) Run(ctx context.Context) error {
 	stopReaders()
 	readers.Wait()
 	core.drainDeadlineMS.Store(core.opts.Now().Add(core.opts.DrainTimeout).UnixMilli())
+	stopDrain := time.AfterFunc(core.opts.DrainTimeout, endDrain)
+	defer stopDrain.Stop()
 	for _, line := range pipelines {
 		close(line.frames)
-		close(line.events)
+		line.events.close()
 	}
 	publishers.Wait()
 
@@ -354,21 +364,19 @@ func (core *Core) record(rx wire.Rx, size int, outcome logging.Outcome, detail s
 
 // report receives every port event from one device's reader. It counts the
 // event, logs it, and queues the ones consumers see for the device's event
-// publisher. It is called inline by the reader and must not block, so an event
-// that finds the queue full is logged and not published; the keepalive has
-// counted it either way.
+// publisher. It is called inline by the reader and never blocks: a full queue
+// drops its oldest event, which is logged, and the keepalive has counted it
+// either way.
 func (core *Core) report(line *pipeline, event device.Event) {
 	core.count(line, event)
 	if event.Kind == device.BytesRead {
 		// Counted only. The reader logs every read at DEBUG already.
 		return
 	}
-	attrs := eventAttrs(event)
-	core.log.Debug("port event", attrs...)
-	select {
-	case line.events <- event:
-	default:
-		core.log.Warn("device event not published: queue full", append(attrs, "queue_size", cap(line.events))...)
+	core.log.Debug("port event", eventAttrs(event)...)
+	if dropped, full := line.events.push(event); full {
+		core.log.Warn("device event dropped: queue full, the most recent are kept",
+			append(eventAttrs(dropped), "queue_size", core.opts.EventBufferSize)...)
 	}
 }
 
@@ -420,35 +428,78 @@ func (line *pipeline) state() wire.DeviceState {
 	return wire.DeviceState{Device: line.device.Wire, Open: line.open, Counters: counters}
 }
 
-// publishEvents sends one device's port events, in the order they happened,
-// until its queue is closed. An event is not retried, as a reading is not: the
-// keepalive counts what it reported either way. Past the shutdown drain
-// deadline the rest are logged and not published.
-func (core *Core) publishEvents(line *pipeline) {
-	for event := range line.events {
-		message, ok := core.buildEvent(line, event)
+// publishEvents sends one device's events, in the order they happened, until
+// its queue is closed and empty. It waits for the broker connection before it
+// takes each event, so that events that happen while the connection is down
+// wait in the queue, which keeps the most recent (#13 Q1). drained ends the
+// wait at shutdown.
+func (core *Core) publishEvents(line *pipeline, drained context.Context) {
+	for line.events.wait() {
+		if err := core.opts.Transport.AwaitConnection(drained); err != nil {
+			reason := "the broker connection was still down when the shutdown drain ended"
+			if drained.Err() == nil {
+				// Only the drain should end the wait; anything else means the
+				// connection manager is gone, and no event can be published.
+				core.log.Error("waiting for the broker connection failed; device events are no longer published",
+					"device_id", line.device.Wire.ID, "error", err.Error())
+				reason = "waiting for the broker connection failed: " + err.Error()
+			}
+			core.dropEvents(line, reason)
+			return
+		}
+		if event, ok := line.events.pop(); ok {
+			core.publishEvent(line, event)
+		}
+	}
+}
+
+// publishEvent sends one event, with what remains of the device's message
+// expiry: an event that waited for the connection is that much closer to
+// saying nothing true. One whose expiry has passed is dropped. An event is not
+// retried, as a reading is not: the keepalive counts what it reported either
+// way.
+func (core *Core) publishEvent(line *pipeline, event device.Event) {
+	message, ok := core.buildEvent(line, event)
+	if !ok {
+		return
+	}
+	age := core.opts.Now().Sub(event.At)
+	attrs := []any{"id", message.ID, "device_id", message.DeviceID, "code", string(message.Code),
+		"device_open", message.DeviceOpen, "text", message.Text, "agent_ts", message.AgentTS, "age", age.String()}
+	if core.pastDrainDeadline() {
+		core.log.Warn("device event dropped", append(attrs, "reason", "shutdown drain deadline passed")...)
+		return
+	}
+	remaining := line.device.Wire.Expiry - age
+	if remaining <= 0 {
+		core.log.Warn("device event dropped", append(attrs, "reason", "older than its message expiry",
+			"message_expiry", line.device.Wire.Expiry.String())...)
+		return
+	}
+	payload, err := json.Marshal(message)
+	if err != nil {
+		core.log.Error("device event could not be encoded", append(attrs, "error", err.Error())...)
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), core.opts.PublishTimeout)
+	err = core.opts.Transport.PublishEvent(ctx, line.device.Topics.Status(), payload, remaining)
+	cancel()
+	if err != nil {
+		core.log.Warn("device event publish failed", append(attrs, "error", err.Error())...)
+		return
+	}
+	core.log.Info("device event published", append(attrs, "message_expiry_left", remaining.String())...)
+}
+
+// dropEvents empties a device's queue, logging each event with why it was not
+// published.
+func (core *Core) dropEvents(line *pipeline, reason string) {
+	for {
+		event, ok := line.events.pop()
 		if !ok {
-			continue
+			return
 		}
-		attrs := []any{"id", message.ID, "device_id", message.DeviceID, "code", string(message.Code),
-			"device_open", message.DeviceOpen, "text", message.Text}
-		if core.pastDrainDeadline() {
-			core.log.Warn("device event dropped", append(attrs, "reason", "shutdown drain deadline passed")...)
-			continue
-		}
-		payload, err := json.Marshal(message)
-		if err != nil {
-			core.log.Error("device event could not be encoded", append(attrs, "error", err.Error())...)
-			continue
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), core.opts.PublishTimeout)
-		err = core.opts.Transport.PublishEvent(ctx, line.device.Topics.Status(), payload, line.device.Wire.Expiry)
-		cancel()
-		if err != nil {
-			core.log.Warn("device event publish failed", append(attrs, "error", err.Error())...)
-			continue
-		}
-		core.log.Info("device event published", attrs...)
+		core.log.Warn("device event dropped", append(eventAttrs(event), "reason", reason)...)
 	}
 }
 
@@ -540,6 +591,85 @@ func (core *Core) pastDrainDeadline() bool {
 	return deadline > 0 && core.opts.Now().UnixMilli() > deadline
 }
 
+// eventQueue holds one device's events until they can be published, oldest
+// first. It keeps at most size of them: pushing onto a full queue drops the
+// oldest, so that after a long broker outage the most recent events are the
+// ones left. One goroutine pushes and one takes.
+type eventQueue struct {
+	mu     sync.Mutex
+	events []device.Event
+	size   int
+	closed bool
+	// ready holds a value after every push and at close, so that wait need
+	// not poll.
+	ready chan struct{}
+}
+
+func newEventQueue(size int) *eventQueue {
+	return &eventQueue{size: size, ready: make(chan struct{}, 1)}
+}
+
+// push adds an event. When the queue was full it returns the oldest event,
+// which it dropped to make room, and true.
+func (queue *eventQueue) push(event device.Event) (device.Event, bool) {
+	queue.mu.Lock()
+	defer queue.mu.Unlock()
+	var dropped device.Event
+	full := len(queue.events) >= queue.size
+	if full {
+		dropped = queue.events[0]
+		queue.events = queue.events[1:]
+	}
+	queue.events = append(queue.events, event)
+	queue.signal()
+	return dropped, full
+}
+
+// close says that no event will be pushed again.
+func (queue *eventQueue) close() {
+	queue.mu.Lock()
+	defer queue.mu.Unlock()
+	queue.closed = true
+	queue.signal()
+}
+
+// wait blocks until the queue holds an event, and returns false instead once
+// it is closed and empty.
+func (queue *eventQueue) wait() bool {
+	for {
+		queue.mu.Lock()
+		held, closed := len(queue.events), queue.closed
+		queue.mu.Unlock()
+		switch {
+		case held > 0:
+			return true
+		case closed:
+			return false
+		}
+		<-queue.ready
+	}
+}
+
+// pop takes the oldest event, if there is one.
+func (queue *eventQueue) pop() (device.Event, bool) {
+	queue.mu.Lock()
+	defer queue.mu.Unlock()
+	if len(queue.events) == 0 {
+		return device.Event{}, false
+	}
+	event := queue.events[0]
+	queue.events = queue.events[1:]
+	return event, true
+}
+
+// signal wakes wait. It is called with mu held.
+func (queue *eventQueue) signal() {
+	select {
+	case queue.ready <- struct{}{}:
+	default:
+	}
+}
+
 // errorClass maps a reader's error class to the wire's. A class the wire does
 // not define is reported as unknown, and false says so.
 func errorClass(class string) (wire.ErrorClass, bool) {
@@ -589,7 +719,7 @@ func countDiscard(counts *wire.DiscardCounts, reason wire.DiscardReason) bool {
 
 // eventAttrs are a port event's log attributes.
 func eventAttrs(event device.Event) []any {
-	attrs := []any{"device_id", event.DeviceID, "event", string(event.Kind)}
+	attrs := []any{"device_id", event.DeviceID, "event", string(event.Kind), "at", event.At.UTC().Format(wire.TimeFormat)}
 	if event.ErrorClass != "" {
 		attrs = append(attrs, "error_class", event.ErrorClass)
 	}

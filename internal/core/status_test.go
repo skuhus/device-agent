@@ -2,6 +2,7 @@ package core
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -19,9 +20,10 @@ import (
 )
 
 // Every port event a reader reports, except a read, is published on the
-// device's status topic in the order it happened, with the device's expiry,
-// the time it happened, and whether the agent holds the port open after it. A
-// read is only counted: queued, it would take a slot a real event needs.
+// device's status topic in the order it happened, with the time it happened,
+// whether the agent holds the port open after it, and what remains of the
+// device's expiry: the clock reads five seconds after the first event. A read
+// is only counted: queued, it would take a slot a real event needs.
 func TestPortEventsArePublishedOnTheDeviceStatusTopic(t *testing.T) {
 	var logged bytes.Buffer
 	transport := &fakeTransport{}
@@ -38,6 +40,8 @@ func TestPortEventsArePublishedOnTheDeviceStatusTopic(t *testing.T) {
 	}
 	opts := testOptions(t, transport, coreDevice(t, reader, "mettler-ics"))
 	opts.Logger = slog.New(slog.NewJSONHandler(&syncWriter{buffer: &logged}, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	now := at.Add(5 * time.Second)
+	opts.Now = func() time.Time { return now }
 	runUntil(t, newCore(t, opts), func() { <-reader.sent })
 	if strings.Contains(logged.String(), `"level":"ERROR"`) {
 		t.Errorf("an error was logged for ordinary port events:\n%s", logged.String())
@@ -72,9 +76,10 @@ func TestPortEventsArePublishedOnTheDeviceStatusTopic(t *testing.T) {
 			t.Errorf("event %d agent_ts = %s, want when it happened, %s", i, got.AgentTS, w.at.Format(wire.TimeFormat))
 		}
 	}
-	for _, message := range transport.of("event", "") {
-		if message.topic != topic || message.expiry != 30*time.Second {
-			t.Errorf("event published on %s with expiry %s, want %s with the device's 30s", message.topic, message.expiry, topic)
+	for i, message := range transport.of("event", "") {
+		wantExpiry := 30*time.Second - now.Sub(want[i].at)
+		if message.topic != topic || message.expiry != wantExpiry {
+			t.Errorf("event %d published on %s with expiry %s, want %s with %s, the device's 30s less its age", i, message.topic, message.expiry, topic, wantExpiry)
 		}
 	}
 }
@@ -254,15 +259,16 @@ func TestShutdownPublishesPortClosedBeforeOffline(t *testing.T) {
 }
 
 // A reader hands its events over inline, so a full event queue must not block
-// it: the reader goes on reading, the events that do not fit are logged, and
-// the keepalive still counts every one.
+// it: the reader goes on reading, the queue drops its oldest event, which is
+// logged, and the keepalive still counts every one. The broker holds the first
+// event the publisher took; of the rest, the two most recent are published.
 func TestFullEventQueueDoesNotBlockTheReader(t *testing.T) {
 	var logged bytes.Buffer
 	eventGate := make(chan struct{})
 	transport := &fakeTransport{eventGate: eventGate}
 	reader := newFakeReader("scanner-main", "A1")
-	for range 20 {
-		reader.events = append(reader.events, device.Event{DeviceID: "scanner-main", Kind: device.BytesDiscarded, Reason: "inter_char_timeout", Bytes: 16})
+	for i := range 20 {
+		reader.events = append(reader.events, device.Event{DeviceID: "scanner-main", Kind: device.BytesDiscarded, Reason: "inter_char_timeout", Bytes: i + 1})
 	}
 	connected := make(chan struct{}, 1)
 	opts := testOptions(t, transport, coreDevice(t, reader, ""))
@@ -282,10 +288,14 @@ func TestFullEventQueueDoesNotBlockTheReader(t *testing.T) {
 	if got := transport.keepalives()[0].Devices[0].Discards.InterCharTimeout; got != 20 {
 		t.Errorf("keepalive counts %d discards, want all 20", got)
 	}
-	dropped := strings.Count(logged.String(), `"msg":"device event not published: queue full"`)
-	published := len(transport.eventsOn("skuhus/acme/vasby/pack-03/scanner-main/status"))
-	if dropped == 0 || published+dropped != 20 {
-		t.Errorf("%d published and %d logged as not published, want some of each, 20 in all", published, dropped)
+	dropped := strings.Count(logged.String(), `"msg":"device event dropped: queue full, the most recent are kept"`)
+	events := transport.eventsOn("skuhus/acme/vasby/pack-03/scanner-main/status")
+	if dropped == 0 || len(events)+dropped != 20 || len(events) > 3 {
+		t.Fatalf("%d published and %d logged as dropped, want at most 3 published, 20 in all", len(events), dropped)
+	}
+	last := events[len(events)-2:]
+	if last[0].Detail["bytes"] != float64(19) || last[1].Detail["bytes"] != float64(20) {
+		t.Errorf("the last two published are %v and %v, want the two most recent, 19 and 20", last[0].Detail, last[1].Detail)
 	}
 }
 
@@ -344,5 +354,130 @@ func TestEveryReasonAndClassHasItsOwnCounter(t *testing.T) {
 	}
 	if opens != (wire.OpenFailureCounts{Absent: 1, Busy: 1, PermissionDenied: 1, ReadOnly: 1, Disconnected: 1, PortError: 1, Unknown: 1}) {
 		t.Errorf("one of each class counted as %+v, want 1 in every counter", opens)
+	}
+}
+
+// While the broker connection is down, events wait. Once it is up they are
+// published in order, each with the time it happened.
+func TestEventsWaitForTheConnection(t *testing.T) {
+	down := make(chan struct{})
+	transport := &fakeTransport{down: down}
+	reader := newFakeReader("scanner-main")
+	reader.events = []device.Event{
+		{DeviceID: "scanner-main", Kind: device.PortOpenFailed, ErrorClass: "absent", Err: syscall.ENOENT},
+		{DeviceID: "scanner-main", Kind: device.PortOpened},
+	}
+	topic := "skuhus/acme/vasby/pack-03/scanner-main/status"
+	runUntil(t, newCore(t, testOptions(t, transport, coreDevice(t, reader, ""))), func() {
+		<-reader.sent
+		time.Sleep(50 * time.Millisecond)
+		if got := transport.calls("event"); got != 0 {
+			t.Errorf("%d events published while the connection was down, want none", got)
+		}
+		close(down)
+		waitUntil(t, "both events", func() bool { return transport.calls("event") == 2 })
+	})
+	events := transport.eventsOn(topic)
+	if len(events) != 2 || events[0].Code != wire.EventPortOpenFailed || events[1].Code != wire.EventPortOpened {
+		t.Fatalf("events = %+v, want port_open_failed then port_opened", events)
+	}
+	if !(events[0].AgentTS <= events[1].AgentTS) {
+		t.Errorf("agent_ts %s then %s, want when each happened, in order", events[0].AgentTS, events[1].AgentTS)
+	}
+}
+
+// A long outage does not end in a flood: each device keeps only its most
+// recent events, and the ones dropped to make room are logged.
+func TestOnlyTheMostRecentEventsWaitForTheConnection(t *testing.T) {
+	var logged bytes.Buffer
+	down := make(chan struct{})
+	transport := &fakeTransport{down: down}
+	reader := newFakeReader("scanner-main")
+	for i := range 10 {
+		reader.events = append(reader.events, device.Event{DeviceID: "scanner-main", Kind: device.BytesDiscarded, Reason: "inter_char_timeout", Bytes: i + 1})
+	}
+	opts := testOptions(t, transport, coreDevice(t, reader, ""))
+	opts.EventBufferSize = 3
+	opts.Logger = slog.New(slog.NewJSONHandler(&syncWriter{buffer: &logged}, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	runUntil(t, newCore(t, opts), func() {
+		<-reader.sent
+		close(down)
+		waitUntil(t, "the kept events", func() bool { return transport.calls("event") == 3 })
+	})
+	var published []any
+	for _, event := range transport.eventsOn("skuhus/acme/vasby/pack-03/scanner-main/status") {
+		published = append(published, event.Detail["bytes"])
+	}
+	if !reflect.DeepEqual(published, []any{float64(8), float64(9), float64(10)}) {
+		t.Errorf("published the events of %v bytes, want the three most recent: 8, 9, 10", published)
+	}
+	if dropped := strings.Count(logged.String(), `"msg":"device event dropped: queue full, the most recent are kept"`); dropped != 7 {
+		t.Errorf("%d drops logged, want 7", dropped)
+	}
+}
+
+// An event that waited longer than the device's message expiry says nothing
+// true any more, and is dropped. One within it goes out with what remains.
+func TestEventOlderThanItsExpiryIsDropped(t *testing.T) {
+	var logged bytes.Buffer
+	down := make(chan struct{})
+	transport := &fakeTransport{down: down}
+	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
+	reader := newFakeReader("scanner-main")
+	reader.events = []device.Event{
+		{DeviceID: "scanner-main", Kind: device.PortLost, At: now.Add(-40 * time.Second), ErrorClass: "disconnected", Err: syscall.EIO},
+		{DeviceID: "scanner-main", Kind: device.PortOpened, At: now.Add(-10 * time.Second)},
+	}
+	opts := testOptions(t, transport, coreDevice(t, reader, ""))
+	opts.Now = func() time.Time { return now }
+	opts.Logger = slog.New(slog.NewJSONHandler(&syncWriter{buffer: &logged}, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	runUntil(t, newCore(t, opts), func() {
+		<-reader.sent
+		close(down)
+		waitUntil(t, "the event within its expiry", func() bool { return transport.calls("event") == 1 })
+	})
+	messages := transport.of("event", "")
+	events := transport.eventsOn("skuhus/acme/vasby/pack-03/scanner-main/status")
+	if len(events) != 1 || events[0].Code != wire.EventPortOpened || messages[0].expiry != 20*time.Second {
+		t.Errorf("published %+v with expiry %s, want only port_opened, with 20s of its 30s left", events, messages[0].expiry)
+	}
+	for _, want := range []string{`"reason":"older than its message expiry"`, `"code":"port_lost"`} {
+		if !strings.Contains(logged.String(), want) {
+			t.Errorf("log does not contain %s:\n%s", want, logged.String())
+		}
+	}
+}
+
+// A broker that stays down does not hold the process open: at shutdown the
+// events still waiting are dropped when the drain runs out, and logged.
+func TestShutdownDoesNotWaitForAConnectionThatNeverComes(t *testing.T) {
+	var logged bytes.Buffer
+	transport := &fakeTransport{down: make(chan struct{})}
+	reader := newFakeReader("scanner-main")
+	reader.events = []device.Event{{DeviceID: "scanner-main", Kind: device.PortOpened}}
+	opts := testOptions(t, transport, coreDevice(t, reader, ""))
+	opts.DrainTimeout = 200 * time.Millisecond
+	opts.Logger = slog.New(slog.NewJSONHandler(&syncWriter{buffer: &logged}, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	running := newCore(t, opts)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errc := make(chan error, 1)
+	go func() { errc <- running.Run(ctx) }()
+	<-reader.sent
+	started := time.Now()
+	cancel()
+	select {
+	case <-errc:
+		if elapsed := time.Since(started); elapsed > 2*time.Second {
+			t.Errorf("Run took %s to return, want about the 200ms drain", elapsed)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not return while the connection stayed down")
+	}
+	if got := transport.calls("event"); got != 0 {
+		t.Errorf("%d events published, want none with the connection down", got)
+	}
+	if !strings.Contains(logged.String(), "the broker connection was still down when the shutdown drain ended") {
+		t.Errorf("the dropped events were not logged with why:\n%s", logged.String())
 	}
 }

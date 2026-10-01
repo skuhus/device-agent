@@ -196,12 +196,14 @@ func TestStatusRejections(t *testing.T) {
 		status Status
 		want   string
 	}{
-		{Status{KeepaliveInterval: 0, MissedKeepalives: 3},
+		{Status{KeepaliveInterval: 0, MissedKeepalives: 3, EventBufferSize: 64},
 			`status.keepalive_interval must be a whole number of seconds, at least 1s, got 0s; each keepalive publishes it in whole seconds`},
-		{Status{KeepaliveInterval: Duration(1500 * time.Millisecond), MissedKeepalives: 3},
+		{Status{KeepaliveInterval: Duration(1500 * time.Millisecond), MissedKeepalives: 3, EventBufferSize: 64},
 			`status.keepalive_interval must be a whole number of seconds, at least 1s, got 1.5s; each keepalive publishes it in whole seconds`},
-		{Status{KeepaliveInterval: Duration(15 * time.Second), MissedKeepalives: 0},
+		{Status{KeepaliveInterval: Duration(15 * time.Second), MissedKeepalives: 0, EventBufferSize: 64},
 			`status.missed_keepalives must be at least 1, got 0`},
+		{Status{KeepaliveInterval: Duration(15 * time.Second), MissedKeepalives: 3, EventBufferSize: 0},
+			`status.event_buffer_size must be at least 1, got 0`},
 	}
 	for _, tc := range cases {
 		problems := validateStatus(tc.status)
@@ -209,8 +211,8 @@ func TestStatusRejections(t *testing.T) {
 			t.Errorf("%+v: problems = %v, want exactly %q", tc.status, problems, tc.want)
 		}
 	}
-	if problems := validateStatus(Status{KeepaliveInterval: Duration(time.Second), MissedKeepalives: 1}); len(problems) > 0 {
-		t.Errorf("1s and 1 rejected: %v", problems)
+	if problems := validateStatus(Status{KeepaliveInterval: Duration(time.Second), MissedKeepalives: 1, EventBufferSize: 1}); len(problems) > 0 {
+		t.Errorf("1s, 1 and 1 rejected: %v", problems)
 	}
 }
 

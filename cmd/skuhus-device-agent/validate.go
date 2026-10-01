@@ -95,8 +95,8 @@ func runValidate(args []string, stdout, stderr io.Writer) error {
 	}
 	fmt.Fprintf(stdout, "  delivery       publish_timeout=%s buffer_size=%d\n",
 		cfg.Delivery.PublishTimeout, cfg.Delivery.BufferSize)
-	fmt.Fprintf(stdout, "  status         keepalive_interval=%s missed_keepalives=%d\n",
-		cfg.Status.KeepaliveInterval, cfg.Status.MissedKeepalives)
+	fmt.Fprintf(stdout, "  status         keepalive_interval=%s missed_keepalives=%d event_buffer_size=%d\n",
+		cfg.Status.KeepaliveInterval, cfg.Status.MissedKeepalives, cfg.Status.EventBufferSize)
 	fmt.Fprintf(stdout, "  logging        level=%s log_payloads=%t file=%q max=%dMB keep=%d stdout=%t\n",
 		cfg.Logging.Level, cfg.Logging.LogPayloads, cfg.Logging.File,
 		cfg.Logging.MaxSizeMB, cfg.Logging.Keep, cfg.Logging.Stdout)

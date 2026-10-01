@@ -187,7 +187,8 @@ func runAgent(ctx context.Context, cfg *config.Config, stdout io.Writer) error {
 	}
 	log.Info("topics", "agent_status", agentTopics.Status(), "every_device_rx", station.EveryDeviceRx(),
 		"every_device_status", station.EveryDeviceStatus(),
-		"keepalive_interval", cfg.Status.KeepaliveInterval.Duration().String(), "missed_keepalives", cfg.Status.MissedKeepalives)
+		"keepalive_interval", cfg.Status.KeepaliveInterval.Duration().String(), "missed_keepalives", cfg.Status.MissedKeepalives,
+		"event_buffer_size", cfg.Status.EventBufferSize)
 
 	// The will is composed for every connection attempt, because the broker
 	// takes it in the CONNECT packet; its agent_ts is therefore when that
@@ -242,6 +243,7 @@ func runAgent(ctx context.Context, cfg *config.Config, stdout io.Writer) error {
 		AgentStatus:       agentTopics.Status(),
 		PublishTimeout:    cfg.Delivery.PublishTimeout.Duration(),
 		BufferSize:        cfg.Delivery.BufferSize,
+		EventBufferSize:   cfg.Status.EventBufferSize,
 		KeepaliveInterval: cfg.Status.KeepaliveInterval.Duration(),
 		MissedKeepalives:  cfg.Status.MissedKeepalives,
 		Connected:         connected,

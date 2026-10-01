@@ -356,6 +356,9 @@ func validateStatus(status Status) []error {
 	if status.MissedKeepalives < 1 {
 		problems = append(problems, fmt.Errorf("status.missed_keepalives must be at least 1, got %d", status.MissedKeepalives))
 	}
+	if status.EventBufferSize < 1 {
+		problems = append(problems, fmt.Errorf("status.event_buffer_size must be at least 1, got %d", status.EventBufferSize))
+	}
 	return problems
 }
 

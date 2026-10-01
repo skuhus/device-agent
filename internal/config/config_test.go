@@ -71,6 +71,7 @@ delivery:
 status:
   keepalive_interval: 15s
   missed_keepalives: 3
+  event_buffer_size: 64
 
 logging:
   level: info
@@ -161,6 +162,7 @@ devices:
 		{"buffer_size", cfg.Delivery.BufferSize, DefaultBufferSize},
 		{"keepalive_interval", cfg.Status.KeepaliveInterval.Duration(), DefaultKeepaliveInterval},
 		{"missed_keepalives", cfg.Status.MissedKeepalives, DefaultMissedKeepalives},
+		{"event_buffer_size", cfg.Status.EventBufferSize, DefaultEventBufferSize},
 		{"logging.level", cfg.Logging.Level, DefaultLogLevel},
 		{"logging.log_payloads", cfg.Logging.LogPayloads, false},
 		{"logging.file", cfg.Logging.File, ""},
@@ -182,6 +184,7 @@ func TestLoadPrecedence(t *testing.T) {
 	fromEnv := []string{
 		EnvPrefix + "IDENTITY_STATION=from-env",
 		EnvPrefix + "LOGGING_LEVEL=warn",
+		EnvPrefix + "STATUS_EVENT_BUFFER_SIZE=8",
 	}
 	cfg, _, err := load(t, fixture.path, fromEnv, Overrides{})
 	if err != nil {
@@ -192,6 +195,9 @@ func TestLoadPrecedence(t *testing.T) {
 	}
 	if cfg.Logging.Level != "warn" {
 		t.Errorf("level = %q, want warn", cfg.Logging.Level)
+	}
+	if cfg.Status.EventBufferSize != 8 {
+		t.Errorf("event_buffer_size = %d, want 8 from the environment over the file's 64", cfg.Status.EventBufferSize)
 	}
 
 	station, level := "from-flag", "debug"

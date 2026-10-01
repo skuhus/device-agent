@@ -30,6 +30,9 @@ const (
 	// (#11 Q7).
 	DefaultKeepaliveInterval = 15 * time.Second
 	DefaultMissedKeepalives  = 3
+	// DefaultEventBufferSize is delivery.buffer_size's default: as many events
+	// as frames.
+	DefaultEventBufferSize = 64
 
 	DefaultLogLevel     = "info"
 	DefaultLogMaxSizeMB = 64
@@ -68,6 +71,7 @@ func Defaults() Config {
 		Status: Status{
 			KeepaliveInterval: Duration(DefaultKeepaliveInterval),
 			MissedKeepalives:  DefaultMissedKeepalives,
+			EventBufferSize:   DefaultEventBufferSize,
 		},
 		Logging: Logging{
 			Level:       DefaultLogLevel,

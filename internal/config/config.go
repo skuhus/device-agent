@@ -160,13 +160,18 @@ type Delivery struct {
 	BufferSize     int      `yaml:"buffer_size"`
 }
 
-// Status configures the agent's keepalive (DESIGN-V2.md, "Message formats").
+// Status configures the agent's keepalive and device events (DESIGN-V2.md,
+// "Message formats").
 type Status struct {
 	KeepaliveInterval Duration `yaml:"keepalive_interval"`
 	// MissedKeepalives is how many intervals a consumer waits without a
 	// keepalive before it treats the agent as gone. Every keepalive carries
 	// the resulting time, so consumers apply this setting, not their own.
 	MissedKeepalives int `yaml:"missed_keepalives"`
+	// EventBufferSize is how many events each device keeps while they cannot
+	// be published. When it is full the oldest is dropped, so a long broker
+	// outage ends with the most recent events, not a flood (#13 Q1).
+	EventBufferSize int `yaml:"event_buffer_size"`
 }
 
 // Logging configures the common log. It can go to a file with size rotation,

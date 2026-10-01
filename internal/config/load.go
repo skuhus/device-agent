@@ -330,6 +330,7 @@ func envTargets(cfg *Config) map[string]func(string) error {
 
 		EnvPrefix + "STATUS_KEEPALIVE_INTERVAL": setDuration(&cfg.Status.KeepaliveInterval),
 		EnvPrefix + "STATUS_MISSED_KEEPALIVES":  setInt(&cfg.Status.MissedKeepalives),
+		EnvPrefix + "STATUS_EVENT_BUFFER_SIZE":  setInt(&cfg.Status.EventBufferSize),
 
 		EnvPrefix + "LOGGING_LEVEL":        setString(&cfg.Logging.Level),
 		EnvPrefix + "LOGGING_LOG_PAYLOADS": setBool(&cfg.Logging.LogPayloads),
