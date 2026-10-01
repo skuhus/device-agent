@@ -9,11 +9,13 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/eclipse/paho.golang/paho"
+	"github.com/skuhus/device-agent/internal/logging/logtest"
 )
 
 func TestExpirySecondsRoundsUp(t *testing.T) {
@@ -183,7 +185,7 @@ func TestConnectionConfiguration(t *testing.T) {
 			composed++
 			return []byte(fmt.Sprintf(`{"kind":"offline","reason":"will","attempt":%d}`, composed)), nil
 		},
-	}, brokerURL, nil, slog.New(slog.DiscardHandler))
+	}, brokerURL, nil, slog.New(slog.DiscardHandler), &lineGate{})
 
 	if cfg.WillMessage == nil || cfg.WillProperties == nil || cfg.ConnectPacketBuilder == nil {
 		t.Fatal("no will registered")
@@ -214,12 +216,61 @@ func TestConnectionConfiguration(t *testing.T) {
 	}
 
 	failing := clientConfig(Options{ClientID: "pack-03", WillTopic: "t", Will: func() ([]byte, error) { return nil, errors.New("encoder broke") }},
-		brokerURL, nil, slog.New(slog.DiscardHandler))
+		brokerURL, nil, slog.New(slog.DiscardHandler), &lineGate{})
 	if _, err := failing.ConnectPacketBuilder(&paho.Connect{WillMessage: failing.WillMessage}, brokerURL); err == nil || !strings.Contains(err.Error(), "compose will: encoder broke") {
 		t.Errorf("a will that cannot be composed: err = %v, want the connection attempt to fail naming it", err)
 	}
 
-	if withoutWill := clientConfig(Options{ClientID: "pack-03"}, brokerURL, nil, slog.New(slog.DiscardHandler)); withoutWill.WillMessage != nil || withoutWill.ConnectPacketBuilder != nil {
+	if withoutWill := clientConfig(Options{ClientID: "pack-03"}, brokerURL, nil, slog.New(slog.DiscardHandler), &lineGate{}); withoutWill.WillMessage != nil || withoutWill.ConnectPacketBuilder != nil {
 		t.Error("a will was registered without one being asked for")
+	}
+}
+
+// paho's lines name the paho code that wrote them, not the adapter that passes
+// them on: a source naming the adapter on every paho line identifies nothing.
+// Here the caller is this test.
+func TestPahoLinesNameTheirCaller(t *testing.T) {
+	log, logged := logtest.New(t, "debug")
+	lines := &lineGate{}
+	adapter := logAdapter{log: log.With("component", "paho"), level: slog.LevelDebug, lines: lines}
+	_, _, line, _ := runtime.Caller(0)
+	adapter.Printf("sending %s", "CONNECT")
+	adapter.Println("connected")
+	// After Close, paho goes on logging about a connection the agent closed
+	// on purpose, after the log file is closed; those lines are discarded.
+	lines.close()
+	adapter.Println("handleError received extra error: EOF")
+
+	records := logged.Records(t)
+	if len(records) != 2 || records[0]["msg"] != "sending CONNECT" || records[1]["msg"] != "connected" {
+		t.Fatalf("records = %v", records)
+	}
+	for i, record := range records {
+		source := record["source"].(map[string]any)
+		if !strings.HasSuffix(source["function"].(string), ".TestPahoLinesNameTheirCaller") || source["line"] != float64(line+1+i) {
+			t.Errorf("record %d source = %v, want this test, line %d", i, source, line+1+i)
+		}
+	}
+}
+
+// The connection's own lines carry what they are about once, next to the
+// broker and client id every one of them carries.
+func TestConnectionLinesReportEachTransition(t *testing.T) {
+	log, logged := logtest.New(t, "debug")
+	brokerURL, _ := url.Parse("tcp://broker:1883")
+	cfg := clientConfig(Options{ClientID: "pack-03"}, brokerURL, nil, log.With("broker", brokerURL.Redacted(), "client_id", "pack-03"), &lineGate{})
+	cfg.OnConnectionUp(nil, &paho.Connack{})
+	cfg.OnConnectionDown()
+	cfg.OnConnectError(errors.New("connection refused"))
+
+	for msg, level := range map[string]string{
+		"broker connected":                     "INFO",
+		"broker connection lost, reconnecting": "WARN",
+		"broker connection attempt failed":     "WARN",
+	} {
+		records := logged.WithMessage(t, msg)
+		if len(records) != 1 || records[0]["level"] != level || records[0]["client_id"] != "pack-03" {
+			t.Errorf("%q records = %v, want one at %s with the client id", msg, records, level)
+		}
 	}
 }

@@ -11,6 +11,8 @@ import (
 	"math/rand/v2"
 	"net/url"
 	"os"
+	"runtime"
+	"sync"
 	"time"
 
 	"github.com/eclipse/paho.golang/autopaho"
@@ -67,6 +69,9 @@ type Options struct {
 type Client struct {
 	cm  *autopaho.ConnectionManager
 	log *slog.Logger
+	// lines closes once the connection is closed; paho's lines after it are
+	// discarded (see logAdapter).
+	lines *lineGate
 }
 
 // Dial builds the connection manager and starts connecting. It returns as soon
@@ -96,16 +101,17 @@ func Dial(ctx context.Context, opts Options) (*Client, error) {
 		return nil, errors.New("mqtt: a will needs both a topic and a way to compose it")
 	}
 
-	cm, err := autopaho.NewConnection(ctx, clientConfig(opts, brokerURL, tlsCfg, log))
+	lines := &lineGate{}
+	cm, err := autopaho.NewConnection(ctx, clientConfig(opts, brokerURL, tlsCfg, log, lines))
 	if err != nil {
 		return nil, fmt.Errorf("mqtt: %w", err)
 	}
-	return &Client{cm: cm, log: log}, nil
+	return &Client{cm: cm, log: log, lines: lines}, nil
 }
 
 // clientConfig is the connection's whole configuration, built apart from Dial
 // so that a test can check it without a broker.
-func clientConfig(opts Options, brokerURL *url.URL, tlsCfg *tls.Config, log *slog.Logger) autopaho.ClientConfig {
+func clientConfig(opts Options, brokerURL *url.URL, tlsCfg *tls.Config, log *slog.Logger, lines *lineGate) autopaho.ClientConfig {
 	cfg := autopaho.ClientConfig{
 		ServerUrls: []*url.URL{brokerURL},
 		TlsCfg:     tlsCfg,
@@ -138,10 +144,10 @@ func clientConfig(opts Options, brokerURL *url.URL, tlsCfg *tls.Config, log *slo
 		OnConnectError: func(err error) {
 			log.Warn("broker connection attempt failed", "error", err.Error())
 		},
-		Errors:     logAdapter{log: log, level: slog.LevelWarn},
-		Debug:      logAdapter{log: log, level: slog.LevelDebug},
-		PahoErrors: logAdapter{log: log.With("component", "paho"), level: slog.LevelWarn},
-		PahoDebug:  logAdapter{log: log.With("component", "paho"), level: slog.LevelDebug},
+		Errors:     logAdapter{log: log, level: slog.LevelWarn, lines: lines},
+		Debug:      logAdapter{log: log, level: slog.LevelDebug, lines: lines},
+		PahoErrors: logAdapter{log: log.With("component", "paho"), level: slog.LevelWarn, lines: lines},
+		PahoDebug:  logAdapter{log: log.With("component", "paho"), level: slog.LevelDebug, lines: lines},
 		ClientConfig: paho.ClientConfig{
 			ClientID: opts.ClientID,
 		},
@@ -231,7 +237,9 @@ func (client *Client) PublishOffline(ctx context.Context, topic string, payload 
 // Close publishes nothing. The caller publishes its offline message first, then
 // calls this, so that the broker sees a clean DISCONNECT and discards the will.
 func (client *Client) Close(ctx context.Context) error {
-	if err := client.cm.Disconnect(ctx); err != nil {
+	err := client.cm.Disconnect(ctx)
+	client.lines.close()
+	if err != nil {
 		return fmt.Errorf("mqtt: disconnect: %w", err)
 	}
 	return nil
@@ -357,15 +365,64 @@ func tlsConfig(brokerURL *url.URL, caFile string, insecure bool) (*tls.Config, e
 // logAdapter bridges paho's logger interface to slog. paho logs connection
 // detail that is worth having when a station will not connect, and worth
 // keeping out of the way otherwise.
+//
+// Each record's source is the paho code that called it, not this adapter: a
+// source that names the adapter on every paho line identifies nothing.
+//
+// Once Close has returned, paho's lines are discarded. autopaho cannot tell
+// when paho has finished shutting down (autopaho/auto.go, Done), and its
+// goroutines go on logging about the connection the agent just closed, after
+// the agent has closed its log file. Measured: one DEBUG line per clean stop,
+// "handleError received extra error", a few milliseconds after the file closed.
 type logAdapter struct {
 	log   *slog.Logger
 	level slog.Level
+	lines *lineGate
 }
 
 func (adapter logAdapter) Println(v ...any) {
-	adapter.log.Log(context.Background(), adapter.level, fmt.Sprint(v...))
+	adapter.emit(fmt.Sprint(v...))
 }
 
 func (adapter logAdapter) Printf(format string, v ...any) {
-	adapter.log.Log(context.Background(), adapter.level, fmt.Sprintf(format, v...))
+	adapter.emit(fmt.Sprintf(format, v...))
+}
+
+// emit writes one record with the caller of Println or Printf as its source,
+// as log/slog's documentation shows for wrapping its output methods.
+func (adapter logAdapter) emit(msg string) {
+	ctx := context.Background()
+	if !adapter.log.Enabled(ctx, adapter.level) {
+		return
+	}
+	var pcs [1]uintptr
+	runtime.Callers(3, pcs[:]) // skip Callers, emit, and Println or Printf
+	record := slog.NewRecord(time.Now(), adapter.level, msg, pcs[0])
+	adapter.lines.pass(func() {
+		// The agent's handler reports a record it could not write itself.
+		_ = adapter.log.Handler().Handle(ctx, record)
+	})
+}
+
+// lineGate lets paho's lines through until the connection is closed. A line
+// holds it while it is written, so close waits for a line already on its way:
+// checking a flag first and writing after leaves a window, measured at 2 ms,
+// in which a line written after the log file closed still gets through.
+type lineGate struct {
+	mu     sync.RWMutex
+	closed bool
+}
+
+func (gate *lineGate) pass(write func()) {
+	gate.mu.RLock()
+	defer gate.mu.RUnlock()
+	if !gate.closed {
+		write()
+	}
+}
+
+func (gate *lineGate) close() {
+	gate.mu.Lock()
+	defer gate.mu.Unlock()
+	gate.closed = true
 }
