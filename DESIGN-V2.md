@@ -512,8 +512,13 @@ maintainer, 2026-10-01 (#13 Q1). How many is `status.event_buffer_size`, 64 by
 default; when it is full the oldest is dropped and logged. An event that waited
 longer than the device's message expiry is dropped as well, and one within it
 is published with what remains of its expiry. The keepalive counts every event,
-published or not. Readings do not wait: a reading while the connection is down
-fails and is recorded, as before (DESIGN.md, "Scans are perishable").
+published or not.
+
+`[Decided]` Readings do not wait. A reading while the connection is down fails
+at once and is recorded in the log file with its payload, as before (DESIGN.md,
+"Scans are perishable"): a reading that arrives late can make a consumer act on
+a scan the operator has already repeated. Source: maintainer, 2026-10-02 (#13
+Q2).
 
 The port opens before the broker connection on every start, so `port_opened` is
 one of the events that waits (measured in #13).

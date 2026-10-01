@@ -288,9 +288,7 @@ Depends on: T5, T6.
 
 ### T8. Status channel and counters
 
-Status: done on branch gh-13-status, not yet merged. #13 Q2 is open: whether
-readings wait for the broker connection as events do; until it is answered they
-do not.
+Status: done on branch gh-13-status, not yet merged.
 
 Motivation. The maintainer wants device problems visible outside the host, and
 every agent and device visible from outside (DESIGN-V2.md, "Status channel").
