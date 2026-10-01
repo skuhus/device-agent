@@ -1,17 +1,16 @@
 package serial
 
 import (
-	"bytes"
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 	"sync"
 	"syscall"
 	"testing"
 	"time"
 
+	"github.com/skuhus/device-agent/internal/logging/logtest"
 	goserial "go.bug.st/serial"
 )
 
@@ -117,15 +116,15 @@ func TestOpenSucceedsWhenModemLinesAreUnsupported(t *testing.T) {
 }
 
 // captureLogs runs a device against a port and returns everything it logged.
-func captureLogs(t *testing.T, logPayloads bool, data string) string {
+func captureLogs(t *testing.T, logPayloads bool, data string) *logtest.Log {
 	t.Helper()
-	var buf syncBuffer
 	present, onPresence := presenceChan()
 
 	opts := serialOpts("payloads", "/dev/fake", "\r")
 	opts.LogPayloads = logPayloads
 	opts.InterCharTimeout = 20 * time.Millisecond
-	opts.Logger = slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	var logged *logtest.Log
+	opts.Logger, logged = logtest.New(t, "debug")
 	opts.Open = func(string, *goserial.Mode) (goserial.Port, error) {
 		return &scriptedPort{data: []byte(data)}, nil
 	}
@@ -137,26 +136,45 @@ func captureLogs(t *testing.T, logPayloads bool, data string) string {
 		t.Fatal("device never opened")
 	}
 	time.Sleep(300 * time.Millisecond)
-	return buf.String()
+	return logged
 }
 
-// Section 7: payload content reaches the log only when it is asked for. The
-// default must report the length and nothing else.
+// A discard is one WARN line with its reason and byte count. With log_payloads
+// the same line carries the discarded data, as hex and as text, which shows
+// what a misconfigured separator really is; without it the data is nowhere in
+// the log (#23 Q13).
 func TestLogPayloadsGatesContent(t *testing.T) {
 	const payload = "SKU-98765"
 	wrongTerminator := payload + "\n" // the device sends LF where CR is configured
-
-	off := captureLogs(t, false, wrongTerminator)
-	if strings.Contains(off, hex.EncodeToString([]byte(payload))) {
-		t.Errorf("payload content reached the log with log_payloads off:\n%s", off)
-	}
-	if !strings.Contains(off, "discarded partial frame") {
-		t.Errorf("the discard itself must still be reported:\n%s", off)
-	}
-
-	on := captureLogs(t, true, wrongTerminator)
-	if !strings.Contains(on, hex.EncodeToString([]byte(wrongTerminator))) {
-		t.Errorf("log_payloads on, but the discarded bytes are not in the log as hex:\n%s", on)
+	asHex := hex.EncodeToString([]byte(wrongTerminator))
+	for _, tc := range []struct {
+		payloads bool
+		want     map[string]any
+	}{
+		{false, map[string]any{}},
+		{true, map[string]any{"data_hex": asHex, "data_text": wrongTerminator}},
+	} {
+		logged := captureLogs(t, tc.payloads, wrongTerminator)
+		discards := logged.WithMessage(t, "discarded partial frame")
+		if len(discards) != 1 {
+			t.Fatalf("log_payloads %v: %d discard lines, want 1:\n%s", tc.payloads, len(discards), logged.String())
+		}
+		discard := discards[0]
+		if discard["level"] != "WARN" || discard["reason"] != "inter_char_timeout" || discard["bytes"] != float64(len(wrongTerminator)) {
+			t.Errorf("log_payloads %v: discard = %v, want WARN, inter_char_timeout, %d bytes", tc.payloads, discard, len(wrongTerminator))
+		}
+		for _, key := range []string{"data_hex", "data_text"} {
+			if discard[key] != tc.want[key] {
+				t.Errorf("log_payloads %v: %s = %v, want %v", tc.payloads, key, discard[key], tc.want[key])
+			}
+		}
+		lines := strings.Count(logged.String(), hex.EncodeToString([]byte(payload)))
+		if !tc.payloads && lines != 0 {
+			t.Errorf("payload content reached the log with log_payloads off:\n%s", logged.String())
+		}
+		if tc.payloads && lines != 1 {
+			t.Errorf("the discarded data is on %d lines, want only the discard's:\n%s", lines, logged.String())
+		}
 	}
 }
 
@@ -177,25 +195,6 @@ func (p *scriptedPort) Read(b []byte) (int, error) {
 	}
 	time.Sleep(10 * time.Millisecond)
 	return 0, nil
-}
-
-// syncBuffer is a bytes.Buffer that survives the logger writing from the device
-// goroutine while the test reads it.
-type syncBuffer struct {
-	mu  sync.Mutex
-	buf bytes.Buffer
-}
-
-func (b *syncBuffer) Write(p []byte) (int, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.Write(p)
-}
-
-func (b *syncBuffer) String() string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.String()
 }
 
 // classify is what an operator greps for when a station is not scanning, so the

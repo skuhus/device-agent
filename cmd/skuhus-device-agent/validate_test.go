@@ -2,8 +2,6 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/skuhus/device-agent/internal/device"
+	"github.com/skuhus/device-agent/internal/logging/logtest"
 )
 
 // writeConfig lays down a config file plus the credentials file and log
@@ -210,8 +209,8 @@ func TestRunProbeRejectsBadSeparator(t *testing.T) {
 // probe says a device is absent once, not on every retry, and says so again
 // only when something changes.
 func TestProbePresenceLogsOnlyChanges(t *testing.T) {
-	var logged bytes.Buffer
-	presence := &presenceLog{log: slog.New(slog.NewJSONHandler(&logged, nil))}
+	log, logged := logtest.New(t, "debug")
+	presence := &presenceLog{log: log.With("device_id", "scanner-main", "device_path", "/dev/ttyACM0")}
 	absent := device.Event{Kind: device.PortOpenFailed, ErrorClass: "absent", Err: syscall.ENOENT}
 	for _, event := range []device.Event{
 		absent, absent, absent,
@@ -224,15 +223,9 @@ func TestProbePresenceLogsOnlyChanges(t *testing.T) {
 		presence.report(event)
 	}
 	var got []string
-	for _, line := range strings.Split(strings.TrimSpace(logged.String()), "\n") {
-		var record struct {
-			Msg        string `json:"msg"`
-			ErrorClass string `json:"error_class"`
-		}
-		if err := json.Unmarshal([]byte(line), &record); err != nil {
-			t.Fatalf("log line %q: %v", line, err)
-		}
-		got = append(got, record.Msg+"/"+record.ErrorClass)
+	for _, record := range logged.Records(t) {
+		class, _ := record["error_class"].(string)
+		got = append(got, record["msg"].(string)+"/"+class)
 	}
 	want := []string{"device absent/absent", "device absent/permission_denied", "device present/",
 		"device absent/disconnected", "device absent/absent"}

@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -16,6 +15,7 @@ import (
 	"time"
 
 	"github.com/skuhus/device-agent/internal/device"
+	"github.com/skuhus/device-agent/internal/logging/logtest"
 	goserial "go.bug.st/serial"
 	"golang.org/x/sys/unix"
 )
@@ -44,10 +44,6 @@ func newPTY(t *testing.T) (master *os.File, slavePath string) {
 	return m, fmt.Sprintf("/dev/pts/%d", n)
 }
 
-func testLogger() *slog.Logger {
-	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-}
-
 // runDevice starts a device against the given path and returns its frame
 // channel. It fails the test if the device goroutine outlives cancellation.
 func runDevice(t *testing.T, opts Options, sinkCap int) (chan device.Frame, context.CancelFunc) {
@@ -60,7 +56,9 @@ func runDevice(t *testing.T, opts Options, sinkCap int) (chan device.Frame, cont
 func runDeviceReporting(t *testing.T, opts Options, sinkCap int, report func(device.Event)) (chan device.Frame, context.CancelFunc) {
 	t.Helper()
 	if opts.Logger == nil {
-		opts.Logger = testLogger()
+		// The agent's log at DEBUG, captured, so that every line the reader
+		// writes is held to the log's rules when the test ends.
+		opts.Logger, _ = logtest.New(t, "debug")
 	}
 	if opts.BackoffInitial == 0 {
 		opts.BackoffInitial = 5 * time.Millisecond

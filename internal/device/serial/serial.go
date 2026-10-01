@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/skuhus/device-agent/internal/device"
+	"github.com/skuhus/device-agent/internal/logging"
 	"github.com/skuhus/device-agent/internal/wire"
 	goserial "go.bug.st/serial"
 )
@@ -80,8 +81,8 @@ type Options struct {
 	Terminator       []byte
 	MaxFrameBytes    int
 	InterCharTimeout time.Duration
-	// LogPayloads allows frame and discarded-byte contents into the log at
-	// DEBUG. Default false: counts only. See section 7 of the specification.
+	// LogPayloads puts the discarded bytes on each discard's log line. Default
+	// false: reason and count only.
 	LogPayloads bool
 
 	Logger *slog.Logger
@@ -320,9 +321,9 @@ func (dev *Device) session(ctx context.Context, sink chan<- device.Frame, report
 			dev.logDiscard(discard, report)
 		}
 		for _, raw := range frames {
-			if dev.opts.LogPayloads {
-				dev.log.Debug("frame", "bytes", len(raw), "hex", hex.EncodeToString(raw))
-			}
+			// The frame's data goes on its INFO record, where the reading is
+			// published, under log_payloads (DESIGN-V2.md, #23 Q13).
+			dev.log.Debug("frame", "bytes", len(raw))
 			frame := device.Frame{DeviceID: dev.opts.ID, Raw: raw, At: time.Now()}
 			select {
 			case sink <- frame:
@@ -365,25 +366,25 @@ func (dev *Device) logModemStatus(port goserial.Port) {
 	dev.log.Debug("modem status bits", "cts", bits.CTS, "dsr", bits.DSR, "dcd", bits.DCD, "ri", bits.RI)
 }
 
-// logDiscard logs and reports thrown-away bytes. Oversize and timeout are WARN
-// because a scan was lost; resync and empty frames are DEBUG because they are
-// the expected consequence of the discard already logged. Every one is reported,
-// so each can be counted.
+// logDiscard logs and reports thrown-away bytes, on one line. Oversize and
+// timeout are WARN because a scan was lost; resync and empty frames are DEBUG
+// because they are the expected consequence of the discard already logged.
+// With log_payloads the line carries the discarded data, which is what shows
+// a misconfigured separator for what it is. Every discard is reported, so
+// each can be counted.
 func (dev *Device) logDiscard(discard Discard, report func(device.Event)) {
 	report(dev.event(device.BytesDiscarded, func(event *device.Event) {
 		event.Reason, event.Bytes = string(discard.Reason), discard.Bytes
 	}))
+	attrs := []any{"reason", string(discard.Reason), "bytes", discard.Bytes}
+	if dev.opts.LogPayloads && len(discard.Data) > 0 {
+		attrs = append(attrs, logging.Payload(discard.Data)...)
+	}
 	switch discard.Reason {
 	case DiscardOversize, DiscardTimeout:
-		dev.log.Warn("discarded partial frame", "reason", string(discard.Reason), "bytes", discard.Bytes)
+		dev.log.Warn("discarded partial frame", attrs...)
 	default:
-		dev.log.Debug("discarded bytes", "reason", string(discard.Reason), "bytes", discard.Bytes)
-	}
-	// The content goes out separately and only at DEBUG, so that raising the
-	// level to see what a misconfigured scanner is sending is a deliberate act.
-	if dev.opts.LogPayloads && len(discard.Data) > 0 {
-		dev.log.Debug("discarded bytes content", "reason", string(discard.Reason),
-			"bytes", discard.Bytes, "hex", hex.EncodeToString(discard.Data))
+		dev.log.Debug("discarded bytes", attrs...)
 	}
 }
 

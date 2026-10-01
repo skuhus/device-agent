@@ -54,7 +54,7 @@ func runProbe(args []string, stdout, stderr io.Writer) error {
 	asJSON := fs.Bool("json", false, "print the rx message that would be published")
 	duration := fs.Duration("duration", 0, "stop after this long (0 means run until interrupted)")
 	logLevel := fs.String("log-level", "info", "log level for the structured log on stderr")
-	logPayloads := fs.Bool("log-payloads", false, "log frame and discarded-byte contents as hex at DEBUG; use this when a device frames nothing and the separator is unknown")
+	logPayloads := fs.Bool("log-payloads", false, "put discarded bytes on each discard's log line, as hex and as text when valid UTF-8; use this when a device frames nothing and the separator is unknown")
 
 	if err := fs.Parse(args); err != nil {
 		return err
