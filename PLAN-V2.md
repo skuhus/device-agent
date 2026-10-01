@@ -315,6 +315,8 @@ Depends on: T6, T7.
 
 ### T9. Common log
 
+Status: done on branch gh-14-common-log, not yet merged.
+
 Motivation. Two maintainer decisions. On 2026-09-29: one common log that
 everything is written to, replacing the separate audit log, with every record
 identifying where it was produced. On 2026-09-07, as a defect: the data read from
