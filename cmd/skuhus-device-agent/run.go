@@ -85,56 +85,57 @@ func runRun(args []string, stdout, stderr io.Writer) error {
 }
 
 // runAgent assembles the agent from its parts and runs it: the log, the
-// credentials, the delivery record file, the topics, a reader per device, the
-// connection with its will, and the core with its keepalive settings. It builds and does nothing else;
+// credentials, the topics, a reader per device, the connection with its will,
+// and the core with its keepalive settings. It builds and does nothing else;
 // every rule it relies on was checked when the configuration loaded.
 func runAgent(ctx context.Context, cfg *config.Config, stdout io.Writer) error {
 	started := time.Now()
-	// Until the common log (T9), logging.stdout decides whether this process
-	// log is written at all, and logging.file receives the delivery records.
-	processLog := stdout
-	if !cfg.Logging.Stdout {
-		processLog = io.Discard
+
+	// The log file is opened first and closed last, so that it holds every
+	// record, the last one included. Its failure to close can only be reported
+	// on stderr.
+	var file *logging.File
+	if cfg.Logging.File != "" {
+		opened, err := logging.OpenFile(cfg.Logging.File, cfg.Logging.MaxSizeMB, cfg.Logging.Keep)
+		if err != nil {
+			return err
+		}
+		file = opened
+		defer func() {
+			if err := file.Close(); err != nil {
+				fmt.Fprintf(os.Stderr, "log file close failed: %v\n", err)
+			}
+		}()
 	}
-	log, err := logging.New(logging.Options{
+	logOpts := logging.Options{
 		Level:        cfg.Logging.Level,
-		Out:          processLog,
 		Project:      cfg.Identity.Project,
 		Site:         cfg.Identity.Site,
 		Station:      cfg.Identity.Station,
 		Host:         hostname(),
 		Instance:     cfg.Identity.Instance,
 		AgentVersion: buildinfo.Version(),
-	})
+	}
+	// Assigned only when set: a nil *logging.File in the interface would not
+	// compare equal to nil, and the log would write to it.
+	if file != nil {
+		logOpts.File = file
+	}
+	if cfg.Logging.Stdout {
+		logOpts.Out = stdout
+	}
+	log, err := logging.New(logOpts)
 	if err != nil {
 		return err
 	}
 	log.Info("starting", "version", buildinfo.Version(), "commit", buildinfo.Commit(), "built", buildinfo.Date(),
 		"devices", len(cfg.Devices), "broker", cfg.Broker.RedactedURL())
+	log.Info("log destinations", "file", cfg.Logging.File, "max_size_mb", cfg.Logging.MaxSizeMB, "keep", cfg.Logging.Keep,
+		"stdout", cfg.Logging.Stdout, "log_level", cfg.Logging.Level, "log_payloads", cfg.Logging.LogPayloads)
 
 	creds, err := config.LoadCredentials(cfg.Broker, config.EnvMap(os.Environ()))
 	if err != nil {
 		return err
-	}
-
-	// Assigned only once the file is open: a nil *logging.Audit in the
-	// interface would not compare equal to nil, and the core would write to it.
-	var deliveries core.Deliveries
-	if cfg.Logging.File != "" {
-		file, err := logging.OpenAudit(cfg.Logging.File, cfg.Logging.MaxSizeMB, cfg.Logging.Keep)
-		if err != nil {
-			return err
-		}
-		defer func() {
-			if err := file.Close(); err != nil {
-				log.Error("log file close failed", "error", err.Error())
-			}
-		}()
-		deliveries = file
-		log.Info("log file open for delivery records", "path", cfg.Logging.File,
-			"max_size_mb", cfg.Logging.MaxSizeMB, "keep", cfg.Logging.Keep)
-	} else {
-		log.Info("no logging.file configured; delivery outcomes are recorded only in the process log")
 	}
 
 	station, err := wire.NewStationTopics(cfg.Identity.Project, cfg.Identity.Site, cfg.Identity.Station)
@@ -248,10 +249,8 @@ func runAgent(ctx context.Context, cfg *config.Config, stdout io.Writer) error {
 		MissedKeepalives:  cfg.Status.MissedKeepalives,
 		Connected:         connected,
 		Started:           started,
-		Station:           cfg.Identity.Station,
 		LogPayloads:       cfg.Logging.LogPayloads,
 		Logger:            log,
-		Deliveries:        deliveries,
 	})
 	if err != nil {
 		closeCtx, cancelClose := context.WithTimeout(context.Background(), cfg.Delivery.PublishTimeout.Duration())

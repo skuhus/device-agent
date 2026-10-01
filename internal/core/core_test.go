@@ -1,14 +1,11 @@
 package core
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -16,7 +13,7 @@ import (
 	"time"
 
 	"github.com/skuhus/device-agent/internal/device"
-	"github.com/skuhus/device-agent/internal/logging"
+	"github.com/skuhus/device-agent/internal/logging/logtest"
 	"github.com/skuhus/device-agent/internal/wire"
 )
 
@@ -311,8 +308,15 @@ func testOptions(t *testing.T, transport Transport, devices ...Device) Options {
 		// An hour, so that no keepalive goes out unless a test asks for one.
 		KeepaliveInterval: time.Hour,
 		MissedKeepalives:  3,
-		Station:           "pack-03",
+		Logger:            testLogger(t),
 	}
+}
+
+// testLogger is the agent's log at DEBUG, captured, so that every line any
+// test writes is held to the log's rules when the test ends.
+func testLogger(t *testing.T) *slog.Logger {
+	log, _ := logtest.New(t, "debug")
+	return log
 }
 
 // runUntil starts the core, waits for ready, then cancels and waits for Run to
@@ -343,40 +347,6 @@ func newCore(t *testing.T, opts Options) *Core {
 		t.Fatalf("New: %v", err)
 	}
 	return running
-}
-
-func openDeliveries(t *testing.T) (*logging.Audit, string) {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), "agent.log")
-	deliveries, err := logging.OpenAudit(path, 1, 1)
-	if err != nil {
-		t.Fatalf("OpenAudit: %v", err)
-	}
-	t.Cleanup(func() { deliveries.Close() })
-	return deliveries, path
-}
-
-func readRecords(t *testing.T, deliveries *logging.Audit, path string) []logging.AuditRecord {
-	t.Helper()
-	if err := deliveries.Sync(); err != nil {
-		t.Fatalf("sync: %v", err)
-	}
-	body, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read records: %v", err)
-	}
-	var records []logging.AuditRecord
-	for _, line := range strings.Split(strings.TrimSpace(string(body)), "\n") {
-		if line == "" {
-			continue
-		}
-		var record logging.AuditRecord
-		if err := json.Unmarshal([]byte(line), &record); err != nil {
-			t.Fatalf("unmarshal %q: %v", line, err)
-		}
-		records = append(records, record)
-	}
-	return records
 }
 
 // Each frame becomes one rx message on the device's rx topic, published with
@@ -442,55 +412,79 @@ func TestTwoDevicesPublishToTheirOwnTopics(t *testing.T) {
 	}
 }
 
-// A reading the broker never took exists nowhere else. It is recorded as
-// failed, with the error and the whole payload, so that it can be recovered.
+// A reading the broker never took exists nowhere else. Its record in the log
+// says it failed, with the error and the reading's data, whether or not
+// log_payloads is set, so that it can be recovered.
 func TestFailedPublishIsRecordedWithItsPayload(t *testing.T) {
-	deliveries, path := openDeliveries(t)
+	log, logged := logtest.New(t, "info")
 	transport := &fakeTransport{rxErr: errors.New("publish to x: broker connection is down")}
 	reader := newFakeReader("scanner-main", "A42154587")
 	opts := testOptions(t, transport, coreDevice(t, reader, ""))
-	opts.Deliveries = deliveries
+	opts.Logger = log
 	runUntil(t, newCore(t, opts), func() { <-reader.sent })
 
-	records := readRecords(t, deliveries, path)
+	records := logged.WithMessage(t, "rx publish failed")
 	if len(records) != 1 {
-		t.Fatalf("got %d records, want 1: %+v", len(records), records)
+		t.Fatalf("got %d failure records, want 1:\n%s", len(records), logged.String())
 	}
 	record := records[0]
-	if record.Outcome != logging.OutcomeFailed || !strings.Contains(record.Detail, "broker connection is down") {
-		t.Errorf("outcome %q detail %q, want failed with the publish error", record.Outcome, record.Detail)
+	want := map[string]any{
+		"level": "ERROR", "outcome": "failed", "error": "publish to x: broker connection is down",
+		"device_id": "scanner-main", "seq": float64(1), "bytes": float64(9), "station": "pack-03",
+		"data_hex": "413432313534353837", "data_text": "A42154587",
 	}
-	raw, err := base64.StdEncoding.DecodeString(record.RawB64)
-	if err != nil || string(raw) != "A42154587" || record.Text == nil || *record.Text != "A42154587" {
-		t.Errorf("recovered %q (%v), text %v, want A42154587", raw, err, record.Text)
+	for key, value := range want {
+		if record[key] != value {
+			t.Errorf("%s = %v, want %v", key, record[key], value)
+		}
 	}
-	if record.Bytes != len("A42154587") || record.Seq != 1 || record.DeviceID != "scanner-main" || record.Station != "pack-03" {
-		t.Errorf("record = %+v", record)
+	if id, _ := record["id"].(string); id == "" {
+		t.Error("the record names no id")
 	}
 }
 
-// A delivered reading is upstream, and a copy here would make the file a replay
-// source. Its record names the id the rx message carried, so the two can be
-// matched.
-func TestPublishedRxIsRecordedWithoutItsPayload(t *testing.T) {
-	deliveries, path := openDeliveries(t)
-	transport := &fakeTransport{}
-	reader := newFakeReader("scanner-main", "A42154587")
-	opts := testOptions(t, transport, coreDevice(t, reader, ""))
-	opts.Deliveries = deliveries
-	runUntil(t, newCore(t, opts), func() { <-reader.sent })
+// A delivered reading is upstream, and its record names the id the rx message
+// carried, so that the two can be matched. Its data is on the record only with
+// log_payloads: as hex, and as text when it is valid UTF-8 (#23 Q13).
+func TestPublishedRxCarriesItsDataOnlyWithLogPayloads(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		payloads bool
+		frame    string
+		want     map[string]any
+	}{
+		{"unset", false, "A42154587", map[string]any{}},
+		{"set", true, "A42154587", map[string]any{"data_hex": "413432313534353837", "data_text": "A42154587"}},
+		{"set, not UTF-8", true, "\xffA1", map[string]any{"data_hex": "ff4131"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			log, logged := logtest.New(t, "info")
+			transport := &fakeTransport{}
+			reader := newFakeReader("scanner-main", tc.frame)
+			opts := testOptions(t, transport, coreDevice(t, reader, ""))
+			opts.Logger, opts.LogPayloads = log, tc.payloads
+			runUntil(t, newCore(t, opts), func() { <-reader.sent })
 
-	records := readRecords(t, deliveries, path)
-	rx := transport.rxOn("skuhus/acme/vasby/pack-03/scanner-main/rx")
-	if len(records) != 1 || len(rx) != 1 {
-		t.Fatalf("records %d, rx %d, want 1 each", len(records), len(rx))
-	}
-	record := records[0]
-	if record.Outcome != logging.OutcomePublished || record.RawB64 != "" || record.Text != nil {
-		t.Errorf("record = %+v, want published without the payload", record)
-	}
-	if record.EventID != rx[0].ID || record.EventID == "" {
-		t.Errorf("record id %q, rx id %q, want the same", record.EventID, rx[0].ID)
+			records := logged.WithMessage(t, "rx published")
+			rx := transport.rxOn("skuhus/acme/vasby/pack-03/scanner-main/rx")
+			if len(records) != 1 || len(rx) != 1 {
+				t.Fatalf("records %d, rx %d, want 1 each", len(records), len(rx))
+			}
+			record := records[0]
+			if record["level"] != "INFO" || record["outcome"] != "published" || record["id"] != rx[0].ID {
+				t.Errorf("record = %v, want INFO, published, id %s", record, rx[0].ID)
+			}
+			for _, key := range []string{"data_hex", "data_text"} {
+				if record[key] != tc.want[key] {
+					t.Errorf("%s = %v, want %v", key, record[key], tc.want[key])
+				}
+			}
+			// One line per reading: the data is on its record, not on a line of
+			// its own.
+			if lines := strings.Count(logged.String(), tc.frame) + strings.Count(logged.String(), "413432313534353837"); tc.payloads && lines > 2 {
+				t.Errorf("the reading's data appears on more than its record:\n%s", logged.String())
+			}
+		})
 	}
 }
 
@@ -550,14 +544,14 @@ func TestDisconnectIsBounded(t *testing.T) {
 
 // A broker that has stopped acknowledging must not hold the process open for
 // buffer_size times publish_timeout. Past the drain deadline the remaining
-// readings are dropped, and recorded as dropped, with their payload.
+// readings are dropped, and recorded as dropped, with their data.
 func TestDrainDeadlineDropsTheRest(t *testing.T) {
-	deliveries, path := openDeliveries(t)
+	log, logged := logtest.New(t, "info")
 	gate := make(chan struct{})
 	transport := &fakeTransport{gate: gate}
 	reader := newFakeReader("scanner-main", "one", "two", "three")
 	opts := testOptions(t, transport, coreDevice(t, reader, ""))
-	opts.Deliveries = deliveries
+	opts.Logger = log
 	opts.DrainTimeout = 10 * time.Millisecond
 	opts.PublishTimeout = 50 * time.Millisecond
 	running := newCore(t, opts)
@@ -578,34 +572,31 @@ func TestDrainDeadlineDropsTheRest(t *testing.T) {
 		t.Fatal("Run did not return")
 	}
 
-	var dropped int
-	for _, record := range readRecords(t, deliveries, path) {
-		if record.Outcome == logging.OutcomeDropped {
-			dropped++
-			if !strings.Contains(record.Detail, "drain deadline") || record.RawB64 == "" {
-				t.Errorf("dropped record = %+v, want the drain deadline named and the payload kept", record)
-			}
-		}
+	dropped := logged.WithMessage(t, "rx dropped")
+	if len(dropped) == 0 {
+		t.Fatalf("no reading recorded as dropped:\n%s", logged.String())
 	}
-	if dropped == 0 {
-		t.Error("no reading recorded as dropped")
+	for _, record := range dropped {
+		if record["outcome"] != "dropped" || record["reason"] != "shutdown drain deadline passed" ||
+			record["data_hex"] == nil || record["data_text"] == nil {
+			t.Errorf("dropped record = %v, want outcome dropped, the deadline named, and the data", record)
+		}
 	}
 }
 
 // Every port event a reader reports reaches the core, which logs it.
 func TestPortEventsReachTheCore(t *testing.T) {
-	var logged bytes.Buffer
+	log, logged := logtest.New(t, "debug")
 	transport := &fakeTransport{}
 	reader := newFakeReader("scale-1")
 	reader.events = []device.Event{{DeviceID: "scale-1", Kind: device.PortLost, ErrorClass: "disconnected", Err: syscall.EIO}}
 	opts := testOptions(t, transport, coreDevice(t, reader, ""))
-	opts.Logger = slog.New(slog.NewJSONHandler(&syncWriter{buffer: &logged}, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	opts.Logger = log
 	runUntil(t, newCore(t, opts), func() { <-reader.sent })
 
-	for _, want := range []string{`"msg":"port event"`, `"device_id":"scale-1"`, `"event":"lost"`, `"error_class":"disconnected"`} {
-		if !strings.Contains(logged.String(), want) {
-			t.Errorf("log does not contain %s:\n%s", want, logged.String())
-		}
+	records := logged.WithMessage(t, "port event")
+	if len(records) != 1 || records[0]["device_id"] != "scale-1" || records[0]["event"] != "lost" || records[0]["error_class"] != "disconnected" {
+		t.Errorf("port event records = %v, want one for scale-1, lost, disconnected", records)
 	}
 }
 
@@ -639,17 +630,4 @@ func TestNewRejectsUnusableOptions(t *testing.T) {
 			}
 		})
 	}
-}
-
-// syncWriter serialises writes to a buffer shared between the core's
-// goroutines and the test.
-type syncWriter struct {
-	mu     sync.Mutex
-	buffer *bytes.Buffer
-}
-
-func (writer *syncWriter) Write(p []byte) (int, error) {
-	writer.mu.Lock()
-	defer writer.mu.Unlock()
-	return writer.buffer.Write(p)
 }

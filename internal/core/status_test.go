@@ -1,11 +1,9 @@
 package core
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"os"
 	"reflect"
 	"slices"
@@ -16,6 +14,7 @@ import (
 
 	"github.com/skuhus/device-agent/internal/device"
 	"github.com/skuhus/device-agent/internal/device/serial"
+	"github.com/skuhus/device-agent/internal/logging/logtest"
 	"github.com/skuhus/device-agent/internal/wire"
 )
 
@@ -25,7 +24,7 @@ import (
 // device's expiry: the clock reads five seconds after the first event. A read
 // is only counted: queued, it would take a slot a real event needs.
 func TestPortEventsArePublishedOnTheDeviceStatusTopic(t *testing.T) {
-	var logged bytes.Buffer
+	log, logged := logtest.New(t, "debug")
 	transport := &fakeTransport{}
 	reader := newFakeReader("scale-1")
 	at := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
@@ -39,7 +38,7 @@ func TestPortEventsArePublishedOnTheDeviceStatusTopic(t *testing.T) {
 		{DeviceID: "scale-1", Kind: device.PortLost, At: at.Add(4 * time.Second), ErrorClass: "disconnected", Err: readErr},
 	}
 	opts := testOptions(t, transport, coreDevice(t, reader, "mettler-ics"))
-	opts.Logger = slog.New(slog.NewJSONHandler(&syncWriter{buffer: &logged}, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	opts.Logger = log
 	now := at.Add(5 * time.Second)
 	opts.Now = func() time.Time { return now }
 	runUntil(t, newCore(t, opts), func() { <-reader.sent })
@@ -263,7 +262,7 @@ func TestShutdownPublishesPortClosedBeforeOffline(t *testing.T) {
 // logged, and the keepalive still counts every one. The broker holds the first
 // event the publisher took; of the rest, the two most recent are published.
 func TestFullEventQueueDoesNotBlockTheReader(t *testing.T) {
-	var logged bytes.Buffer
+	log, logged := logtest.New(t, "debug")
 	eventGate := make(chan struct{})
 	transport := &fakeTransport{eventGate: eventGate}
 	reader := newFakeReader("scanner-main", "A1")
@@ -274,7 +273,7 @@ func TestFullEventQueueDoesNotBlockTheReader(t *testing.T) {
 	opts := testOptions(t, transport, coreDevice(t, reader, ""))
 	opts.EventBufferSize = 2
 	opts.Connected = connected
-	opts.Logger = slog.New(slog.NewJSONHandler(&syncWriter{buffer: &logged}, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	opts.Logger = log
 	runUntil(t, newCore(t, opts), func() {
 		select {
 		case <-reader.sent:
@@ -302,14 +301,14 @@ func TestFullEventQueueDoesNotBlockTheReader(t *testing.T) {
 // A class the wire has no counter for is a bug in a reader. It is counted as
 // unknown, published as unknown, and logged at ERROR with the class it had.
 func TestUnknownErrorClassIsCountedAsUnknownAndLogged(t *testing.T) {
-	var logged bytes.Buffer
+	log, logged := logtest.New(t, "debug")
 	transport := &fakeTransport{}
 	reader := newFakeReader("scanner-main")
 	reader.events = []device.Event{{DeviceID: "scanner-main", Kind: device.PortOpenFailed, ErrorClass: "gremlins", Err: errors.New("open /dev/null: gremlins")}}
 	connected := make(chan struct{}, 1)
 	opts := testOptions(t, transport, coreDevice(t, reader, ""))
 	opts.Connected = connected
-	opts.Logger = slog.New(slog.NewJSONHandler(&syncWriter{buffer: &logged}, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	opts.Logger = log
 	runUntil(t, newCore(t, opts), func() {
 		<-reader.sent
 		connected <- struct{}{}
@@ -389,7 +388,7 @@ func TestEventsWaitForTheConnection(t *testing.T) {
 // A long outage does not end in a flood: each device keeps only its most
 // recent events, and the ones dropped to make room are logged.
 func TestOnlyTheMostRecentEventsWaitForTheConnection(t *testing.T) {
-	var logged bytes.Buffer
+	log, logged := logtest.New(t, "debug")
 	down := make(chan struct{})
 	transport := &fakeTransport{down: down}
 	reader := newFakeReader("scanner-main")
@@ -398,7 +397,7 @@ func TestOnlyTheMostRecentEventsWaitForTheConnection(t *testing.T) {
 	}
 	opts := testOptions(t, transport, coreDevice(t, reader, ""))
 	opts.EventBufferSize = 3
-	opts.Logger = slog.New(slog.NewJSONHandler(&syncWriter{buffer: &logged}, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	opts.Logger = log
 	runUntil(t, newCore(t, opts), func() {
 		<-reader.sent
 		close(down)
@@ -419,7 +418,7 @@ func TestOnlyTheMostRecentEventsWaitForTheConnection(t *testing.T) {
 // An event that waited longer than the device's message expiry says nothing
 // true any more, and is dropped. One within it goes out with what remains.
 func TestEventOlderThanItsExpiryIsDropped(t *testing.T) {
-	var logged bytes.Buffer
+	log, logged := logtest.New(t, "debug")
 	down := make(chan struct{})
 	transport := &fakeTransport{down: down}
 	now := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
@@ -430,7 +429,7 @@ func TestEventOlderThanItsExpiryIsDropped(t *testing.T) {
 	}
 	opts := testOptions(t, transport, coreDevice(t, reader, ""))
 	opts.Now = func() time.Time { return now }
-	opts.Logger = slog.New(slog.NewJSONHandler(&syncWriter{buffer: &logged}, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	opts.Logger = log
 	runUntil(t, newCore(t, opts), func() {
 		<-reader.sent
 		close(down)
@@ -451,13 +450,13 @@ func TestEventOlderThanItsExpiryIsDropped(t *testing.T) {
 // A broker that stays down does not hold the process open: at shutdown the
 // events still waiting are dropped when the drain runs out, and logged.
 func TestShutdownDoesNotWaitForAConnectionThatNeverComes(t *testing.T) {
-	var logged bytes.Buffer
+	log, logged := logtest.New(t, "debug")
 	transport := &fakeTransport{down: make(chan struct{})}
 	reader := newFakeReader("scanner-main")
 	reader.events = []device.Event{{DeviceID: "scanner-main", Kind: device.PortOpened}}
 	opts := testOptions(t, transport, coreDevice(t, reader, ""))
 	opts.DrainTimeout = 200 * time.Millisecond
-	opts.Logger = slog.New(slog.NewJSONHandler(&syncWriter{buffer: &logged}, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	opts.Logger = log
 	running := newCore(t, opts)
 
 	ctx, cancel := context.WithCancel(context.Background())

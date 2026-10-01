@@ -2,8 +2,16 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/skuhus/device-agent/internal/config"
+	"github.com/skuhus/device-agent/internal/logging/logtest"
 )
 
 func TestRunRejectsPositionalArguments(t *testing.T) {
@@ -33,5 +41,67 @@ func TestRunHelpMentionsCredentialHandling(t *testing.T) {
 func TestUsageListsRun(t *testing.T) {
 	if !strings.Contains(usage, "run ") {
 		t.Error("the top level usage does not list the run command")
+	}
+}
+
+// The agent's whole log, from start to stop, keeps the log's rules, and its
+// file and stdout receive the same records. The broker refuses and the device
+// is absent, which runs startup, retries and shutdown without either. A line
+// that repeated the record's own level once slipped through every package's
+// tests; this is the test that sees runAgent's lines.
+func TestAgentLogKeepsTheRulesInBothDestinations(t *testing.T) {
+	dir := t.TempDir()
+	logFile := filepath.Join(dir, "agent.log")
+	configFile := filepath.Join(dir, "agent.yaml")
+	body := fmt.Sprintf(`identity: { project: acme, site: vasby, station: pack-03 }
+broker:
+  url: tcp://127.0.0.1:1
+  insecure: true
+  connect_backoff: { initial: 100ms, max: 200ms }
+devices:
+  - id: scanner-main
+    path: %s
+    separator: "\r\n"
+status:
+  keepalive_interval: 1s
+logging:
+  level: debug
+  log_payloads: true
+  file: %s
+  stdout: true
+`, filepath.Join(dir, "no-such-tty"), logFile)
+	if err := os.WriteFile(configFile, []byte(body), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	t.Setenv("SH_DEV_AGENT_MQTT_USERNAME", "station-pack-03")
+	t.Setenv("SH_DEV_AGENT_MQTT_PASSWORD", "pack-03-dev")
+	cfg, _, err := config.Load(config.Options{Path: configFile})
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+	defer cancel()
+	stdout := &logtest.Log{}
+	if err := runAgent(ctx, cfg, stdout); err != nil {
+		t.Fatalf("runAgent: %v", err)
+	}
+
+	inFile, err := os.ReadFile(logFile)
+	if err != nil {
+		t.Fatalf("read the log file: %v", err)
+	}
+	if string(inFile) != stdout.String() {
+		t.Errorf("the log file and stdout differ:\nfile:\n%s\nstdout:\n%s", inFile, stdout.String())
+	}
+	logtest.CheckText(t, stdout.String())
+	for _, msg := range []string{"starting", "log destinations", "device starting", "broker connection attempt failed",
+		"shutting down", "stopped"} {
+		if len(stdout.WithMessage(t, msg)) == 0 {
+			t.Errorf("no %q line in the run's log", msg)
+		}
+	}
+	if records := stdout.WithMessage(t, "log destinations"); len(records) != 1 || records[0]["log_level"] != "debug" || records[0]["level"] != "INFO" {
+		t.Errorf("log destinations = %v, want INFO with log_level debug", records)
 	}
 }

@@ -3,8 +3,9 @@
 // frames, and a publisher sends each one to the device's rx topic. The reader's
 // port events are counted, and published on the device's status topic by a
 // second publisher. A keepalive reports every device's counters on the agent's
-// status topic. The core records the outcome of every delivery, and shuts down
-// in the order that lets the broker tell a clean stop from a crash.
+// status topic. Every reading's log record says what became of it, and the
+// core shuts down in the order that lets the broker tell a clean stop from a
+// crash.
 //
 // The transport is an interface, so that backpressure, publish timeouts,
 // delivery records and the shutdown order can be tested without a broker.
@@ -42,12 +43,6 @@ type Transport interface {
 	PublishKeepalive(ctx context.Context, topic string, payload []byte, expiry time.Duration) error
 	PublishOffline(ctx context.Context, topic string, payload []byte) error
 	Close(ctx context.Context) error
-}
-
-// Deliveries records the outcome of every reading that reached a publisher.
-// logging.Audit implements it.
-type Deliveries interface {
-	Append(record logging.AuditRecord) error
 }
 
 // Device is one configured device as the core runs it.
@@ -94,12 +89,10 @@ type Options struct {
 	// from. It defaults to when New is called.
 	Started time.Time
 
-	// Station is named in every delivery record.
-	Station     string
+	// LogPayloads puts each published reading's data on its record. A reading
+	// the broker did not take carries its data regardless.
 	LogPayloads bool
 	Logger      *slog.Logger
-	// Deliveries may be nil, in which case outcomes are only logged.
-	Deliveries Deliveries
 	// Now defaults to time.Now. It is a field so tests do not have to sleep.
 	Now func() time.Time
 }
@@ -274,6 +267,16 @@ func (core *Core) Run(ctx context.Context) error {
 	return nil
 }
 
+// Delivery outcomes, as the outcome attribute of a reading's record.
+const (
+	// outcomePublished means the broker acknowledged the publish.
+	outcomePublished = "published"
+	// outcomeFailed means the publish failed or was not acknowledged in time.
+	outcomeFailed = "failed"
+	// outcomeDropped means the reading was never offered to the broker.
+	outcomeDropped = "dropped"
+)
+
 // publish drains one device's frames until its channel is closed. It is the
 // device's only publisher, so its sequence numbers are in reading order.
 //
@@ -288,14 +291,13 @@ func (core *Core) publish(line *pipeline) {
 		line.countFrame()
 		rx := core.opts.Builder.Rx(line.device.Wire, line.seq, frame.Raw, frame.At)
 		if core.pastDrainDeadline() {
-			core.log.Warn("rx dropped", "id", rx.ID, "device_id", rx.DeviceID, "seq", rx.Seq, "bytes", len(frame.Raw),
-				"reason", "shutdown drain deadline passed")
 			line.countPublishFailure()
-			core.record(rx, len(frame.Raw), logging.OutcomeDropped, "shutdown drain deadline passed")
+			core.log.Warn("rx dropped", append(rxAttrs(rx, frame.Raw, outcomeDropped, true),
+				"reason", "shutdown drain deadline passed")...)
 			dropped++
 			continue
 		}
-		core.publishRx(line, rx, len(frame.Raw))
+		core.publishRx(line, rx, frame.Raw)
 	}
 	if dropped > 0 {
 		core.log.Warn("rx dropped at shutdown", "device_id", line.device.Wire.ID, "count", dropped,
@@ -303,18 +305,20 @@ func (core *Core) publish(line *pipeline) {
 	}
 }
 
-// publishRx sends one reading and records the outcome either way.
-func (core *Core) publishRx(line *pipeline, rx wire.Rx, size int) {
-	attrs := []any{"id", rx.ID, "device_id", rx.DeviceID, "seq", rx.Seq, "bytes", size, "text_valid", rx.TextValid}
+// publishRx sends one reading. Its log record is the record of its delivery,
+// and every reading gets one. A reading the broker did not take carries its
+// data whatever log_payloads says, because nothing else holds it: a setting
+// that silently turned data loss back on would not be a privacy control. A
+// published one carries it only with log_payloads.
+func (core *Core) publishRx(line *pipeline, rx wire.Rx, raw []byte) {
 	payload, err := json.Marshal(rx)
 	if err != nil {
 		// Encoding a struct of strings and numbers cannot fail in practice. It
 		// is recorded rather than ignored, because a reading that never reached
 		// the broker and left no trace is the one failure the record exists to
 		// make impossible.
-		core.log.Error("rx could not be encoded", append(attrs, "error", err.Error())...)
 		line.countPublishFailure()
-		core.record(rx, size, logging.OutcomeDropped, err.Error())
+		core.log.Error("rx could not be encoded", append(rxAttrs(rx, raw, outcomeDropped, true), "error", err.Error())...)
 		return
 	}
 
@@ -325,41 +329,22 @@ func (core *Core) publishRx(line *pipeline, rx wire.Rx, size int) {
 	err = core.opts.Transport.PublishRx(ctx, line.device.Topics.Rx(), payload, line.device.Wire.Expiry)
 	cancel()
 	if err != nil {
-		core.log.Error("rx publish failed", append(attrs, "error", err.Error())...)
 		line.countPublishFailure()
-		core.record(rx, size, logging.OutcomeFailed, err.Error())
+		core.log.Error("rx publish failed", append(rxAttrs(rx, raw, outcomeFailed, true), "error", err.Error())...)
 		return
 	}
-	core.log.Info("rx published", attrs...)
-	if core.opts.LogPayloads {
-		core.log.Debug("rx payload", "id", rx.ID, "raw_b64", rx.RawB64)
-	}
-	core.record(rx, size, logging.OutcomePublished, "")
+	core.log.Info("rx published", rxAttrs(rx, raw, outcomePublished, core.opts.LogPayloads)...)
 }
 
-// record writes one delivery outcome. A reading the broker never took is
-// written down whole, because nothing else holds it; this is not gated on
-// log_payloads, because a setting that silently turns data loss back on is not
-// a privacy control.
-func (core *Core) record(rx wire.Rx, size int, outcome logging.Outcome, detail string) {
-	if core.opts.Deliveries == nil {
-		return
+// rxAttrs are a reading's record: what identifies it, its outcome, and, with
+// withData, the frame's data.
+func rxAttrs(rx wire.Rx, frame []byte, outcome string, withData bool) []any {
+	attrs := []any{"id", rx.ID, "device_id", rx.DeviceID, "seq", rx.Seq, "bytes", len(frame),
+		"text_valid", rx.TextValid, "outcome", outcome}
+	if withData {
+		attrs = append(attrs, logging.Payload(frame)...)
 	}
-	entry := logging.AuditRecord{
-		EventID:  rx.ID,
-		Station:  core.opts.Station,
-		DeviceID: rx.DeviceID,
-		Outcome:  outcome,
-		Bytes:    size,
-		Seq:      rx.Seq,
-		Detail:   detail,
-	}
-	if outcome != logging.OutcomePublished {
-		entry.RawB64, entry.Text = rx.RawB64, rx.Text
-	}
-	if err := core.opts.Deliveries.Append(entry); err != nil {
-		core.log.Error("delivery record write failed", "id", rx.ID, "device_id", rx.DeviceID, "error", err.Error())
-	}
+	return attrs
 }
 
 // report receives every port event from one device's reader. It counts the
