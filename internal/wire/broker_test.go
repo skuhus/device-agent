@@ -193,8 +193,9 @@ func connectWith(ctx context.Context, t *testing.T, addr, user, pass, clientID s
 // TestBrokerPermissions publishes as each development user to the topics the
 // permissions in dev/rabbitmq/definitions.json are meant to allow and refuse,
 // and checks what the broker does with each: a sender may publish tx to a
-// device, and nothing that would pass for a reading or a status; a station may
-// not reach another station's devices.
+// device, and nothing that would pass for a reading, a device's status or an
+// agent's keepalive or offline message; a station may not reach another
+// station's devices.
 //
 // RabbitMQ refuses a publish by closing the connection, not with a reason code
 // (measured on 4.3.5, T11), so a publish is judged by two things: whether the
@@ -213,7 +214,8 @@ func TestBrokerPermissions(t *testing.T) {
 	if ingest.name == "" {
 		t.Fatal("TEST_INGEST_USER is not set; make test-broker sets it to the development ingest user")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	// Each refusal takes the publish timeout and a quiet period to observe.
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
 	var random [4]byte
@@ -238,6 +240,10 @@ func TestBrokerPermissions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("other station's device: %v", err)
 	}
+	agent, err := own.Agent("perm-" + run)
+	if err != nil {
+		t.Fatalf("agent: %v", err)
+	}
 
 	checks := []struct {
 		name      string
@@ -249,6 +255,7 @@ func TestBrokerPermissions(t *testing.T) {
 		{"a sender publishes tx to a device", ingest, ownDevice.Tx(), station, true},
 		{"a sender cannot publish a reading", ingest, ownDevice.Rx(), station, false},
 		{"a sender cannot publish a device status", ingest, ownDevice.Status(), station, false},
+		{"a sender cannot publish an agent's status", ingest, agent.Status(), station, false},
 		{"a station cannot publish to another station's tx", station, otherDevice.Tx(), ingest, false},
 	}
 	for i, check := range checks {
