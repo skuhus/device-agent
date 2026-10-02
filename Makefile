@@ -53,7 +53,7 @@ help:
 	@echo "broker-reset   stop it and discard its volume"
 	@echo "broker-logs    tail its log"
 	@echo "consume        subscribe and print what reaches the broker"
-	@echo "test-broker    publish the v2 messages through the broker and check each filter"
+	@echo "test-broker    publish the v2 messages through the broker, check each filter and the users' topic permissions"
 	@echo
 	@echo "spike-brokerinfo   what a broker is, and which MQTT levels it answers"
 	@echo "spike-mqtt5        the M0 property spike; see docs/spikes/m0-mqtt5.md"
@@ -217,6 +217,9 @@ spike-mosquitto-up: network
 BROKER    ?= skuhus-dev-rabbitmq:1883
 MQTT_USER ?= station-pack-03
 MQTT_PASS ?= pack-03-dev
+# The development user that stands in for consumers and tx senders.
+INGEST_USER ?= ingest
+INGEST_PASS ?= ingest-dev
 # Escaped because make would otherwise read the hash as a comment, leaving a
 # subscription to "skuhus/" that receives nothing.
 TOPIC     ?= skuhus/\#
@@ -229,7 +232,7 @@ consume: caches network
 	docker run --rm -it --network $(NETWORK) \
 		-v "$(CURDIR)":/src -v $(MOD_CACHE):/go/pkg/mod -v $(BUILD_CACHE):/root/.cache/go-build \
 		-w /src -e GOFLAGS=-buildvcs=false $(GO_IMAGE) \
-		go -C dev run ./consumer --broker $(BROKER) --username ingest --password ingest-dev \
+		go -C dev run ./consumer --broker $(BROKER) --username $(INGEST_USER) --password $(INGEST_PASS) \
 			--topic '$(TOPIC)' $(FLAGS)
 
 # The consumer filters in internal/wire, checked against a real broker and its
@@ -238,6 +241,7 @@ consume: caches network
 .PHONY: test-broker
 test-broker: caches network
 	$(GO_NET) env TEST_BROKER=$(BROKER) TEST_MQTT_USER=$(MQTT_USER) TEST_MQTT_PASS=$(MQTT_PASS) \
+		TEST_INGEST_USER=$(INGEST_USER) TEST_INGEST_PASS=$(INGEST_PASS) \
 		go test -count=1 -run Broker -v ./internal/wire/
 
 .PHONY: spike-brokerinfo

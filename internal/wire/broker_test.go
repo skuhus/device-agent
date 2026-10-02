@@ -189,3 +189,101 @@ func connectWith(ctx context.Context, t *testing.T, addr, user, pass, clientID s
 	t.Cleanup(func() { _ = client.Disconnect(&paho.Disconnect{ReasonCode: 0}) })
 	return client
 }
+
+// TestBrokerPermissions publishes as each development user to the topics the
+// permissions in dev/rabbitmq/definitions.json are meant to allow and refuse,
+// and checks what the broker does with each: a sender may publish tx to a
+// device, and nothing that would pass for a reading or a status; a station may
+// not reach another station's devices.
+//
+// RabbitMQ refuses a publish by closing the connection, not with a reason code
+// (measured on 4.3.5, T11), so a publish is judged by two things: whether the
+// broker acknowledged it, and whether a subscriber allowed to see the topic
+// received it.
+//
+// It needs a broker, so it is skipped unless TEST_BROKER is set; make
+// test-broker runs it as station-pack-03 and ingest.
+func TestBrokerPermissions(t *testing.T) {
+	addr := os.Getenv("TEST_BROKER")
+	if addr == "" {
+		t.Skip("TEST_BROKER is not set; make test-broker runs this against the development broker")
+	}
+	station := user{os.Getenv("TEST_MQTT_USER"), os.Getenv("TEST_MQTT_PASS")}
+	ingest := user{os.Getenv("TEST_INGEST_USER"), os.Getenv("TEST_INGEST_PASS")}
+	if ingest.name == "" {
+		t.Fatal("TEST_INGEST_USER is not set; make test-broker sets it to the development ingest user")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	var random [4]byte
+	if _, err := rand.Read(random[:]); err != nil {
+		t.Fatalf("run id: %v", err)
+	}
+	run := hex.EncodeToString(random[:])
+	own, err := NewStationTopics("acme", "vasby", "pack-03")
+	if err != nil {
+		t.Fatalf("station: %v", err)
+	}
+	other, err := NewStationTopics("acme", "vasby", "pack-04")
+	if err != nil {
+		t.Fatalf("other station: %v", err)
+	}
+	device := "perm-" + run
+	ownDevice, err := own.Device(device)
+	if err != nil {
+		t.Fatalf("device: %v", err)
+	}
+	otherDevice, err := other.Device(device)
+	if err != nil {
+		t.Fatalf("other station's device: %v", err)
+	}
+
+	checks := []struct {
+		name      string
+		publisher user
+		topic     string
+		observer  user
+		allowed   bool
+	}{
+		{"a sender publishes tx to a device", ingest, ownDevice.Tx(), station, true},
+		{"a sender cannot publish a reading", ingest, ownDevice.Rx(), station, false},
+		{"a sender cannot publish a device status", ingest, ownDevice.Status(), station, false},
+		{"a station cannot publish to another station's tx", station, otherDevice.Tx(), ingest, false},
+	}
+	for i, check := range checks {
+		t.Run(check.name, func(t *testing.T) {
+			received := subscribe(ctx, t, addr, check.observer.name, check.observer.pass,
+				fmt.Sprintf("perm-%s-observer-%d", run, i), check.topic, run)
+			publishErr := publishOnce(ctx, t, addr, check.publisher, fmt.Sprintf("perm-%s-publisher-%d", run, i), check.topic)
+			delivered := len(collect(t, received, 2*time.Second)) > 0
+			switch {
+			case check.allowed && (publishErr != nil || !delivered):
+				t.Errorf("%s publishing to %s: error %v, delivered %v; want acknowledged and delivered",
+					check.publisher.name, check.topic, publishErr, delivered)
+			case !check.allowed && (publishErr == nil || delivered):
+				t.Errorf("%s publishing to %s: error %v, delivered %v; want refused and not delivered",
+					check.publisher.name, check.topic, publishErr, delivered)
+			}
+		})
+	}
+}
+
+type user struct{ name, pass string }
+
+// publishOnce connects as publisher and publishes one schema 2 message at QoS
+// 1. It returns nil only when the broker acknowledged it with a success code.
+func publishOnce(ctx context.Context, t *testing.T, addr string, publisher user, clientID, topic string) error {
+	t.Helper()
+	client := connect(ctx, t, addr, publisher.name, publisher.pass, clientID)
+	publishCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	ack, err := client.Publish(publishCtx, &paho.Publish{Topic: topic, QoS: 1, Payload: []byte(`{"schema":2,"kind":"permission-check"}`)})
+	if err != nil {
+		return err
+	}
+	if ack.ReasonCode >= 0x80 {
+		return fmt.Errorf("refused with reason 0x%02x", ack.ReasonCode)
+	}
+	return nil
+}
