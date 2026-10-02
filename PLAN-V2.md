@@ -346,26 +346,40 @@ Depends on: T5, T7.
 
 ### T11. Development environment for v2
 
-Motivation. The development broker's permissions and the consumer are written
-for v1: the ingest user may only write to topics ending in `.cmd`
-(dev/rabbitmq/definitions.json:64), and the consumer knows the v1 message
-shapes.
+Motivation. The development broker still grants v1's command topic: the ingest
+user may write only to topics ending in `.cmd`
+(dev/rabbitmq/definitions.json:64). v2 has no such topic; senders publish tx
+instead (DESIGN-V2.md, "tx"), and the ingest user stands in for them. Measured
+on RabbitMQ 4.3.5: its publish to a tx topic is refused, and the broker closes
+the connection. dev/consumer carries two defects (#24) and v1's wording. It
+prints any JSON payload and decodes `raw_b64`, so it shows v2's messages as it
+is.
+
+The station user's topic permission already covers its whole station tree, the
+device level included: `make test-broker` publishes rx, a device event and a
+keepalive through it (#11), and the agent published rx, events, keepalives, its
+offline message and its will through it in T7 and T8. It stays as it is.
 
 Work.
-- definitions.json: the station user reads and writes its own station's tree
-  including the device segment; the ingest user may write `.tx`. Test the
-  station user's existing pattern against device-level topics rather than
-  assuming it matches.
-- dev/consumer prints rx, tx and status, decoding the payload. Fix #24 on the
-  way: it keeps running silently after a connection error, and has a dead
-  loop.
-- dev/agent.local.yaml is already in the v2 schema: T5 converted it, because
-  the schema change would otherwise have broken it.
+- definitions.json: the ingest user may write device tx topics,
+  `skuhus/<project>/<site>/<station>/<device>/tx`, in place of `.cmd`.
+- `make test-broker` checks the permissions senders and stations rely on: the
+  ingest user can publish to a device's tx topic and cannot publish to an rx or
+  status topic, and a station user cannot publish to another station's tx
+  topic. RabbitMQ refuses a publish by closing the connection, so a check sees
+  a refusal as the connection lost and the message never delivered.
+- dev/consumer: fix #24, and drop v1's wording.
+- dev/agent.local.yaml: its log_payloads comment says the data needs level
+  debug, which stopped being true with T9.
 
-Intended result. `make broker-up` and `make consume` show a v2 agent's rx and
-status messages. A station user cannot publish to another station's tx topic,
-checked the way M0 checked topic permissions (docs/spikes/m0-mqtt5.md,
-"Reproducing").
+The broker imports the definitions when it boots, so a running broker takes the
+change at its next restart.
+
+Intended result. `make test-broker` passes on a broker started from the new
+definitions, and each permission check fails when the permission it checks is
+widened or removed. With the agent on the pseudo-terminal harness, `make
+consume` shows its rx, device events, keepalives and offline message. Closing
+the broker's side of the connection ends `make consume` with the error printed.
 
 Depends on: T5, T6.
 
