@@ -61,7 +61,7 @@
       "user": "ingest",
       "vhost": "/",
       "exchange": "amq.topic",
-      "write": "^skuhus\\..*\\.cmd$",
+      "write": "^skuhus\\.[^.]+\\.[^.]+\\.[^.]+\\.[^.]+\\.tx$",
       "read": "^skuhus\\..*$"
     }
   ],
