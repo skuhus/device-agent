@@ -367,10 +367,12 @@ Work.
 - definitions.json: the ingest user may write device tx topics,
   `skuhus/<project>/<site>/<station>/<device>/tx`, in place of `.cmd`.
 - `make test-broker` checks the permissions senders and stations rely on: the
-  ingest user can publish to a device's tx topic and cannot publish to an rx or
-  status topic, and a station user cannot publish to another station's tx
-  topic. RabbitMQ refuses a publish by closing the connection, so a check sees
-  a refusal as the connection lost and the message never delivered.
+  ingest user can publish to a device's tx topic and cannot publish to an rx
+  topic or to a device's or an agent's status topic, and a station user cannot
+  publish to another station's tx topic. RabbitMQ refuses a publish by closing
+  the connection, which the client does not notice while it waits for the
+  acknowledgement, so a check sees a refusal as a publish never acknowledged
+  and a message never delivered.
 - dev/consumer: fix #24, and drop v1's wording.
 - dev/agent.local.yaml: its log_payloads comment says the data needs level
   debug, which stopped being true with T9.
