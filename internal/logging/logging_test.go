@@ -130,6 +130,30 @@ func TestEveryRecordNamesWhereItWasWritten(t *testing.T) {
 	}
 }
 
+// A reading's record is written whatever the level says, with the code that
+// wrote it as its source, and flushed as any INFO record is.
+func TestRecordIgnoresTheLevel(t *testing.T) {
+	file := &syncCounter{}
+	log, err := New(Options{Level: "error", File: file})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	log.Info("device open")
+	Record(log, slog.LevelInfo, "rx published", "seq", 1)
+
+	if got := strings.Join(file.events, ", "); got != "write INFO, sync" {
+		t.Errorf("file saw %s, want the record alone, flushed", got)
+	}
+	var captured bytes.Buffer
+	log, _ = New(Options{Level: "error", Out: &captured})
+	_, _, line, _ := runtime.Caller(0)
+	Record(log, slog.LevelInfo, "rx published", "seq", 1)
+	source := decodeLine(t, strings.TrimSpace(captured.String()))["source"].(map[string]any)
+	if !strings.HasSuffix(source["function"].(string), ".TestRecordIgnoresTheLevel") || source["line"] != float64(line+1) {
+		t.Errorf("source = %v, want this test, line %d", source, line+1)
+	}
+}
+
 // syncCounter stands in for the log file, recording what was written and each
 // flush, in order.
 type syncCounter struct {

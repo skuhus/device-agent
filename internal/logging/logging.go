@@ -16,6 +16,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -90,6 +91,20 @@ func New(opts Options) (*slog.Logger, error) {
 		"instance_id", opts.Instance,
 		"agent_version", opts.AgentVersion,
 	), nil
+}
+
+// Record writes a record whatever the log's level says, with its caller as the
+// source. It is for the records the log keeps for a reason other than
+// diagnosis: every reading gets a record of what happened to it (DESIGN-V2.md,
+// "Logging: one common log"), as it did in v1's audit file, which no level
+// governed.
+func Record(log *slog.Logger, level slog.Level, msg string, args ...any) {
+	var pcs [1]uintptr
+	runtime.Callers(2, pcs[:]) // skip Callers and Record
+	record := slog.NewRecord(time.Now(), level, msg, pcs[0])
+	record.Add(args...)
+	// The handler reports a record it could not write itself.
+	_ = log.Handler().Handle(context.Background(), record)
 }
 
 // Payload returns the attributes that put data read from a port on a log line:

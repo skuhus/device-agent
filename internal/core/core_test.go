@@ -637,3 +637,30 @@ func TestNewRejectsUnusableOptions(t *testing.T) {
 		})
 	}
 }
+
+// Every reading gets a record (DESIGN-V2.md, "Logging: one common log"),
+// whatever logging.level says: at error, a published reading's INFO record is
+// still written, as the audit file's was, while the level still governs every
+// other line.
+func TestReadingRecordsDoNotDependOnTheLogLevel(t *testing.T) {
+	log, logged := logtest.New(t, "error")
+	transport := &fakeTransport{failRx: map[string]bool{"skuhus/acme/vasby/pack-03/scale-1/rx": true}}
+	scanner := newFakeReader("scanner-main", "A42154587")
+	scale := newFakeReader("scale-1", "1.250 kg")
+	opts := testOptions(t, transport, coreDevice(t, scanner, ""), coreDevice(t, scale, ""))
+	opts.Logger = log
+	runUntil(t, newCore(t, opts), func() {
+		<-scanner.sent
+		<-scale.sent
+		waitUntil(t, "both publishes", func() bool { return transport.calls("rx")+transport.calls("rx-failed") == 2 })
+	})
+	if got := len(logged.WithMessage(t, "rx published")); got != 1 {
+		t.Errorf("%d published records at level error, want 1:\n%s", got, logged.String())
+	}
+	if got := len(logged.WithMessage(t, "rx publish failed")); got != 1 {
+		t.Errorf("%d failure records, want 1", got)
+	}
+	if got := len(logged.WithMessage(t, "device starting")); got != 0 {
+		t.Errorf("%d INFO device starting lines at level error, want none:\n%s", got, logged.String())
+	}
+}

@@ -292,7 +292,7 @@ func (core *Core) publish(line *pipeline) {
 		rx := core.opts.Builder.Rx(line.device.Wire, line.seq, frame.Raw, frame.At)
 		if core.pastDrainDeadline() {
 			line.countPublishFailure()
-			core.log.Warn("rx dropped", append(rxAttrs(rx, frame.Raw, outcomeDropped, true),
+			logging.Record(core.log, slog.LevelWarn, "rx dropped", append(rxAttrs(rx, frame.Raw, outcomeDropped, true),
 				"reason", "shutdown drain deadline passed")...)
 			dropped++
 			continue
@@ -306,10 +306,11 @@ func (core *Core) publish(line *pipeline) {
 }
 
 // publishRx sends one reading. Its log record is the record of its delivery,
-// and every reading gets one. A reading the broker did not take carries its
-// data whatever log_payloads says, because nothing else holds it: a setting
-// that silently turned data loss back on would not be a privacy control. A
-// published one carries it only with log_payloads.
+// and every reading gets one, whatever logging.level says. A reading the
+// broker did not take carries its data whatever log_payloads says, because
+// nothing else holds it: a setting that silently turned data loss back on
+// would not be a privacy control. A published one carries it only with
+// log_payloads.
 func (core *Core) publishRx(line *pipeline, rx wire.Rx, raw []byte) {
 	payload, err := json.Marshal(rx)
 	if err != nil {
@@ -318,7 +319,7 @@ func (core *Core) publishRx(line *pipeline, rx wire.Rx, raw []byte) {
 		// the broker and left no trace is the one failure the record exists to
 		// make impossible.
 		line.countPublishFailure()
-		core.log.Error("rx could not be encoded", append(rxAttrs(rx, raw, outcomeDropped, true), "error", err.Error())...)
+		logging.Record(core.log, slog.LevelError, "rx could not be encoded", append(rxAttrs(rx, raw, outcomeDropped, true), "error", err.Error())...)
 		return
 	}
 
@@ -330,10 +331,10 @@ func (core *Core) publishRx(line *pipeline, rx wire.Rx, raw []byte) {
 	cancel()
 	if err != nil {
 		line.countPublishFailure()
-		core.log.Error("rx publish failed", append(rxAttrs(rx, raw, outcomeFailed, true), "error", err.Error())...)
+		logging.Record(core.log, slog.LevelError, "rx publish failed", append(rxAttrs(rx, raw, outcomeFailed, true), "error", err.Error())...)
 		return
 	}
-	core.log.Info("rx published", rxAttrs(rx, raw, outcomePublished, core.opts.LogPayloads)...)
+	logging.Record(core.log, slog.LevelInfo, "rx published", rxAttrs(rx, raw, outcomePublished, core.opts.LogPayloads)...)
 }
 
 // rxAttrs are a reading's record: what identifies it, its outcome, and, with
