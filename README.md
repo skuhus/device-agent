@@ -89,14 +89,21 @@ and never from a repository.
 |---|---|---|
 | `admin` | `admin` | management UI |
 | `station-pack-03` | `pack-03-dev` | an agent at station `pack-03` |
-| `ingest` | `ingest-dev` | the consumer side |
+| `ingest` | `ingest-dev` | the consumer side, and tx senders |
 
 Anonymous MQTT is refused, which is the fleet broker's current behaviour and the
 reason this file sets it explicitly. `station-pack-03` is confined by topic
 permission to `skuhus.acme.vasby.pack-03.*`: it cannot publish or subscribe
 outside its own station, which is what section 8 asks per-station credentials to
-buy. Adding a station means adding a user and a topic permission to
-`definitions.json`.
+buy. `ingest` reads every station's topics and writes only device tx topics,
+`skuhus/<project>/<site>/<station>/<device>/tx`, so it cannot pass anything off
+as a reading or a status. Adding a station means adding a user and a topic
+permission to `definitions.json`.
+
+The definitions are imported at boot, so a running broker takes a change at its
+next restart, `make broker-down broker-up`, which keeps the volume. `make
+test-broker` then checks the topic permissions above, along with the consumer
+filters.
 
 Point the spike at it to check the broker after a change:
 
