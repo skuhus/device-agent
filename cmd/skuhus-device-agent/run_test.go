@@ -75,7 +75,7 @@ logging:
 	}
 	t.Setenv("SH_DEV_AGENT_MQTT_USERNAME", "station-pack-03")
 	t.Setenv("SH_DEV_AGENT_MQTT_PASSWORD", "pack-03-dev")
-	cfg, _, err := config.Load(config.Options{Path: configFile})
+	cfg, warnings, err := config.Load(config.Options{Path: configFile})
 	if err != nil {
 		t.Fatalf("config.Load: %v", err)
 	}
@@ -83,7 +83,7 @@ logging:
 	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
 	defer cancel()
 	stdout := &logtest.Log{}
-	if err := runAgent(ctx, cfg, stdout); err != nil {
+	if err := runAgent(ctx, cfg, warnings, stdout); err != nil {
 		t.Fatalf("runAgent: %v", err)
 	}
 
@@ -104,4 +104,52 @@ logging:
 	if records := stdout.WithMessage(t, "log destinations"); len(records) != 1 || records[0]["log_level"] != "debug" || records[0]["level"] != "INFO" {
 		t.Errorf("log destinations = %v, want INFO with log_level debug", records)
 	}
+	// Everything is written to the one log, the configuration's warnings
+	// included: this configuration has a plaintext broker URL.
+	if records := stdout.WithMessage(t, "configuration warning"); len(records) != 1 || records[0]["field"] != "broker.url" || records[0]["level"] != "WARN" {
+		t.Errorf("configuration warning records = %v, want one WARN for broker.url", records)
+	}
+}
+
+// When the agent stops on an error after its log exists, the error is in the
+// log, not only on stderr: an operator who reads the log file must find why
+// the agent stopped.
+func TestAgentStopErrorIsInTheLog(t *testing.T) {
+	dir := t.TempDir()
+	configFile := filepath.Join(dir, "agent.yaml")
+	body := fmt.Sprintf(`identity: { project: acme, site: vasby, station: pack-03 }
+broker:
+  url: tcp://127.0.0.1:1
+  insecure: true
+devices:
+  - id: scanner-main
+    path: %s
+    separator: "\r\n"
+logging:
+  stdout: true
+`, filepath.Join(dir, "no-such-tty"))
+	if err := os.WriteFile(configFile, []byte(body), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	t.Setenv("SH_DEV_AGENT_MQTT_USERNAME", "station-pack-03")
+	t.Setenv("SH_DEV_AGENT_MQTT_PASSWORD", "pack-03-dev")
+	cfg, warnings, err := config.Load(config.Options{Path: configFile})
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	// The credentials vanish between loading and running, so the agent stops
+	// after its log exists.
+	t.Setenv("SH_DEV_AGENT_MQTT_USERNAME", "")
+	t.Setenv("SH_DEV_AGENT_MQTT_PASSWORD", "")
+
+	stdout := &logtest.Log{}
+	runErr := runAgent(context.Background(), cfg, warnings, stdout)
+	if runErr == nil {
+		t.Fatal("runAgent started without credentials")
+	}
+	records := stdout.WithMessage(t, "agent stopped on an error")
+	if len(records) != 1 || records[0]["level"] != "ERROR" || records[0]["error"] != runErr.Error() {
+		t.Errorf("records = %v, want one ERROR carrying %q", records, runErr.Error())
+	}
+	logtest.CheckText(t, stdout.String())
 }

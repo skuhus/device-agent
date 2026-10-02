@@ -72,23 +72,28 @@ func runRun(args []string, stdout, stderr io.Writer) error {
 			LogPayloads:           logPayloads.value,
 		},
 	})
-	for _, warning := range warnings {
-		fmt.Fprintln(stderr, "warning: "+warning.String())
-	}
 	if err != nil {
+		// There is no log yet, so the warnings go with the error to stderr.
+		// Once the configuration loads, runAgent writes them to the log.
+		for _, warning := range warnings {
+			fmt.Fprintln(stderr, "warning: "+warning.String())
+		}
 		return err
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	return runAgent(ctx, cfg, stdout)
+	return runAgent(ctx, cfg, warnings, stdout)
 }
 
 // runAgent assembles the agent from its parts and runs it: the log, the
 // credentials, the topics, a reader per device, the connection with its will,
 // and the core with its keepalive settings. It builds and does nothing else;
 // every rule it relies on was checked when the configuration loaded.
-func runAgent(ctx context.Context, cfg *config.Config, stdout io.Writer) error {
+//
+// Everything goes to the one log once it exists: the configuration's warnings,
+// and the error that stops the agent, which main also prints to stderr.
+func runAgent(ctx context.Context, cfg *config.Config, warnings []config.Warning, stdout io.Writer) (err error) {
 	started := time.Now()
 
 	// The log file is opened first and closed last, so that it holds every
@@ -128,10 +133,19 @@ func runAgent(ctx context.Context, cfg *config.Config, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
+	// Registered after the file's close, so it runs before it.
+	defer func() {
+		if err != nil {
+			log.Error("agent stopped on an error", "error", err.Error())
+		}
+	}()
 	log.Info("starting", "version", buildinfo.Version(), "commit", buildinfo.Commit(), "built", buildinfo.Date(),
 		"devices", len(cfg.Devices), "broker", cfg.Broker.RedactedURL())
 	log.Info("log destinations", "file", cfg.Logging.File, "max_size_mb", cfg.Logging.MaxSizeMB, "keep", cfg.Logging.Keep,
 		"stdout", cfg.Logging.Stdout, "log_level", cfg.Logging.Level, "log_payloads", cfg.Logging.LogPayloads)
+	for _, warning := range warnings {
+		log.Warn("configuration warning", "field", warning.Field, "warning", warning.Message)
+	}
 
 	creds, err := config.LoadCredentials(cfg.Broker, config.EnvMap(os.Environ()))
 	if err != nil {
