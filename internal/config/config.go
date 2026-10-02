@@ -179,10 +179,12 @@ type Status struct {
 // choice (DESIGN-V2.md, "Logging: one common log").
 type Logging struct {
 	Level string `yaml:"level"`
-	// LogPayloads allows the data read from a port into the log. Without it a
-	// frame is logged as an id, a device, a byte count and a validity flag,
-	// which is enough to trace delivery and not enough to reconstruct a
-	// reading.
+	// LogPayloads puts the data read from a port on the log lines of published
+	// readings and of discarded bytes. Without it a published reading is
+	// logged as an id, a device, a byte count and a validity flag, which is
+	// enough to trace delivery and not enough to reconstruct a reading. A
+	// reading the broker did not take carries its data regardless, because
+	// nothing else holds it.
 	LogPayloads bool   `yaml:"log_payloads"`
 	File        string `yaml:"file"`
 	MaxSizeMB   int    `yaml:"max_size_mb"`

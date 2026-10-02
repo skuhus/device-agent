@@ -923,12 +923,18 @@ and the record carries the payload when the broker did not accept the message
 (DESIGN.md, "Scans are perishable"). In v1 this was the audit log.
 
 A reading's record is its line in the log: `rx published` at INFO, `rx publish
-failed` at ERROR, or `rx dropped` at WARN, each with the message's `id`,
-`device_id`, `seq`, `bytes` and `text_valid`, and `outcome` set to `published`,
-`failed` or `dropped`. Data read from a port appears on a line as `data_hex`,
-and as `data_text` as well when it is valid UTF-8. A failed or dropped reading
-always carries its data; a published one and a discard warning carry it only
-with log_payloads.
+failed` at ERROR, `rx dropped` at WARN, or, if it could not be encoded, `rx
+could not be encoded` at ERROR. Each carries the message's `id`, `device_id`,
+`seq`, `bytes` and `text_valid`, and `outcome` set to `published`, `failed` or
+`dropped`. It is written whatever logging.level says, as the audit file was.
+Data read from a port appears on a line as `data_hex`, and as `data_text` as
+well when it is valid UTF-8. A failed or dropped reading always carries its
+data; a published one and a discard warning carry it only with log_payloads.
+
+The configuration's warnings, and the error that stops the agent, are in the
+log as well, once it exists. A failure to rotate the log file is reported on
+stderr, and writing goes on in the live file past its limit until the cause is
+cleared.
 
 The connection library logs its own lines through the same log. Once the agent
 has closed the connection, the library's lines are discarded: it cannot tell

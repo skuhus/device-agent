@@ -143,11 +143,15 @@ status:
   event_buffer_size: 64
 
 logging:
+  # debug, info, warn or error. Every reading's record of what became of it is
+  # written whatever this says.
   level: info
 
-  # Whether the data read from a port may reach the log. Default false keeps it
-  # out: a frame is then logged as an id, a device, a byte count and a validity
-  # flag, which traces delivery without recording readings. Set it when
+  # Whether the data read from a port goes on the log lines of published
+  # readings and of discarded bytes. Default false keeps it off them: a
+  # published reading is then logged as an id, a device, a byte count and a
+  # validity flag, which traces delivery without recording readings. A reading
+  # the broker did not take carries its data whatever this says. Set it when
   # diagnosing a device that frames nothing.
   log_payloads: false
 
