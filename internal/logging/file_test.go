@@ -198,3 +198,51 @@ func TestFileWriteAfterCloseFails(t *testing.T) {
 		t.Error("flushing a closed log file should fail")
 	}
 }
+
+// An operator who deletes the live file to free space must not stop the log:
+// the next rotation finds nothing to rotate, and writing goes on in a new
+// file at the same path.
+func TestFileKeepsWritingAfterTheLiveFileIsRemoved(t *testing.T) {
+	file, path := openFile(t, 1, 2)
+	write(t, file, "before")
+	if err := os.Remove(path); err != nil {
+		t.Fatalf("remove the live file: %v", err)
+	}
+	pad := strings.Repeat("x", 4096)
+	for i := 0; i < 300; i++ {
+		write(t, file, fmt.Sprintf("r%04d %s", i, pad))
+	}
+	write(t, file, "after")
+	lines := readLines(t, path)
+	if len(lines) == 0 || lines[len(lines)-1] != "after" {
+		t.Fatalf("the live file does not end with the last record; it holds %d lines", len(lines))
+	}
+}
+
+// A rotation that fails is reported, and the record is still written: the
+// file goes on growing past its limit rather than going dark, and each write
+// past the limit tries again and reports again until the cause is cleared.
+// Here the oldest rotated name is taken by a directory that cannot be removed.
+func TestFileKeepsWritingWhenRotationFails(t *testing.T) {
+	file, path := openFile(t, 1, 1)
+	if err := os.MkdirAll(filepath.Join(path+".1", "in-the-way"), 0o755); err != nil {
+		t.Fatalf("block the rotated name: %v", err)
+	}
+	pad := strings.Repeat("x", 4096)
+	var rotationErr error
+	for i := 0; i < 300; i++ {
+		if _, err := file.Write([]byte(fmt.Sprintf("r%04d %s\n", i, pad))); err != nil && rotationErr == nil {
+			rotationErr = err
+		}
+	}
+	if rotationErr == nil || !strings.Contains(rotationErr.Error(), "rotating") {
+		t.Errorf("the failed rotation was not reported: %v", rotationErr)
+	}
+	if _, err := file.Write([]byte("after\n")); err == nil || !strings.Contains(err.Error(), "rotating") {
+		t.Errorf("a write past the limit with rotation still blocked: err = %v, want the rotation reported again", err)
+	}
+	lines := readLines(t, path)
+	if len(lines) != 301 || lines[len(lines)-1] != "after" {
+		t.Errorf("the live file holds %d lines, want all 301, ending with the last", len(lines))
+	}
+}

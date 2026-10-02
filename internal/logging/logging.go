@@ -143,7 +143,7 @@ func (handler *flushing) Handle(ctx context.Context, record slog.Record) error {
 		err = errors.Join(err, handler.file.Sync())
 	}
 	if err != nil {
-		fmt.Fprintf(handler.errors, "%s logging: a %s record (%q) was not written or flushed: %v\n",
+		fmt.Fprintf(handler.errors, "%s logging: %s record %q: %v\n",
 			time.Now().UTC().Format(time.RFC3339Nano), record.Level, record.Message, err)
 	}
 	return err

@@ -68,54 +68,73 @@ func (file *File) open() error {
 
 // Write appends one record, rotating first if the record would take the file
 // past its size limit. A record larger than the limit is still written whole,
-// into a file of its own.
+// into a file of its own. A rotation that fails does not stop the log: the
+// record goes on in the live file, past its limit, and the failure is
+// returned so that it is reported.
 func (file *File) Write(record []byte) (int, error) {
 	file.mu.Lock()
 	defer file.mu.Unlock()
 	if file.file == nil {
 		return 0, fmt.Errorf("logging: %s is closed", file.path)
 	}
+	var rotateErr error
 	if file.size > 0 && file.size+int64(len(record)) > file.maxBytes {
-		if err := file.rotate(); err != nil {
-			return 0, err
+		rotateErr = file.rotate()
+		if file.file == nil {
+			return 0, rotateErr
 		}
 	}
 	written, err := file.file.Write(record)
 	file.size += int64(written)
 	if err != nil {
-		return written, fmt.Errorf("logging: write %s: %w", file.path, err)
+		return written, errors.Join(rotateErr, fmt.Errorf("logging: write %s: %w", file.path, err))
 	}
-	return written, nil
+	return written, rotateErr
 }
 
 // rotate renames the current file to .1, shifting existing rotated files up and
-// discarding anything past keep. The caller holds the mutex.
+// discarding anything past keep, and opens a new live file. The caller holds
+// the mutex.
+//
+// It always reopens the live path, so that a failed step leaves the log
+// writing, to a fresh file or to the old one past its limit. A live file that
+// is already gone, deleted by an operator to free space, has nothing to
+// rotate.
 func (file *File) rotate() error {
-	if err := file.file.Close(); err != nil {
-		return fmt.Errorf("logging: close %s before rotation: %w", file.path, err)
-	}
+	closeErr := file.file.Close()
 	file.file = nil
-
-	if file.keep == 0 {
-		if err := os.Remove(file.path); err != nil {
-			return fmt.Errorf("logging: discard %s: %w", file.path, err)
-		}
-		return file.open()
+	shiftErr := file.shift()
+	if err := file.open(); err != nil {
+		return errors.Join(closeErr, shiftErr, err)
 	}
+	if err := errors.Join(closeErr, shiftErr); err != nil {
+		return fmt.Errorf("logging: rotating %s failed; writing goes on in it past its limit: %w", file.path, err)
+	}
+	return nil
+}
 
+// shift moves the live file to .1 and the rotated ones up, discarding the
+// oldest past keep.
+func (file *File) shift() error {
+	if file.keep == 0 {
+		if err := os.Remove(file.path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("discard %s: %w", file.path, err)
+		}
+		return nil
+	}
 	if err := os.Remove(file.rotatedPath(file.keep)); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("logging: remove oldest rotated file: %w", err)
+		return fmt.Errorf("remove the oldest rotated file: %w", err)
 	}
 	for i := file.keep - 1; i >= 1; i-- {
 		from, to := file.rotatedPath(i), file.rotatedPath(i+1)
 		if err := os.Rename(from, to); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("logging: rotate %s to %s: %w", from, to, err)
+			return fmt.Errorf("move %s to %s: %w", from, to, err)
 		}
 	}
-	if err := os.Rename(file.path, file.rotatedPath(1)); err != nil {
-		return fmt.Errorf("logging: rotate %s: %w", file.path, err)
+	if err := os.Rename(file.path, file.rotatedPath(1)); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("move %s to %s: %w", file.path, file.rotatedPath(1), err)
 	}
-	return file.open()
+	return nil
 }
 
 func (file *File) rotatedPath(index int) string { return fmt.Sprintf("%s.%d", file.path, index) }
