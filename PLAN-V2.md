@@ -346,6 +346,9 @@ Depends on: T5, T7.
 
 ### T11. Development environment for v2
 
+Status: done on branch gh-16-dev-env, not yet merged. A broker already running
+keeps the old definitions until it restarts (`make broker-down broker-up`).
+
 Motivation. The development broker still grants v1's command topic: the ingest
 user may write only to topics ending in `.cmd`
 (dev/rabbitmq/definitions.json:64). v2 has no such topic; senders publish tx
