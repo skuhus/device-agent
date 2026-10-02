@@ -48,8 +48,9 @@ delivery:
 
 logging:
   level: info
-  # Off here as in production. Turn it on with level debug to see payloads when
-  # a device frames nothing.
+  # Off here as in production. Turn it on to see the data on each reading's line
+  # and on each discard's warning, which is what shows why a device frames
+  # nothing.
   log_payloads: false
   # The directory must already exist; the agent will not create it.
   file: /tmp/skuhus-device-agent/agent.log
