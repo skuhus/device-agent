@@ -4,9 +4,9 @@
 // prints, and the two together say whether a scan made it out of the building.
 // It is not part of the agent and is not built by "make build".
 //
-// Scan envelopes get one extra line beyond the JSON, decoding raw_b64 back to
-// bytes, because that field is the whole point of the exercise and base64 is
-// not readable at a glance.
+// A message that carries raw_b64, an rx or a tx, gets one extra line beyond the
+// JSON, decoding it back to bytes, because that field is the whole point of the
+// exercise and base64 is not readable at a glance.
 package main
 
 import (
@@ -59,6 +59,19 @@ func run(broker, username, password, topic, clientID string, qos byte, raw bool)
 		return fmt.Errorf("connect to %s: %w", broker, err)
 	}
 
+	// A dropped connection ends the run with its error rather than being
+	// retried: this is a diagnostic tool, and reconnecting, or carrying on
+	// subscribed to nothing, would hide the very disconnect someone is watching
+	// for. paho reports a broken connection through OnClientError and a
+	// broker's DISCONNECT through OnServerDisconnect, so both end it (#24).
+	lost := make(chan error, 1)
+	end := func(err error) {
+		select {
+		case lost <- err:
+		default:
+		}
+		stop()
+	}
 	mqttClient := paho.NewClient(paho.ClientConfig{
 		ClientID: clientID,
 		Conn:     conn,
@@ -68,13 +81,9 @@ func run(broker, username, password, topic, clientID string, qos byte, raw bool)
 				return true, nil
 			},
 		},
-		// A dropped connection ends the run rather than being retried: this is a
-		// diagnostic tool, and silently reconnecting would hide the very
-		// disconnect someone is watching for.
-		OnClientError: func(err error) { fmt.Fprintln(os.Stderr, "connection error: "+err.Error()) },
+		OnClientError: func(err error) { end(fmt.Errorf("connection lost: %w", err)) },
 		OnServerDisconnect: func(d *paho.Disconnect) {
-			fmt.Fprintf(os.Stderr, "server disconnected, reason %d\n", d.ReasonCode)
-			stop()
+			end(fmt.Errorf("the broker disconnected, reason %d", d.ReasonCode))
 		},
 	})
 
@@ -109,13 +118,18 @@ func run(broker, username, password, topic, clientID string, qos byte, raw bool)
 
 	fmt.Printf("subscribed to %s on %s as %s, waiting\n\n", topic, broker, username)
 	<-ctx.Done()
+	select {
+	case err := <-lost:
+		return err
+	default:
+	}
 	fmt.Fprintln(os.Stderr, "\nstopping")
 	_ = mqttClient.Disconnect(&paho.Disconnect{ReasonCode: 0})
 	return nil
 }
 
 // print writes one message: a header line that is greppable, the payload, and
-// for a scan envelope the decoded payload bytes.
+// for an rx or a tx the decoded bytes.
 func print(packet *paho.Publish, raw bool) {
 	header := fmt.Sprintf("%s  %s  qos=%d", time.Now().UTC().Format("15:04:05.000"), packet.Topic, packet.QoS)
 	if packet.Retain {
@@ -131,7 +145,7 @@ func print(packet *paho.Publish, raw bool) {
 		return
 	}
 	if len(packet.Payload) == 0 {
-		fmt.Print("  (empty payload: a retained message being cleared)\n\n")
+		fmt.Print("  (empty payload)\n\n")
 		return
 	}
 
@@ -152,9 +166,9 @@ func print(packet *paho.Publish, raw bool) {
 	fmt.Println()
 }
 
-// describeProperties surfaces the MQTT 5 properties that carry meaning for this
-// agent: the command channel's correlation, and the expiry a scan was published
-// with.
+// describeProperties surfaces the MQTT 5 properties worth seeing: the message
+// expiry each message was published with, and a response topic or correlation
+// data, which the agent does not use (#23 Q4) but a sender may set.
 func describeProperties(packet *paho.Publish) string {
 	if packet.Properties == nil {
 		return ""
@@ -172,10 +186,10 @@ func describeProperties(packet *paho.Publish) string {
 	return strings.Join(parts, " ")
 }
 
-// decodeRaw turns the envelope's raw_b64 back into bytes. A scan payload can
-// carry 0x1D group separators and a vendor code identifier, neither of which
-// survives being read as a quoted string, so non-printable bytes are shown as
-// hex alongside the text.
+// decodeRaw turns a message's raw_b64 back into bytes. A frame can carry 0x1D
+// group separators and a vendor code identifier, neither of which survives
+// being read as a quoted string, so the bytes are shown as hex alongside the
+// text.
 func decodeRaw(envelope map[string]any) string {
 	encoded, ok := envelope["raw_b64"].(string)
 	if !ok {
@@ -188,17 +202,12 @@ func decodeRaw(envelope map[string]any) string {
 	return fmt.Sprintf("%s  (%d bytes, hex %s)", preview(decoded), len(decoded), hex.EncodeToString(decoded))
 }
 
-// preview renders bytes as text when they are printable UTF-8, and as hex when
-// they are not, so a control character is never silently swallowed by a
-// terminal.
+// preview renders bytes as a quoted string when they are valid UTF-8, which
+// escapes every control character, and as hex when they are not, so a control
+// character is never silently swallowed by a terminal.
 func preview(raw []byte) string {
 	if !utf8.Valid(raw) {
 		return "hex:" + hex.EncodeToString(raw)
-	}
-	for _, char := range string(raw) {
-		if char < 0x20 || char == 0x7f {
-			return fmt.Sprintf("%q", string(raw))
-		}
 	}
 	return fmt.Sprintf("%q", string(raw))
 }
