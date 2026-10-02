@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -458,7 +459,8 @@ func TestPublishedRxCarriesItsDataOnlyWithLogPayloads(t *testing.T) {
 		{"set, not UTF-8", true, "\xffA1", map[string]any{"data_hex": "ff4131"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			log, logged := logtest.New(t, "info")
+			// DEBUG, so that a copy of the data on any other line is seen.
+			log, logged := logtest.New(t, "debug")
 			transport := &fakeTransport{}
 			reader := newFakeReader("scanner-main", tc.frame)
 			opts := testOptions(t, transport, coreDevice(t, reader, ""))
@@ -479,10 +481,14 @@ func TestPublishedRxCarriesItsDataOnlyWithLogPayloads(t *testing.T) {
 					t.Errorf("%s = %v, want %v", key, record[key], tc.want[key])
 				}
 			}
-			// One line per reading: the data is on its record, not on a line of
-			// its own.
-			if lines := strings.Count(logged.String(), tc.frame) + strings.Count(logged.String(), "413432313534353837"); tc.payloads && lines > 2 {
-				t.Errorf("the reading's data appears on more than its record:\n%s", logged.String())
+			// One line per reading: the data is on its record and nowhere else,
+			// and nowhere at all without log_payloads.
+			want := 0
+			if tc.payloads {
+				want = 1
+			}
+			if got := strings.Count(logged.String(), hex.EncodeToString([]byte(tc.frame))); got != want {
+				t.Errorf("the reading's data is in the log %d times, want %d:\n%s", got, want, logged.String())
 			}
 		})
 	}
