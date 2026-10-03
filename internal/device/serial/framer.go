@@ -94,8 +94,10 @@ func (framer *Framer) Append(src []byte) ([][]byte, []Discard) {
 			// The terminator arrived in the same read that took the payload
 			// past the limit. The frame is over size and is dropped here; no
 			// resynchronisation is needed because the terminator has been
-			// consumed and the next byte starts a fresh frame.
-			discards = append(discards, Discard{Reason: DiscardOversize, Bytes: i})
+			// consumed and the next byte starts a fresh frame. A scanner sends
+			// a scan and its separator in one read, so this is where its
+			// oversize scans land, and the data goes with the discard.
+			discards = append(discards, Discard{Reason: DiscardOversize, Bytes: i, Data: bytes.Clone(framer.buf[:i])})
 		default:
 			frames = append(frames, bytes.Clone(framer.buf[:i]))
 		}

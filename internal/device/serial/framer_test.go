@@ -323,6 +323,23 @@ func TestFramerDiscardCarriesTheDiscardedBytes(t *testing.T) {
 			t.Errorf("Data = %q, want the 20 buffered bytes", discards[0].Data)
 		}
 	})
+
+	// A scanner sends a scan and its separator in one read, so this is how an
+	// oversize scan arrives: measured on the Symbol 05e0:1701, a 37-byte Data
+	// Matrix with max_frame_bytes 10 was discarded without its data.
+	t.Run("oversize, its separator in the same read", func(t *testing.T) {
+		framer := newFramer(t, "\r\n", 10)
+		_, discards := feed(t, framer, "P00TKME1FNEG6DGXZCWWXQUL4CCJ6996JVV\r\n")
+		if len(discards) != 1 || discards[0].Reason != DiscardOversize {
+			t.Fatalf("discards = %v, want one oversize", discards)
+		}
+		if string(discards[0].Data) != "P00TKME1FNEG6DGXZCWWXQUL4CCJ6996JVV" {
+			t.Errorf("Data = %q, want the 35-byte payload without its separator", discards[0].Data)
+		}
+		if discards[0].Bytes != len(discards[0].Data) {
+			t.Errorf("Bytes = %d but Data is %d bytes", discards[0].Bytes, len(discards[0].Data))
+		}
+	})
 }
 
 // Discarded bytes must not outlive the framer's buffer reuse.
