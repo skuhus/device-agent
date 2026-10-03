@@ -432,6 +432,9 @@ Depends on: T7, T8, T9, T11.
 
 ### T12. Documentation
 
+Status: done on branch gh-17-docs, not yet merged. docs/spikes/m0-mqtt5.md also
+named the v1 topics as the agent's, and now says it is a record of v1's.
+
 Motivation. After phase 1, DESIGN.md describes topics and a supervisor that no
 longer exist, and README.md describes the v1 scanner agent: a retained status,
 a heartbeat, an audit log and the scan topic. Two design documents would
