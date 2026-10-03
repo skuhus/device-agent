@@ -390,6 +390,9 @@ Depends on: T5, T6.
 
 ### T10. End-to-end test in CI
 
+Status: done on branch gh-15-e2e, not yet merged. `make test-integration` passes
+against the development broker; the CI job runs once the branch is pushed.
+
 Motivation. The worst v1 defects were found only by running the agent against a
 broker by hand. On SIGTERM the connection was torn down before the offline
 status could be sent, and the broker published the will instead (DESIGN.md,
