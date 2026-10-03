@@ -1206,8 +1206,8 @@ A misconfigured station is fixed in one pass rather than one restart per typo.
 ### One name for one thing
 
 v1 was named skuhus-device-serial-scanner rather than skuhus-agent, the name
-the specification uses in sections 9, 10 and 13.2. The repository used
-skuhus-agent until it produced a release carrying two names for one thing:
+the specification uses in sections 9, 10 and 13.2. Its binary was called
+skuhus-agent until a release carried two names for one thing:
 `skuhus-agent-0.1.0-linux-arm64.tar.gz` beside an image at
 `ghcr.io/skuhus/device-serial-scanner`. And skuhus-agent names a category: on a
 station that also ran a printer agent, `/etc/skuhus-agent/`, the
