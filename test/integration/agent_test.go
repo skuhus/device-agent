@@ -14,7 +14,6 @@
 package integration
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -171,6 +170,20 @@ func TestReadingsRecordedWhenTheBrokerIsGone(t *testing.T) {
 	}
 	if rx := run.matching(func(m message) bool { return m.topic == run.deviceTopic("rx") }); len(rx) != 0 {
 		t.Errorf("%d readings reached the broker after it was taken away", len(rx))
+	}
+}
+
+// records reads the log while the agent may be writing it: a last line
+// without its newline is a record still being written, not a broken one, and
+// waiting on records must not fail on it.
+func TestRecordsLeavesAHalfWrittenRecord(t *testing.T) {
+	agent := &agentProcess{logFile: filepath.Join(t.TempDir(), "agent.log")}
+	body := `{"msg":"rx published","seq":1}` + "\n" + `{"msg":"rx publ`
+	if err := os.WriteFile(agent.logFile, []byte(body), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if got := agent.records(t, "rx published"); len(got) != 1 || got[0]["seq"] != float64(1) {
+		t.Errorf("records = %v, want the one complete record", got)
 	}
 }
 
@@ -408,24 +421,27 @@ func (agent *agentProcess) wait(t *testing.T, timeout time.Duration) int {
 	return agent.cmd.ProcessState.ExitCode()
 }
 
-// records returns the log file's records with message msg.
+// records returns the log file's records with message msg. It reads the file
+// while the agent may still be writing it, so a last line without its newline
+// is a record half written, and is left for the next read.
 func (agent *agentProcess) records(t *testing.T, msg string) []map[string]any {
 	t.Helper()
-	file, err := os.Open(agent.logFile)
+	body, err := os.ReadFile(agent.logFile)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
-		t.Fatalf("open the log: %v", err)
+		t.Fatalf("read the log: %v", err)
 	}
-	defer file.Close()
+	lines := bytes.Split(body, []byte("\n"))
+	// The element after the last newline is empty, or a record still being
+	// written.
+	lines = lines[:len(lines)-1]
 	var out []map[string]any
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1<<20)
-	for scanner.Scan() {
+	for _, line := range lines {
 		var record map[string]any
-		if err := json.Unmarshal(scanner.Bytes(), &record); err != nil {
-			t.Fatalf("log line is not JSON: %v\n%s", err, scanner.Text())
+		if err := json.Unmarshal(line, &record); err != nil {
+			t.Fatalf("log line is not JSON: %v\n%s", err, line)
 		}
 		if record["msg"] == msg {
 			out = append(out, record)
