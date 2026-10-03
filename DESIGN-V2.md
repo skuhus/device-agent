@@ -998,9 +998,11 @@ docs/scanners/symbol-05e0-1701.md.
 
 A cheap defence exists and is **not implemented**: a frame whose first byte
 belongs to a common separator that is not part of the configured one is almost
-certainly this mismatch. Whether such a frame should be dropped or published
-with a warning is an operational decision rather than a technical one, so it is
-recorded here rather than chosen unilaterally.
+certainly this mismatch. v1 left open whether such a frame should be dropped
+or published with a warning, as an operational decision rather than a
+technical one. v2 settles it: stray bytes are fixed in the configuration or by
+IT, and the agent does not compensate for them ("Reading: rx"), so the defence
+is not built.
 
 ### The backoff resets on session duration, not on a successful open
 
