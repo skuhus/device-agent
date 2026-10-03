@@ -98,14 +98,15 @@ devices:
     max_frame_bytes: 4096
 
     # A partial frame idle for longer than this is discarded. Set it above any
-    # gap that occurs inside a real burst; see DESIGN.md.
+    # gap that occurs inside a real burst; see DESIGN-V2.md, "Choosing
+    # inter_char_timeout".
     inter_char_timeout: 200ms
 
     # How long the broker may hold a message about this device, a reading, an
     # event or a tx result, before it discards it instead of delivering it
     # late. A reading is perishable: one delivered ten minutes late lands in a
     # pick that has ended. In whole seconds, because MQTT carries it so. Read
-    # DESIGN.md, "Scans are perishable", before raising it.
+    # DESIGN-V2.md, "Scans are perishable", before raising it.
     message_expiry: 30s
 
     # Optional. Carried in every message about this device, so that the
@@ -116,7 +117,7 @@ devices:
     # There is no symbology setting. The agent publishes the complete frame
     # with only the separator removed, so any code identifier the scanner
     # prefixes stays in the payload for the upstream side to decode. See
-    # DESIGN.md, "The whole frame is the payload".
+    # DESIGN-V2.md, "The whole frame is the payload".
 
 delivery:
   # How long a message may wait for the broker's acknowledgement before it

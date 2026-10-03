@@ -242,7 +242,7 @@ func TestPTYFrameArrivesAcrossManyReads(t *testing.T) {
 //
 // What happens to a tail that arrives after the timeout depends on how long the
 // device stayed silent, and is pinned deterministically by the framer tests.
-// See DESIGN.md on choosing inter_char_timeout.
+// See DESIGN-V2.md, "Choosing inter_char_timeout".
 func TestPTYInterCharTimeoutDropsStalledFrame(t *testing.T) {
 	master, slave := newPTY(t)
 	present, onPresence := presenceChan()

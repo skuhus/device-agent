@@ -153,7 +153,7 @@ func (stopBits *StopBits) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-// Delivery bounds how long a reading waits for the broker. See DESIGN.md,
+// Delivery bounds how long a reading waits for the broker. See DESIGN-V2.md,
 // "Scans are perishable", before changing the defaults.
 type Delivery struct {
 	PublishTimeout Duration `yaml:"publish_timeout"`

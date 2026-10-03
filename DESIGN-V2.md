@@ -16,12 +16,13 @@ Every decision carries one marker:
   until it is marked Decided.
 - `[Open]` - needs a decision. The task that depends on it says so.
 - `[Deferred]` - agreed to be outside #4.
-- `[Carried over]` - a v1 decision that still holds. Its reasoning is in
-  DESIGN.md under the heading named.
+- `[Carried over]` - a v1 decision that still holds. Its reasoning is under
+  "Carried over from v1", in the section named.
 
-"Maintainer" means Pavel Kim in the #4 design discussion, with the date. File
-references are to commit f97c736, before the v2 rename moves the files.
-DESIGN.md is the v1 design; this document supersedes it where they disagree.
+"Maintainer" means Pavel Kim in the #4 design discussion, with the date. A file
+reference about v1 is to commit f97c736, before the v2 rename moved the files;
+one about v2 is to the tree. v1's design notes, DESIGN.md, were folded into
+"Carried over from v1" and removed (T12); they are at f97c736.
 
 ## Scope: a transport between a serial port and MQTT
 
@@ -46,7 +47,7 @@ The v1 read path is already device-neutral. The framer knows a terminator, a
 maximum frame size and an inter-character timeout
 (internal/device/serial/framer.go). The only scanner-specific text in the
 device layer is the assert_config warning (internal/device/serial/serial.go:212).
-The v1 envelope already carries the whole frame unmodified (DESIGN.md, "The
+The v1 envelope already carries the whole frame unmodified ("The
 whole frame is the payload"). The conversion is therefore mostly removal and a
 new topic and message layout, not new reading logic.
 
@@ -73,7 +74,7 @@ module path follows it: github.com/skuhus/device-agent, changed by T3 (#8).
 
 `[Carried over]` One name for the binary, the configuration directory, the log
 directory, the release assets, the container image and the account inside it
-(DESIGN.md, "The binary is skuhus-device-serial-scanner, not skuhus-agent").
+("One name for one thing").
 
 `[Decided]` That name is skuhus-device-agent. Source: maintainer, 2026-09-29.
 
@@ -112,7 +113,7 @@ A consumer takes every device at a station with a single-level wildcard:
 - The instance is in the path because a station-level status collided when two
   agents shared a station: one instance shutting down published a retained
   offline for a station whose other instance was running and scanning
-  (DESIGN.md, "instance_id, not host").
+  ("instance_id, not host").
 - The segment `agent` is reserved and rejected as a device id, so no device can
   be configured into the agent's topics.
 
@@ -187,7 +188,8 @@ on the broker supporting the property. Source: maintainer, 2026-09-29 (#23 Q4).
 `[Decided]` Each device in the configuration defines its port, its serial
 parameters and its separator. Source: maintainer, 2026-09-19.
 
-`[Carried over]` Framing rules, each with the measurement behind it in DESIGN.md:
+`[Carried over]` Framing rules, each with the measurement behind it under
+"Carried over from v1":
 
 - max_frame_bytes counts the payload and excludes the terminator
   ("max_frame_bytes is the payload size, excluding the terminator").
@@ -218,7 +220,7 @@ discard per scan, and no frames (docs/scanners/symbol-05e0-1701.md:32).
 
 A separator configured as only part of what the device sends, such as CR for a
 device that sends CRLF, is a different failure. Frames still come out, and the
-stray byte is discarded or prepended to the next reading (DESIGN.md, "A CR/CRLF
+stray byte is discarded or prepended to the next reading ("A CR/CRLF
 mismatch is the one wrong terminator that is not loud").
 
 `[Decided]` That failure is detected upstream from the counters, not in the
@@ -228,13 +230,13 @@ Source: maintainer, 2026-09-29 (#23 Q5).
 `[Deferred]` Framing for devices that send no separator, ended by a timeout, a
 size, or both: #7. Source: maintainer, 2026-09-29, as no device in use needs it.
 v1 discards on both triggers because publishing the tail of a frame produced
-plausible, wrong readings when a CRLF device was configured as CR (DESIGN.md, "A
+plausible, wrong readings when a CRLF device was configured as CR ("A
 CR/CRLF mismatch is the one wrong terminator that is not loud"). #7 records the
 constraints: chosen per device, never the default where a separator is
 configured, and the size semantics settled with a device on the bench.
 
 `[Carried over]` rx is published at QoS 1 with a message expiry, through a
-bounded buffer, and is never retried or replayed (DESIGN.md, "Scans are
+bounded buffer, and is never retried or replayed ("Scans are
 perishable" and "A failed publish is not retried").
 
 `[Decided]` The message expiry becomes a per-device setting. v1 has one
@@ -515,8 +517,7 @@ is published with what remains of its expiry. The keepalive counts every event,
 published or not.
 
 `[Decided]` Readings do not wait. A reading while the connection is down fails
-at once and is recorded in the log file with its payload, as before (DESIGN.md,
-"Scans are perishable"): a reading that arrives late can make a consumer act on
+at once and is recorded in the log file with its payload, as before ("Scans are perishable"): a reading that arrives late can make a consumer act on
 a scan the operator has already repeated. Source: maintainer, 2026-10-02 (#13
 Q2).
 
@@ -870,7 +871,9 @@ maintainer, 2026-09-29 (#11 Q5).
 
 ## Carried over from v1
 
-Still in force. The reasoning is in DESIGN.md under the heading named.
+Still in force. Each decision names the section below that gives its
+reasoning. The sections come from v1's DESIGN.md (T12); where v2 changed a fact
+or a name, the section says so.
 
 - Configuration loading rejects unknown keys and unknown environment variables,
   and validation reports every problem in one pass ("Loading is strict in both
@@ -895,10 +898,340 @@ Still in force. The reasoning is in DESIGN.md under the heading named.
 - The container image is Alpine, runs as uid 65532, declares no VOLUME, and
   takes the device as a resolved path given to --device, with --group-add for
   the device's group (README.md, "Container").
-- Identifiers name what they hold ("Naming").
+- Identifiers name what they hold ("Identifiers say what they hold").
 
 `[Decided]` The release workflow pushes the image to GHCR. Source: maintainer,
 2026-09-29.
+
+### Scans are perishable: this agent does not do offline sync
+
+The project principle that offline is the normal case does not apply to this
+agent, and that is deliberate. It belongs to handheld terminals, which own a
+session and can reconcile later; this agent owns no session. A reading has no
+meaning without the session bound to the station at the time, and one buffered
+for ten minutes and replayed lands in a pick that has already ended: a corrupt
+input, not a late sync (device-agent-spec.md, section 6).
+
+The consequences, in the configuration and checked when it loads:
+
+- Each device's `message_expiry`, 30 s by default, is the MQTT message expiry
+  of its readings, so the broker discards a stale reading rather than a
+  consumer having to (#23 Q6).
+- `delivery.publish_timeout`, 2 s by default, may not exceed any device's
+  `message_expiry`: telling an operator that a reading failed after the broker
+  had already expired it is worse than useless.
+- `delivery.buffer_size`, 64 by default, is a bound, not a target. When it is
+  full the reader blocks. A person cannot scan faster than the publisher
+  drains, so blocking shows a stalled broker instead of hiding it behind a
+  growing queue.
+- Nothing pending survives a restart.
+
+The log is the forensic record, not a replay source. A reading the broker did
+not take is recorded with its data, and only such a reading: a delivered one is
+upstream, an undelivered one exists nowhere else, and recording its length
+alone is how a station loses data in silence. In v1 this record was the audit
+log.
+
+Device events are the one thing v2 lets wait for the connection, within their
+expiry (#13 Q1). Readings do not wait (#13 Q2).
+
+Do not "fix" any of this by applying the offline-first principle uniformly.
+
+### max_frame_bytes is the payload size, excluding the terminator
+
+The specification does not say which. The payload was chosen so that the number
+means the same whatever the separator is: switching a device from CR to CRLF
+does not change how long a reading may be.
+
+The framer tolerates `len(separator) - 1` bytes past the limit before it calls a
+frame over size, so a payload of the maximum length whose separator has only
+partly arrived is not rejected one read early (internal/device/serial/framer.go).
+
+### Any discard resynchronises to the next terminator
+
+Resuming mid-frame after a discard emits the tail of a broken frame as if it
+were a short reading. That is silent corruption: a plausible-looking payload no
+barcode ever carried. Dropping the remainder is a visible loss the operator can
+act on, for the reason in "Scans are perishable": an operator who knows a scan
+did not land scans again.
+
+Resynchronisation ends at the next separator, or when the device falls silent
+for one inter-character timeout.
+
+### Choosing inter_char_timeout
+
+The timeout ends resynchronisation as well as starting it, and that has a limit
+worth stating. If a device stalls mid-frame for longer than one timeout, falls
+silent, and then sends the rest of the frame, the tail is taken for a new frame
+and can be published as a short payload. The information needed to tell that
+tail from a genuine new scan does not exist at this layer.
+
+The mitigation is the timeout's value. At 9600 baud a byte takes about a
+millisecond, and a scanner sends a scan as one continuous burst, so the 200 ms
+default is roughly 200 byte-times of slack. Set it above any gap that occurs
+inside a real burst on the hardware in question, and it will not fire mid-frame.
+
+The alternative, resynchronising until a separator arrives however long that
+takes, was rejected because it makes the wrong-separator failure quiet. A
+scanner sending LF where the configuration says CR would emit one warning and
+then discard every later scan at DEBUG. Ending resynchronisation on silence
+produces one warning per scan, the loud failure that the manual acceptance
+checklist of device-agent-spec.md, section 11, expects. In v2 each of those
+discards is also an event and a count in the keepalive, which is how an
+unmatched separator is seen from outside the station ("Reading: rx").
+
+### A CR/CRLF mismatch is the one wrong terminator that is not loud
+
+Measured on a Symbol 05e0:1701, not reasoned about. When the device sends CRLF
+and the configuration says CR, the frame splits correctly on the CR and an
+orphaned `0x0A` is left buffered. Scanning slowly, the inter-character timeout
+discards it and nothing is lost. Scanning faster than the timeout, the stray
+byte is still buffered when the next scan arrives and is **prepended to it**,
+producing a frame that is published with `text_valid: true` and cannot be told
+from a genuine barcode. The same capture also lost a scan to a resync discard
+caused by the previous stray byte.
+
+So this mismatch corrupts under load and looks fine at a desk, which is the
+failure device-agent-spec.md, section 4.5, describes, and the reason a
+per-model configuration sheet is not optional. The full capture is in
+docs/scanners/symbol-05e0-1701.md.
+
+A cheap defence exists and is **not implemented**: a frame whose first byte
+belongs to a common separator that is not part of the configured one is almost
+certainly this mismatch. Whether such a frame should be dropped or published
+with a warning is an operational decision rather than a technical one, so it is
+recorded here rather than chosen unilaterally.
+
+### The backoff resets on session duration, not on a successful open
+
+device-agent-spec.md, section 4.4, says not to spin. Resetting the reopen
+backoff whenever the port opened and read at least once does spin: a failing
+cable lets the port enumerate, open and return one read timeout before it
+drops, so the backoff returns to its initial value on every cycle. Measured in
+v1 against an injected failing port, that produced 87 reopens a second,
+indefinitely.
+
+The backoff resets only when a session lasted at least `StableAfter`, which
+defaults to the backoff ceiling of 30 s (internal/device/serial/serial.go). A
+device that has been up for half a minute counts as healthy and reconnects
+promptly; one that flaps backs off to the ceiling. The same measurement
+produced 7 reopens per second and climbing.
+
+`StableAfter` is an internal option, not a configuration key: it is a tuning
+constant rather than a per-station decision.
+
+### The agent does not ask whether the clock is synchronised
+
+`agent_ts` is the host's clock in UTC, and nothing in a message vouches for it.
+An early v1 version queried `adjtimex` on Linux and published a `clock_synced`
+flag; that was removed, with its package.
+
+Knowing whether a clock is disciplined is not this agent's job. It is a
+transport (device-agent-spec.md, section 1), the ingest side has its own clock
+to compare against, and a flag that could only be answered on Linux invited
+consumers to trust a timestamp because one platform said so. Hosts without an
+RTC still boot with a fictional wall clock; that is a fleet provisioning
+problem.
+
+### The whole frame is the payload
+
+`raw_b64` is the complete frame with only the separator removed. Nothing is
+stripped.
+
+The alternative was to strip a code identifier and report it. Real hardware
+ruled that out. A Symbol 05e0:1701 prefixes every scan with a Symbol Code
+Character whose length is not constant: one byte for the 1D symbologies, three
+for the 2D ones, told apart only by whether the first byte is `P`. A fixed
+prefix length cannot express that, and a substring search is worse than
+useless: `DAP00838418592059` is a Code 128 whose data begins `AP00`, so matching
+on `P00` anywhere would mangle it.
+
+Delimiting the identifier therefore needs a per-vendor table, and that table is
+domain knowledge a transport must not carry ("Scope"). Upstream already holds
+per-device definitions and can decode the identifier along with everything
+else, from a payload that has not been altered on the way. The table for the
+scanner in hand is in docs/scanners/symbol-05e0-1701.md, for the upstream side.
+
+v1 kept a `symbology` field, always null, because the specification's payload
+had one; v2 drops it ("rx").
+
+### The broker connection outlives the run context
+
+device-agent-spec.md, section 10, shuts down on SIGTERM by draining and
+exiting, and the agent ends that sequence with its offline message and a clean
+DISCONNECT. Dialling the connection with the context that the signal cancels
+breaks both: measured in v1 against the development broker, the offline status
+failed with "no connection available" and the broker delivered the will
+instead, reporting a crash where there had been an orderly stop.
+
+The connection therefore has its own context, cancelled after the core returns.
+The shutdown order is: the keepalive stops, the devices stop, the buffers
+drain, the offline message goes out, DISCONNECT, and only then is the
+connection context cancelled (internal/core/core.go, Run). The end-to-end test
+checks it (T10).
+
+### The shutdown drain is bounded at 5 seconds
+
+A frame already in the buffer gets its full `publish_timeout`, but the drain as
+a whole stops after `DefaultDrainTimeout` (internal/core/core.go). Without a
+bound, a full buffer against an unresponsive broker holds the process open for
+`buffer_size` times `publish_timeout`, which at the defaults is over two minutes
+spent delivering readings whose sessions have ended ("Scans are perishable").
+What is left is recorded in the log as dropped, with its data, not discarded
+silently. Device events still waiting for the connection end at the same
+deadline.
+
+This is an internal constant rather than a configuration key: it is a tuning
+value.
+
+### Shutdown does not wait on the network without a bound
+
+Disconnecting writes a DISCONNECT packet, which means writing to a socket that
+may be attached to a network that has gone away. The disconnect is therefore
+given `publish_timeout` rather than an unbounded context: by then the agent has
+published everything it had, and an unbounded wait turns "the WAN dropped" into
+"the service will not stop".
+
+Measured in v1 against a frozen broker, its container paused so that the socket
+stays established and nothing is refused: a SIGTERM took two seconds, the
+offline status timing out at its own bound and the disconnect returning.
+
+### A failed publish is not retried
+
+Retrying is what the delivery semantics of device-agent-spec.md, section 6,
+rule out. By the time a retry lands the reading is stale, and the operator who
+sees no confirmation scans again. The failure is logged with the reading's data
+and counted: the keepalive's `publish_failures` shows a station that is reading
+but not delivering, without anyone reading its log.
+
+autopaho's publish queue is left nil for the same reason
+(internal/transport/mqtt/client.go). With a queue, a publish made while
+disconnected is accepted and sent on reconnection, which is precisely the
+offline replay this agent must not do.
+
+### device_open, not device_present
+
+The flag says one thing only: this agent holds the device's port open. It is
+true once the port opens, and false when an open fails, the port is lost, or
+the agent closes it (internal/core/core.go, count).
+
+"Present" reads as a statement about the hardware, and would be wrong in the
+case that matters most. A scanner that is plugged in and enumerated but held by
+another process, or refused by permissions, is present and unusable; reporting
+it as present hides exactly the failure an operator is looking for. What the
+agent knows is whether it has the port, so that is what the field says.
+
+### instance_id, not host
+
+device-agent-spec.md, section 5.4, carries `host`, and a hostname is the wrong
+identifier: it is not unique across a fleet, it changes under DHCP, and it
+cannot tell apart two agents on one machine.
+
+`instance_id` is `identity.instance`, defaulting to `identity.station`, and it
+is the MQTT client id. It can be set because a client id must be unique per
+broker connection: two processes sharing one disconnect each other in a loop.
+So the same value names the agent in every message and names its connection on
+the broker, and `rabbitmqctl list_mqtt_connections` maps straight onto the
+messages.
+
+The machine name is not lost. It is an attribute of every log record, where
+"which box is this" is the question being asked, and it is kept out of the
+messages, where it never identified anything.
+
+v1's topics stopped at the station, so two instances at one station shared
+their status topic. Measured: a second instance shutting down published a
+retained `offline` for a station whose first instance was still running and
+scanning. v2 puts the instance into the agent's topic,
+`agent/<instance>/status` ("Topics").
+
+### Credentials cannot travel in the broker URL
+
+`broker.url` carrying user information is a validation error, not a supported
+way to authenticate. A URL is visible in the process list, in every log line
+that names the broker, and in a configuration file pasted into a ticket, which
+is the whole reason device-agent-spec.md, section 8, puts credentials in a mode
+0600 file. The error does not quote the URL back, because that would put the
+password into the output of whoever ran `validate`.
+
+As a second line, `Broker.RedactedURL` is what the log and the `validate`
+summary print (internal/config/config.go).
+
+### The credentials file is key=value
+
+The specification names `broker.credentials_file` but not its format. It is
+`username=` and `password=` lines, with `#` comments, rather than two bare
+lines, so that a file edited by hand cannot silently swap the two. The password
+is taken verbatim after the first `=`: a password may legitimately end in a
+space, and trimming one produces an authentication failure that reads as a
+broker fault (internal/config/credentials.go). `SH_DEV_AGENT_MQTT_USERNAME` and
+`SH_DEV_AGENT_MQTT_PASSWORD` override the file.
+
+They name MQTT rather than the broker because that is what they authenticate.
+The configuration section stays `broker:`, so the environment mixes both names:
+`SH_DEV_AGENT_BROKER_URL` and four other variables name the broker.
+
+### Loading is strict in both directions
+
+An unknown key in the configuration file and an unrecognised `SH_DEV_AGENT_*`
+variable are both fatal. A misspelled setting that is silently ignored leaves a
+station running a value the operator believes they changed, and the fleet then
+disagrees with its own configuration management. A key or variable that an
+earlier release read and 2.0.0 does not is refused with its replacement named
+(T5).
+
+Devices are not settable from the environment. A list does not map onto flat
+variables without inventing an indexing scheme.
+
+### Validation reports every problem, not the first
+
+A misconfigured station is fixed in one pass rather than one restart per typo.
+
+### Checks that exist because of a specific failure
+
+- A `separator` containing a backslash is rejected, with the YAML quoting
+  explained. `separator: '\r'` in single quotes is the two characters backslash
+  and r, and produces a device that frames nothing and logs a timeout per scan.
+- `/dev/tty.*` is rejected wherever it appears, not only on macOS, and the error
+  names the `/dev/cu.*` twin. A configuration written for a Mac fails
+  validation on the CI machine too.
+- `/dev/ttyACM<n>` and its kind warn rather than fail. They work; they move
+  between reboots and with replug order.
+- A `credentials_file` readable by group or other is rejected. Credentials
+  everyone on the host can read are not per-station credentials.
+- `delivery.publish_timeout` longer than any device's `message_expiry` is
+  rejected ("Scans are perishable").
+
+### One name for one thing
+
+v1 was named skuhus-device-serial-scanner rather than skuhus-agent, the name
+the specification uses in sections 9, 10 and 13.2. The repository used
+skuhus-agent until it produced a release carrying two names for one thing:
+`skuhus-agent-0.1.0-linux-arm64.tar.gz` beside an image at
+`ghcr.io/skuhus/device-serial-scanner`. And skuhus-agent names a category: on a
+station that also ran a printer agent, `/etc/skuhus-agent/`, the
+`SKUHUS_AGENT_*` environment, the log directory, the system user, the systemd
+unit and the process in `ps` would all have collided.
+
+So one name is used for the binary, the configuration directory, the log
+directory, the release assets, the container image and the account inside it.
+v2's name is skuhus-device-agent, with the environment prefix SH_DEV_AGENT_
+("Naming").
+
+### Identifiers say what they hold
+
+Receivers are `agent`, `client`, `framer`, `presence` rather than `a`, `c`,
+`f`, `p`, and locals are named for their contents rather than for their type's
+first letter. This costs a few characters a line and pays for itself the first
+time someone reads a function they did not write. The exceptions are `err`,
+`ok`, `ctx` and `t *testing.T`, which are read as punctuation rather than as
+names.
+
+Renaming has one hazard worth recording, because it happened in v1: a
+mechanical rename collided with an existing variable in `Validate`, turning
+`problems, warning := validateBroker(...)` followed by
+`append(problems, problems...)` into a function that discarded every problem
+found so far. It compiled. The tests caught it, which is the argument for tests
+that assert on rejections and not only on acceptances.
 
 ## Logging: one common log
 
@@ -920,7 +1253,7 @@ attribute is dropped. Source: maintainer, 2026-09-29 (#23 Q10).
 
 `[Carried over]` Every rx and tx message gets a record of what happened to it,
 and the record carries the payload when the broker did not accept the message
-(DESIGN.md, "Scans are perishable"). In v1 this was the audit log.
+("Scans are perishable"). In v1 this was the audit log.
 
 A reading's record is its line in the log: `rx published` at INFO, `rx publish
 failed` at ERROR, `rx dropped` at WARN, or, if it could not be encoded, `rx
@@ -934,7 +1267,10 @@ data; a published one and a discard warning carry it only with log_payloads.
 The configuration's warnings, and the error that stops the agent, are in the
 log as well, once it exists. A failure to rotate the log file is reported on
 stderr, and writing goes on in the live file past its limit until the cause is
-cleared.
+cleared. A record that cannot be written is reported on stderr too, and the
+agent goes on reading: a station that cannot write its log is degraded, and one
+that stops because a disk is full is out of service, which is worse for the
+people using it.
 
 The connection library logs its own lines through the same log. Once the agent
 has closed the connection, the library's lines are discarded: it cannot tell
@@ -951,8 +1287,9 @@ combination that suits it. Source: maintainer, 2026-09-29 (#23 Q11).
 logs, if anywhere, is the operator's business. Source: maintainer, 2026-09-29 (#23 Q11a).
 
 `[Decided]` Records at INFO and above are flushed to disk as they are written,
-as the audit log was (DESIGN.md, "The audit log is flushed per record"). They
-include every delivery outcome. DEBUG records are not flushed individually,
+as v1's audit log was, and for its reason: a station loses power without
+warning, and a record that ends several readings before the lights went out
+cannot answer the question it exists for. They include every delivery outcome. DEBUG records are not flushed individually,
 because at DEBUG every read from the port is a record. Chosen at the
 maintainer's request (#23 Q12).
 
@@ -997,7 +1334,7 @@ comes across first:
 - the framer and its tests, including the real capture in
   internal/device/serial/testdata;
 - the configuration validation rules, each of which exists because of a specific
-  failure (DESIGN.md, "Checks that exist because of a specific failure");
+  failure ("Checks that exist because of a specific failure");
 - the transport's connection handling: bounded disconnect, connection lifetime
   independent of the run context, no publish queue;
 - the measurements in docs/.

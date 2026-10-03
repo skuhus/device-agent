@@ -194,7 +194,7 @@ keepalive interval, default 15 s, and the number of missed keepalives after
 which a consumer treats the agent as gone, default 3 (#11 Q7).
 
 Keep: strict loading of keys and environment variables; validation that reports
-every problem at once; the credential rules; every check listed in DESIGN.md,
+every problem at once; the credential rules; every check listed in DESIGN-V2.md,
 "Checks that exist because of a specific failure". Rewrite config.sample.yaml.
 
 Intended result. A table-driven test for every rejection, asserting the message
@@ -395,10 +395,10 @@ against the development broker; the CI job runs once the branch is pushed.
 
 Motivation. The worst v1 defects were found only by running the agent against a
 broker by hand. On SIGTERM the connection was torn down before the offline
-status could be sent, and the broker published the will instead (DESIGN.md,
-"The broker connection outlives the run context"). A failed scan left nothing
-but its length in the audit log, until f97c736 (gh-1). The integration job the
-specification asks for (section 11) was never built.
+status could be sent, and the broker published the will instead
+(DESIGN-V2.md, "The broker connection outlives the run context"). A failed scan
+left nothing but its length in the audit log, until f97c736 (gh-1). The
+integration job the specification asks for (section 11) was never built.
 
 Work.
 - An integration test, behind the build tag `integration`, that runs the
