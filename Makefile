@@ -54,6 +54,7 @@ help:
 	@echo "broker-logs    tail its log"
 	@echo "consume        subscribe and print what reaches the broker"
 	@echo "test-broker    publish the v2 messages through the broker, check each filter and the users' topic permissions"
+	@echo "test-integration  run the agent against the broker and a pseudo-terminal, end to end"
 	@echo
 	@echo "spike-brokerinfo   what a broker is, and which MQTT levels it answers"
 	@echo "spike-mqtt5        the M0 property spike; see docs/spikes/m0-mqtt5.md"
@@ -243,6 +244,16 @@ test-broker: caches network
 	$(GO_NET) env TEST_BROKER=$(BROKER) TEST_MQTT_USER=$(MQTT_USER) TEST_MQTT_PASS=$(MQTT_PASS) \
 		TEST_INGEST_USER=$(INGEST_USER) TEST_INGEST_PASS=$(INGEST_PASS) \
 		go test -count=1 -run Broker -v ./internal/wire/
+
+# The agent's binary against the broker and a pseudo-terminal device, end to
+# end (PLAN-V2.md, T10). The tag keeps it out of make check, which needs no
+# broker, so it is vetted here with the tag.
+.PHONY: test-integration
+test-integration: caches network
+	$(GO_NET) sh -c 'go vet -tags integration ./test/integration/ && \
+		TEST_BROKER=$(BROKER) TEST_MQTT_USER=$(MQTT_USER) TEST_MQTT_PASS=$(MQTT_PASS) \
+		TEST_INGEST_USER=$(INGEST_USER) TEST_INGEST_PASS=$(INGEST_PASS) \
+		go test -count=1 -race -tags integration -v ./test/integration/'
 
 .PHONY: spike-brokerinfo
 spike-brokerinfo: caches network
