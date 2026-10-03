@@ -317,21 +317,22 @@ func (r *run) matching(match func(message) bool) []message {
 	return out
 }
 
+// waitFor waits for a matching message and returns the first. It does not
+// count them: a keepalive, for one, arrives every interval.
 func (r *run) waitFor(t *testing.T, what string, match func(message) bool) message {
 	t.Helper()
-	return r.waitForCount(t, what, 1, match)[0]
+	waitUntil(t, what, 30*time.Second, func() bool { return len(r.matching(match)) > 0 })
+	return r.matching(match)[0]
 }
 
 // waitForCount waits for count matching messages, and fails the test if more
-// arrive within a moment, since every check here counts exact deliveries.
+// than count arrive within a moment: a reading published twice is a defect.
 func (r *run) waitForCount(t *testing.T, what string, count int, match func(message) bool) []message {
 	t.Helper()
 	waitUntil(t, what, 30*time.Second, func() bool { return len(r.matching(match)) >= count })
-	if count > 1 {
-		time.Sleep(500 * time.Millisecond)
-		if got := len(r.matching(match)); got != count {
-			t.Fatalf("%s: %d arrived, want exactly %d", what, got, count)
-		}
+	time.Sleep(500 * time.Millisecond)
+	if got := len(r.matching(match)); got != count {
+		t.Fatalf("%s: %d arrived, want exactly %d", what, got, count)
 	}
 	return r.matching(match)
 }
