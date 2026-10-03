@@ -219,8 +219,9 @@ close, so nothing new arrives; what is already framed is published, for at most
 5 seconds; the offline message goes out with reason `shutdown`; and only then
 does the connection close. A reading still buffered after those 5 seconds is
 recorded in the log as dropped, with its data, because a reading whose session
-has ended is not worth delivering late. A clean stop exits 0, an error 1, and a
-command line that is wrong 2.
+has ended is not worth delivering late. A clean stop exits 0. An unknown
+command or a positional argument exits 2, and any other error 1, a flag that
+does not exist included.
 
 Broker credentials come from `broker.credentials_file`:
 
