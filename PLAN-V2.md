@@ -433,18 +433,37 @@ Depends on: T7, T8, T9, T11.
 ### T12. Documentation
 
 Motivation. After phase 1, DESIGN.md describes topics and a supervisor that no
-longer exist, and README.md describes a scanner. Two design documents would
-disagree about the same product.
+longer exist, and README.md describes the v1 scanner agent: a retained status,
+a heartbeat, an audit log and the scan topic. Two design documents would
+disagree about the same product. DESIGN-V2.md borrows the reasoning for its
+carried-over decisions from DESIGN.md: 22 of DESIGN.md's headings are cited in
+the tree, all of them from DESIGN-V2.md.
 
 Work.
-- Rewrite README.md for the device agent: running, configuration, container,
-  topics, CI and release.
-- config.sample.yaml as T5 left it.
-- Move into DESIGN-V2.md the reasoning it currently borrows from DESIGN.md, then
-  remove DESIGN.md, leaving one design document.
+- Rewrite README.md for the device agent as built: what it is, building and
+  testing, the development broker, running, configuration, the container,
+  topics and messages, CI and release, field diagnosis. Keep what is still
+  true, such as the GitHub naming convention and the environment hazards, and
+  the headings DESIGN-V2.md cites: "Continuous integration" and "Container".
+- Move into DESIGN-V2.md the reasoning of every DESIGN.md heading cited in the
+  tree, under the same heading where it still holds, and say what v2 changed
+  where it does not. Then remove DESIGN.md, leaving one design document.
+- Point every citation of DESIGN.md at its new place: in DESIGN-V2.md,
+  PLAN-V2.md, README.md, config.sample.yaml and code comments. Two files keep
+  theirs. internal/config/testdata/config-0.3.0.yaml is the 0.3.0 sample as
+  shipped, and a test holds it unchanged. device-agent-spec.md is the
+  maintainer's document, which this work does not edit (T3).
 
-Intended result. Every citation in DESIGN-V2.md resolves inside the tree. No
-document describes the scan, cmd or heartbeat topics.
+Intended result.
+- Every citation in DESIGN-V2.md resolves: a section inside the tree, and a v1
+  file at commit f97c736, as the document's convention says.
+- Outside the two files named above, nothing cites DESIGN.md as a place to
+  read.
+- No document describes the scan, cmd or heartbeat topics as the agent's, except
+  device-agent-spec.md; DESIGN-V2.md and PLAN-V2.md name them only as what v2
+  replaced.
+- Every make target, subcommand, flag, configuration key and environment
+  variable that README.md names exists.
 
 Depends on: T3 to T11.
 
