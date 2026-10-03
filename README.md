@@ -1,8 +1,8 @@
 # device-agent
 
 Device agent that gives network access to devices physically attached to a host.
-It reads bytes from a serial port, USB-CDC or RS-232, and publishes each frame to
-an MQTT broker. Writing bytes received from MQTT to the port comes in 2.1.0.
+It reads bytes from a serial port, USB-CDC or RS-232, and publishes each frame
+to an MQTT broker. Writing bytes received from MQTT to the port comes in 2.1.0.
 
 It is a transport: it moves bytes and adds an envelope. It implements no device
 protocol; parsing, interpretation and relaying are done by services that

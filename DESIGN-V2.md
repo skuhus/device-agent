@@ -517,9 +517,9 @@ is published with what remains of its expiry. The keepalive counts every event,
 published or not.
 
 `[Decided]` Readings do not wait. A reading while the connection is down fails
-at once and is recorded in the log file with its payload, as before ("Scans are perishable"): a reading that arrives late can make a consumer act on
-a scan the operator has already repeated. Source: maintainer, 2026-10-02 (#13
-Q2).
+at once and is recorded in the log file with its payload, as before ("Scans
+are perishable"): a reading that arrives late can make a consumer act on a scan
+the operator has already repeated. Source: maintainer, 2026-10-02 (#13 Q2).
 
 The port opens before the broker connection on every start, so `port_opened` is
 one of the events that waits (measured in #13).
@@ -945,7 +945,8 @@ does not change how long a reading may be.
 
 The framer tolerates `len(separator) - 1` bytes past the limit before it calls a
 frame over size, so a payload of the maximum length whose separator has only
-partly arrived is not rejected one read early (internal/device/serial/framer.go).
+partly arrived is not rejected one read early
+(internal/device/serial/framer.go).
 
 ### Any discard resynchronises to the next terminator
 
@@ -1291,9 +1292,9 @@ logs, if anywhere, is the operator's business. Source: maintainer, 2026-09-29 (#
 `[Decided]` Records at INFO and above are flushed to disk as they are written,
 as v1's audit log was, and for its reason: a station loses power without
 warning, and a record that ends several readings before the lights went out
-cannot answer the question it exists for. They include every delivery outcome. DEBUG records are not flushed individually,
-because at DEBUG every read from the port is a record. Chosen at the
-maintainer's request (#23 Q12).
+cannot answer the question it exists for. They include every delivery
+outcome. DEBUG records are not flushed individually, because at DEBUG every
+read from the port is a record. Chosen at the maintainer's request (#23 Q12).
 
 Flushing makes the kernel put a record on the disk before the agent continues,
 so it survives a power cut. At the rate a person scans, that is a few writes per
