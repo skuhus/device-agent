@@ -391,25 +391,41 @@ Depends on: T5, T6.
 ### T10. End-to-end test in CI
 
 Motivation. The worst v1 defects were found only by running the agent against a
-broker by hand: the connection was torn down before the offline status could be
-sent (DESIGN.md, "The broker connection outlives the run context"), and a
-failed scan left nothing but its length in the audit log. The integration job
-the specification asks for (section 11) was never built.
+broker by hand. On SIGTERM the connection was torn down before the offline
+status could be sent, and the broker published the will instead (DESIGN.md,
+"The broker connection outlives the run context"). A failed scan left nothing
+but its length in the audit log, until f97c736 (gh-1). The integration job the
+specification asks for (section 11) was never built.
 
 Work.
-- An integration test, behind the build tag `integration`, that starts the
-  pseudo-terminal device and a RabbitMQ 4.x broker, runs the agent, subscribes,
-  and asserts what arrives.
-- A CI job that runs it. Start the broker in a step after checkout with
-  `docker run`, mounting dev/rabbitmq/: GitHub service containers start before
+- An integration test, behind the build tag `integration`, that runs the
+  agent's binary against a pseudo-terminal device and the RabbitMQ broker the
+  environment names, as `make test-broker` names one, subscribes, and asserts
+  what arrives. The agent reaches the broker through a relay inside the test,
+  so that the test can take the broker away mid-run without stopping a broker
+  someone else is using.
+- `make test-integration`, which vets the test with its tag and runs it against
+  the development broker.
+- A CI job that runs `make broker-up` and `make test-integration`. The broker is
+  started in a step after checkout: GitHub service containers start before
   checkout and cannot mount files from the repository, and the broker needs its
-  plugin list and definitions.
+  plugin list and definitions from dev/rabbitmq/. release.yml runs the same
+  gates before it tags, so it runs the integration test too.
 
-Intended result. The CI job passes and covers: frames published to the right
-topics; device events; the will after SIGKILL; a failed publish recorded in the
-common log with its payload when the broker is stopped mid-run.
+Intended result. The test passes against the development broker, and covers:
+- every frame published once on its device's rx topic, byte-exact, with the
+  device's message expiry;
+- device events: `port_opened`, and `port_lost` when the pseudo-terminal
+  closes;
+- a keepalive carrying the device's counters;
+- on SIGTERM, the offline message with reason `shutdown`, and no will;
+- on SIGKILL, the will;
+- with the broker taken away mid-run, every reading recorded in the common log
+  as failed, with its data.
 
-Depends on: T7, T8, T11.
+The CI job passes on the pull request, which is seen once the branch is pushed.
+
+Depends on: T7, T8, T9, T11.
 
 ### T12. Documentation
 
