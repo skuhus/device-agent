@@ -4,6 +4,12 @@ Spike 0 from `device-agent-spec.md` section 5.1. It answers whether the broker
 supports the MQTT 5 features M2 is designed around, by measuring them rather
 than by reading release notes.
 
+It is the record of a measurement made for v1, the scanner agent. "The agent"
+below is v1, with the scan, status, cmd and heartbeat topics and the retained
+status that the specification gives it. v2 replaced those topics (DESIGN-V2.md,
+"Topics"), and builds on these measurements (DESIGN-V2.md, "Broker
+constraints").
+
 Two programs, neither part of the agent: nothing under `cmd/skuhus-device-agent`
 imports them and `make build` does not build them. `spike/brokerinfo` says what
 a broker is and which protocol levels it answers; `spike/mqtt5` measures the
