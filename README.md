@@ -44,7 +44,7 @@ make              # the target list, with one line each
 make build        # dist/skuhus-device-agent for this platform
 make test         # go test -race across the agent's packages
 make check        # gofmt, go vet, go mod tidy and the tests; what CI runs
-make test-integration  # the agent's binary end to end against the local broker
+make test-integration  # the agent's binary end to end; needs make broker-up
 make cross        # all release targets: linux amd64/arm64/armv7/armv6, darwin amd64/arm64
 make image        # the container image, tagged with the version in source
 ```
