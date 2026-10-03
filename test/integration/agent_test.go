@@ -458,6 +458,10 @@ type relay struct {
 	target   string
 	mu       sync.Mutex
 	conns    []net.Conn
+	// isCut is set by cut. A connection accepted just before the cut, still
+	// dialling the broker while cut closed the others, checks it and closes
+	// itself, so that no connection outlives the cut.
+	isCut bool
 }
 
 func startRelay(t *testing.T, target string) *relay {
@@ -486,6 +490,12 @@ func (r *relay) accept() {
 			continue
 		}
 		r.mu.Lock()
+		if r.isCut {
+			r.mu.Unlock()
+			client.Close()
+			broker.Close()
+			return
+		}
 		r.conns = append(r.conns, client, broker)
 		r.mu.Unlock()
 		// Either side closing closes both, so that the broker sees an agent
@@ -507,6 +517,7 @@ func (r *relay) cut() {
 	r.listener.Close()
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.isCut = true
 	for _, conn := range r.conns {
 		conn.Close()
 	}
