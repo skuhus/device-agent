@@ -380,13 +380,14 @@ valid UTF-8. Add `--json` to print the rx message that would be published, and
 `--duration` to stop after a time. Diagnostic output goes to stdout and the
 structured log to stderr, so the two can be redirected separately.
 
-A device that frames nothing has a separator that does not match what it sends:
-misconfigured, or missing from the data, as from a scanner set up without a
-suffix. Its bytes are discarded instead, as `inter_char_timeout` when the
-device goes quiet. `probe --log-payloads` puts the discarded bytes on each
-discard's log line, which shows what the device does send. From outside the station, the keepalive shows the
-same device with `rx_bytes` and `discards.inter_char_timeout` rising while
-`rx_frames` stays flat.
+A separator that never appears in what the device sends, because it is
+misconfigured or missing from the data, as from a scanner set up without a
+suffix, means no reading is ever framed. The bytes are discarded instead, as
+`inter_char_timeout` when the device goes quiet. `probe --log-payloads` puts
+the discarded bytes on each discard's log line, which shows what the device
+does send. From outside the station, the keepalive shows such a device with
+`rx_bytes` and `discards.inter_char_timeout` rising while `rx_frames` stays
+flat.
 
 `probe` prints payload contents by design; `logging.log_payloads` does not apply
 to it.
