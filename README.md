@@ -241,8 +241,9 @@ default), to both, or to neither. Each record is a line of JSON with its
 severity and the function, file and line that produced it.
 
 Every reading gets a record of what became of it, whatever `logging.level`
-says: `rx published`, `rx publish failed` or `rx dropped`, with the message's
-`id`, the device and `seq`. A reading the broker did not take carries its data,
+says: `rx published`, `rx publish failed`, `rx dropped`, or `rx could not be
+encoded` if its message could not be built, each with the message's `id`, the
+device and `seq`. A reading the broker did not take carries its data,
 as `data_hex`, and as `data_text` when it is valid UTF-8, because nothing else
 holds it. With `logging.log_payloads` the data is on published readings and on
 discard warnings too. Records at INFO and above are flushed to disk as they are
