@@ -927,10 +927,10 @@ The consequences, in the configuration and checked when it loads:
 - Nothing pending survives a restart.
 
 The log is the forensic record, not a replay source. A reading the broker did
-not take is recorded with its data, and only such a reading: a delivered one is
-upstream, an undelivered one exists nowhere else, and recording its length
-alone is how a station loses data in silence. In v1 this record was the audit
-log.
+not take is always recorded with its data; a delivered one carries its data
+only when logging.log_payloads asks for it. A delivered reading is upstream, an
+undelivered one exists nowhere else, and recording its length alone is how a
+station loses data in silence. In v1 this record was the audit log.
 
 Device events are the one thing v2 lets wait for the connection, within their
 expiry (#13 Q1). Readings do not wait (#13 Q2).
