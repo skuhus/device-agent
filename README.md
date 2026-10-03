@@ -319,6 +319,10 @@ docker exec skuhus-device-agent sh -c 'id; ls -l /dev/scanner'
 docker run --rm --device /dev/ttyACM0 skuhus-device-agent:local probe --list
 ```
 
+The image declares no VOLUME: Docker would create an anonymous volume on every
+run that did not mount over it, and those accumulate unnoticed. The two paths
+that want mounting are in the command below.
+
 ### Running it
 
 ```
