@@ -1066,11 +1066,11 @@ breaks both: measured in v1 against the development broker, the offline status
 failed with "no connection available" and the broker delivered the will
 instead, reporting a crash where there had been an orderly stop.
 
-The connection therefore has its own context, cancelled after the core returns.
-The shutdown order is: the keepalive stops, the devices stop, the buffers
-drain, the offline message goes out, DISCONNECT, and only then is the
-connection context cancelled (internal/core/core.go, Run). The end-to-end test
-checks it (T10).
+The connection therefore has its own context, cancelled only after the core
+returns (cmd/skuhus-device-agent/run.go, runAgent). The core's shutdown order
+is: the keepalive stops, the devices stop, the buffers drain, the offline
+message goes out, then DISCONNECT (internal/core/core.go, Run). The end-to-end
+test checks it (T10).
 
 ### The shutdown drain is bounded at 5 seconds
 
