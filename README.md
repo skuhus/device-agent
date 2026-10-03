@@ -44,6 +44,7 @@ make              # the target list, with one line each
 make build        # dist/skuhus-device-agent for this platform
 make test         # go test -race across the agent's packages
 make check        # gofmt, go vet, go mod tidy and the tests; what CI runs
+make test-integration  # the agent's binary end to end against the local broker
 make cross        # all release targets: linux amd64/arm64/armv7/armv6, darwin amd64/arm64
 make image        # the container image, tagged with the version in source
 ```
@@ -236,8 +237,10 @@ feature branch -> pull request -> merge to master -> build -> tag -> release
 ```
 
 `ci.yml` guards pull requests: gofmt, `go vet`, a `go mod tidy` diff check, the
-race-detector tests, a cross-compile of every release target, and a container
-build that asserts the image reports the version in source.
+race-detector tests, the end-to-end test (`make broker-up` and `make
+test-integration`: the agent's binary against RabbitMQ and a pseudo-terminal),
+a cross-compile of every release target, and a container build that asserts the
+image reports the version in source.
 
 `release.yml` runs on every merge to master. It runs the same gates, builds all
 six targets and the image, and only then, if the version in
@@ -263,8 +266,8 @@ amd64/arm64:
 
 Actions are pinned to commit SHAs; a tag can be moved to point at other code.
 
-Not yet: golangci-lint, the Mosquitto integration job, and deb/rpm packaging
-with GoReleaser, which needs the `packaging/` files that are still M5.
+Not yet: golangci-lint, and deb/rpm packaging with GoReleaser, which needs the
+`packaging/` files that are still M5.
 
 ## Github naming convention
 

@@ -61,6 +61,26 @@ jobs:
       - name: coverage summary
         run: go tool cover -func=coverage.out | tail -1
 
+  # The agent's binary against the development broker and a pseudo-terminal
+  # device, end to end (PLAN-V2.md, T10). The broker is started after checkout
+  # rather than as a service container: service containers start before
+  # checkout, and the broker needs its plugin list and definitions from
+  # dev/rabbitmq/. Both targets run in Docker, as they do on a workstation.
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: start the development broker
+        run: make broker-up
+
+      - name: integration test
+        run: make test-integration
+
+      - name: broker log
+        if: failure()
+        run: make broker-logs
+
   # Cross-compiling on every pull request is cheap, and catches an arm-only
   # breakage before a tag rather than after one.
   build:

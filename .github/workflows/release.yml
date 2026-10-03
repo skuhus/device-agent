@@ -72,6 +72,17 @@ jobs:
       - name: test
         run: go test -race ./...
 
+      # The same end-to-end gate as ci.yml's integration job.
+      - name: start the development broker
+        run: make broker-up
+
+      - name: integration test
+        run: make test-integration
+
+      - name: broker log
+        if: failure()
+        run: make broker-logs
+
       # Every release target, so an arm-only breakage stops the release rather
       # than reaching a station.
       - name: build every target
