@@ -130,8 +130,11 @@ func run(broker, username, password, topic, id, sender string, data []byte, expi
 		return fmt.Errorf("connect to %s: %w", broker, err)
 	}
 	results := make(chan map[string]any, 16)
+	// Named after the tx, not the process: in a container every process is
+	// pid 1, and two senders sharing a client id disconnect each other.
+	clientID := "sendtx-" + id
 	client := paho.NewClient(paho.ClientConfig{
-		ClientID: fmt.Sprintf("sendtx-%d", os.Getpid()),
+		ClientID: clientID,
 		Conn:     conn,
 		OnPublishReceived: []func(paho.PublishReceived) (bool, error){
 			func(received paho.PublishReceived) (bool, error) {
@@ -144,7 +147,7 @@ func run(broker, username, password, topic, id, sender string, data []byte, expi
 		},
 	})
 	connack, err := client.Connect(ctx, &paho.Connect{
-		ClientID: fmt.Sprintf("sendtx-%d", os.Getpid()), KeepAlive: 30, CleanStart: true,
+		ClientID: clientID, KeepAlive: 30, CleanStart: true,
 		Username: username, UsernameFlag: true, Password: []byte(password), PasswordFlag: true,
 	})
 	if err != nil {
