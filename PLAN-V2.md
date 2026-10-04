@@ -490,41 +490,72 @@ Depends on: T2 to T12, T14, T16.
 
 ### T14. tx: receive and write
 
-Motivation. Printers are the main reason for writing (DESIGN-V2.md, "Scope").
+Motivation. Printers are the main reason for writing (DESIGN-V2.md, "Scope"),
+and 2.0.0 now releases writing (DESIGN-V2.md, "Version"). The bench printer is
+an Epson TM-T20III on RS-232 through an ATEN UC-232A adapter (PL2303), at 9600
+baud 8N1, measured on 2026-10-04 (docs/printers/epson-tm-t20iii.md).
 
 Two properties of go.bug.st/serial v1.8.0 shape this task. Its Write does not
 take the lock that Read and Close use and does not check whether the port is
-open (serial_unix.go:112-118, against Read at 59-61 and Close at 48-49). A write
+open (serial_unix.go:112-118, against Read at 59-62 and Close at 48-49). A write
 racing a close therefore reaches whatever descriptor now has that number. It
 also returns the result of a single write(2) and does not continue after a
 partial write.
 
+Two measurements on the bench printer settle what T14 left open:
+- `written` means the operating system accepted every byte, as DESIGN-V2.md,
+  "Writing: tx", decides. Drain is not used: on macOS with the PL2303 it
+  returned 2 ms after an 8281-byte job that needs 8.6 s on the line, so it does
+  not say the bytes left the wire either.
+- Flow control stays postponed (#5). The printer signalled nothing on DSR, CTS
+  or with XON/XOFF, and a 200-line job printed whole.
+
 Work.
-- Subscribe to each device's tx topic. Validate the message, including that its
-  id is a UUID; a malformed tx gets a failed result with a code and a text.
-- One writer per port, which only writes while it holds the port open under the
-  agent's own lock, and loops until every byte is written.
+- Subscribe to each device's tx topic at QoS 1 on every connection, since each
+  connection starts clean and keeps no subscription. Validate the message,
+  including that its id is a UUID; a malformed tx gets a failed result with a
+  code and a text.
+- One writer per port. The device's reader keeps owning the port, as now, and
+  the writer writes through the port the reader has open, under a lock that
+  Close also takes. It writes in chunks, taking the lock for each, so that a
+  close waits for one chunk rather than the whole tx, and loops until every
+  byte is written.
+- A tx that finds the port closed asks the reader to try opening it now,
+  rather than after its backoff, and counts that as an attempt. Two device
+  settings bound this: `tx_open_attempts`, default 3, and `tx_open_interval`,
+  default 1 s. Once writing has started, a failure is not retried: the result
+  reports the bytes written (#23 Q17, Q17a).
+- No attempt once the tx's message expiry has passed, taken from the MQTT
+  message expiry it was delivered with (#23 Q19); that tx gets `expired`. A tx
+  delivered without an expiry has no such limit.
 - Results as DESIGN-V2.md, "Message formats", lists them, each with its code,
-  text and detail keys.
+  text and detail keys. They go out through the device's event queue, so they
+  wait for the connection within the device's message expiry, as its events do
+  (#13 Q1), and keep their order.
 - A tx whose id belongs to a tx still queued or being written is rejected with
   `in_progress`, saying where that one stands and since when, and is not queued
   (#11 Q6). Until #28, this is also how a sender asks about a tx (#11 Q5).
-- Retry opening the port, up to the configured count and at the configured
-  interval, then fail the tx. Once writing has started, a failure is not
-  retried: the result reports the bytes written (#23 Q17, Q17a).
+- The keepalive's `tx_written` counts `written` results, and `tx_failed` counts
+  `failed` ones.
 - No gap between writes and no read or write priority: the line is full-duplex
   and reading continues throughout (#23 Q16a).
-- Decide whether "written" is reported after write(2) accepts the bytes or after
-  Drain (the library exposes tcdrain as Port.Drain) confirms they left the
-  buffer. The maintainer's definition, bytes written to the port, fits either;
-  Drain is what makes it true of the wire.
-- Record tx outcomes in the common log, with the payload for failures.
-- Reading continues while writing.
+- Record every tx outcome in the common log, as a reading's is: the data on a
+  failure always, and on a written tx with log_payloads.
+- A development tool that publishes a tx as `ingest`, `make send-tx`, so that
+  writing can be watched with `make consume` as reading can.
 
-Intended result, with the pseudo-terminal harness: bytes arrive at the other end
-intact; many concurrent tx messages arrive as whole, uninterleaved blocks; a tx
-to an absent port fails with its error class; every tx id gets a result; a write
-racing a close fails and never reaches another descriptor.
+Intended result.
+- With the pseudo-terminal harness:
+  - bytes arrive at the other end intact;
+  - many concurrent tx messages arrive as whole, uninterleaved blocks;
+  - a tx to an absent port fails with its error class after
+    `tx_open_attempts`;
+  - every tx id gets a result;
+  - a write racing a close fails and never reaches another descriptor.
+- The end-to-end test publishes a tx through the broker and checks the bytes at
+  the pseudo-terminal and the `accepted` and `written` results.
+- On the bench, a job sent with `make send-tx` prints whole on the
+  TM-T20III, and gets `accepted`, then `written`.
 
 Depends on: T7 to T12.
 
