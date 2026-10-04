@@ -1,8 +1,12 @@
 package wire
 
 import (
+	"bytes"
 	"encoding/base64"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"time"
 	"unicode/utf8"
 
@@ -220,13 +224,91 @@ type TxResult struct {
 	Detail map[string]any `json:"detail"`
 }
 
-// Tx is what a sender publishes on a device's tx topic. The agent reads it once
-// writing is built (PLAN-V2.md, T14); until then the topic is reserved.
+// Tx is what a sender publishes on a device's tx topic, for the agent to write
+// to the device.
 type Tx struct {
 	Schema int    `json:"schema"`
 	ID     string `json:"id"`
 	Sender string `json:"sender"`
 	RawB64 string `json:"raw_b64"`
+}
+
+// TxProblem is why a tx cannot be taken: the code of its failed result, and
+// the reason as text.
+type TxProblem struct {
+	Code TxCode
+	Text string
+}
+
+// ReadTx reads a tx as a sender published it, and returns its id and sender
+// and the bytes to write. All four fields are required and no other is
+// accepted, so that a sender's mistake gets a failed result rather than being
+// ignored (DESIGN-V2.md, "tx"). A tx that cannot be taken comes back with its
+// problem, and with its id and sender wherever they could be read, so that the
+// sender can tell which tx failed.
+func ReadTx(payload []byte) (TxRef, []byte, *TxProblem) {
+	ref := readTxRef(payload)
+	invalid := func(format string, args ...any) (TxRef, []byte, *TxProblem) {
+		return ref, nil, &TxProblem{Code: TxCodeInvalidMessage, Text: fmt.Sprintf(format, args...)}
+	}
+	var fields struct {
+		Schema *int    `json:"schema"`
+		ID     *string `json:"id"`
+		Sender *string `json:"sender"`
+		RawB64 *string `json:"raw_b64"`
+	}
+	dec := json.NewDecoder(bytes.NewReader(payload))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&fields); err != nil {
+		return invalid("not a JSON object of schema, id, sender and raw_b64: %v", err)
+	}
+	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return invalid("more than one JSON value")
+	}
+	var missing []string
+	for _, field := range []struct {
+		name    string
+		missing bool
+	}{{"schema", fields.Schema == nil}, {"id", fields.ID == nil}, {"sender", fields.Sender == nil}, {"raw_b64", fields.RawB64 == nil}} {
+		if field.missing {
+			missing = append(missing, field.name)
+		}
+	}
+	if len(missing) > 0 {
+		return invalid("missing %v", missing)
+	}
+	if *fields.Schema != Schema {
+		return invalid("schema is %d; this agent reads schema %d", *fields.Schema, Schema)
+	}
+	if *fields.Sender == "" {
+		return invalid("sender is empty")
+	}
+	raw, err := base64.StdEncoding.Strict().DecodeString(*fields.RawB64)
+	if err != nil {
+		return invalid("raw_b64 is not padded standard base64: %v", err)
+	}
+	if len(raw) == 0 {
+		return invalid("raw_b64 holds no bytes")
+	}
+	// The hyphenated form only: uuid.Parse also takes braces, a urn: prefix
+	// and bare hex, none of which a sender means as an id.
+	if _, err := uuid.Parse(*fields.ID); err != nil || len(*fields.ID) != 36 {
+		return ref, nil, &TxProblem{Code: TxCodeInvalidID, Text: fmt.Sprintf("the id %q is not a UUID", *fields.ID)}
+	}
+	return ref, raw, nil
+}
+
+// readTxRef takes the id and sender from a tx wherever they are strings, so
+// that even a tx that fails names itself in its result.
+func readTxRef(payload []byte) TxRef {
+	var object map[string]json.RawMessage
+	if json.Unmarshal(payload, &object) != nil {
+		return TxRef{}
+	}
+	var ref TxRef
+	_ = json.Unmarshal(object["id"], &ref.ID)
+	_ = json.Unmarshal(object["sender"], &ref.Sender)
+	return ref
 }
 
 // DiscardCounts has one counter per discard reason. Every key is always
