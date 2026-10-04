@@ -117,12 +117,7 @@ func Load(opts Options) (*Config, []Warning, error) {
 		return nil, nil, err
 	}
 	applyOverrides(cfg, opts.Overrides)
-	applyDeviceDefaults(cfg.Devices)
-	// After the overrides, so that an instance set anywhere wins over the
-	// default, and before validation, so the default is validated too.
-	if cfg.Identity.Instance == "" {
-		cfg.Identity.Instance = cfg.Identity.Station
-	}
+	applyDerivedDefaults(cfg)
 
 	if opts.SkipValidate {
 		return cfg, nil, nil
@@ -193,7 +188,44 @@ func decode(r io.Reader) (*Config, error) {
 	if len(problems) > 0 {
 		return nil, errors.Join(problems...)
 	}
+	if err := decodeDevicesOnDefaults(&doc, &cfg); err != nil {
+		return nil, err
+	}
 	return &cfg, nil
+}
+
+// decodeDevicesOnDefaults decodes each device entry again, on top of
+// DefaultDevice. The decoder makes a list's entries from zero values, so the
+// strict pass above leaves out every default; it has already refused unknown
+// keys and wrong types, with their lines.
+func decodeDevicesOnDefaults(doc *yaml.Node, cfg *Config) error {
+	devicesNode := mappingValue(doc, "devices")
+	if devicesNode == nil || devicesNode.Kind != yaml.SequenceNode {
+		return nil
+	}
+	for index, entry := range devicesNode.Content {
+		deviceCfg := DefaultDevice()
+		if err := entry.Decode(&deviceCfg); err != nil {
+			return fmt.Errorf("devices[%d]: %w", index, err)
+		}
+		cfg.Devices[index] = deviceCfg
+	}
+	return nil
+}
+
+// mappingValue is the value of key in the document's top-level mapping, or
+// nil when there is none.
+func mappingValue(doc *yaml.Node, key string) *yaml.Node {
+	if len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
+		return nil
+	}
+	root := doc.Content[0]
+	for index := 0; index+1 < len(root.Content); index += 2 {
+		if root.Content[index].Value == key {
+			return root.Content[index+1]
+		}
+	}
+	return nil
 }
 
 // findRemovedKeys reports every removed key in the document, with its line,

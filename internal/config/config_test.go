@@ -154,6 +154,8 @@ devices:
 		{"inter_char_timeout", d.InterCharTimeout.Duration(), DefaultInterCharTimeout},
 		{"message_expiry", d.MessageExpiry.Duration(), DefaultMessageExpiry},
 		{"device_type", d.DeviceType, ""},
+		{"tx_open_attempts", d.TxOpenAttempts, DefaultTxOpenAttempts},
+		{"tx_open_interval", d.TxOpenInterval.Duration(), DefaultTxOpenInterval},
 		{"keepalive", cfg.Broker.Keepalive.Duration(), DefaultKeepalive},
 		{"reconnect_interval", cfg.Broker.ReconnectInterval.Duration(), DefaultReconnectInterval},
 		{"reconnect_backoff.enabled", cfg.Broker.ReconnectBackoff.Enabled, false},
@@ -175,6 +177,35 @@ devices:
 		if cfg.got != cfg.want {
 			t.Errorf("%s = %v, want %v", cfg.name, cfg.got, cfg.want)
 		}
+	}
+}
+
+// A device key set to zero is read as zero and refused, not replaced by its
+// default: a station whose file says 0 would otherwise run a value nobody
+// wrote, with no sign of it.
+func TestLoadRefusesADeviceKeySetToZero(t *testing.T) {
+	cases := []struct{ setting, want string }{
+		{"    tx_open_attempts: 0\n", "devices.scanner-main.tx_open_attempts must be at least 1, got 0"},
+		{"    baud: 0\n", "devices.scanner-main.baud must be positive, got 0"},
+		{"    message_expiry: 0s\n", "devices.scanner-main.message_expiry"},
+	}
+	for _, tc := range cases {
+		t.Run(strings.TrimSpace(tc.setting), func(t *testing.T) {
+			fixture := newFixture(t, `
+identity: { project: acme, site: vasby, station: pack-03 }
+broker:
+  url: tls://mq.internal:8883
+  credentials_file: {{credentials}}
+devices:
+  - id: scanner-main
+    path: /dev/serial/by-id/usb-scanner-if00
+    separator: "\r"
+`+tc.setting)
+			_, _, err := load(t, fixture.path, noEnv(), Overrides{})
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("err = %v, want it to contain %q", err, tc.want)
+			}
+		})
 	}
 }
 

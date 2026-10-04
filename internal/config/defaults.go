@@ -61,7 +61,8 @@ func DefaultPath() string {
 	return linuxConfigPath
 }
 
-// Defaults returns a Config with every non-device default applied.
+// Defaults is the configuration before the file is read: each key the file
+// leaves out keeps this value. A device entry starts from DefaultDevice.
 func Defaults() Config {
 	return Config{
 		Broker: Broker{
@@ -91,44 +92,34 @@ func Defaults() Config {
 	}
 }
 
-// applyDeviceDefaults fills unset per-device fields. It runs after the file is
-// decoded, because a device entry may set only some of its fields.
+// DefaultDevice is a device entry before its keys are read: each key the
+// entry leaves out keeps this value. The file is decoded on top of it, so a key
+// set to zero is read as zero and validated, not replaced.
 //
 // Separator has no default on purpose: a scanner that suffixes CRLF where the
 // previous one suffixed CR is exactly the substitution that produces a bug
 // nobody can reproduce, so the value must be stated per device.
-func applyDeviceDefaults(devices []Device) {
-	for i := range devices {
-		deviceCfg := &devices[i]
-		if deviceCfg.Kind == "" {
-			deviceCfg.Kind = KindSerial
-		}
-		if deviceCfg.Baud == 0 {
-			deviceCfg.Baud = DefaultBaud
-		}
-		if deviceCfg.DataBits == 0 {
-			deviceCfg.DataBits = DefaultDataBits
-		}
-		if deviceCfg.Parity == "" {
-			deviceCfg.Parity = DefaultParity
-		}
-		if deviceCfg.StopBits == "" {
-			deviceCfg.StopBits = DefaultStopBits
-		}
-		if deviceCfg.MaxFrameBytes == 0 {
-			deviceCfg.MaxFrameBytes = DefaultMaxFrameBytes
-		}
-		if deviceCfg.InterCharTimeout == 0 {
-			deviceCfg.InterCharTimeout = Duration(DefaultInterCharTimeout)
-		}
-		if deviceCfg.MessageExpiry == 0 {
-			deviceCfg.MessageExpiry = Duration(DefaultMessageExpiry)
-		}
-		if deviceCfg.TxOpenAttempts == 0 {
-			deviceCfg.TxOpenAttempts = DefaultTxOpenAttempts
-		}
-		if deviceCfg.TxOpenInterval == 0 {
-			deviceCfg.TxOpenInterval = Duration(DefaultTxOpenInterval)
-		}
+func DefaultDevice() Device {
+	return Device{
+		Kind:             KindSerial,
+		Baud:             DefaultBaud,
+		DataBits:         DefaultDataBits,
+		Parity:           DefaultParity,
+		StopBits:         DefaultStopBits,
+		MaxFrameBytes:    DefaultMaxFrameBytes,
+		InterCharTimeout: Duration(DefaultInterCharTimeout),
+		MessageExpiry:    Duration(DefaultMessageExpiry),
+		TxOpenAttempts:   DefaultTxOpenAttempts,
+		TxOpenInterval:   Duration(DefaultTxOpenInterval),
+	}
+}
+
+// applyDerivedDefaults sets the defaults that come from other settings. It
+// runs after the environment and the flags, so that a value set anywhere wins
+// over the default, and before validation, so that the default is validated
+// too.
+func applyDerivedDefaults(cfg *Config) {
+	if cfg.Identity.Instance == "" {
+		cfg.Identity.Instance = cfg.Identity.Station
 	}
 }
