@@ -262,6 +262,12 @@ implement device protocols. Source: maintainer, 2026-09-29.
 the operating system reports it. Success says nothing about the device. Source:
 maintainer, 2026-09-29.
 
+On the bench printer, an Epson TM-T20III behind a PL2303 adapter at 9600 baud
+on macOS, the operating system took about 17 KB ahead of the line, and Drain
+returned as soon as write(2) did (docs/printers/epson-tm-t20iii.md). So
+`written` can come seconds before the device has the bytes, and the agent does
+not use Drain (T14).
+
 `[Decided]` Several senders may write to one device, and the agent does not
 prevent it. Source: maintainer, 2026-09-29.
 
@@ -289,6 +295,23 @@ the wire twice and a printer would print it; the result reports how many bytes
 were written. The retry count and the interval between attempts are device
 settings, and no attempt is made once the tx's message expiry has passed.
 Source: maintainer, 2026-09-29 (#23 Q17a).
+
+The settings are `tx_open_attempts`, 3 by default, and `tx_open_interval`, 1 s
+by default (T14). The device's reader keeps owning the port. A tx that finds it
+closed asks the reader to try opening it now, rather than after its backoff,
+and waits up to the interval for it to open; that is one attempt. The expiry is
+the tx's MQTT message expiry as it arrived; a tx sent without one is written
+whenever its turn comes.
+
+Tx results go out through the device's event queue, so they wait for the
+connection as its events do (#13 Q1), in order. Unlike an event, a result is
+never dropped to make room: a sender that hears nothing resends, and a printer
+prints the job twice. Results cannot pile up during an outage, because no tx
+arrives without the connection.
+
+`[Open]` The result of a tx the agent stops before writing, queued or part
+written: #19 Q1. Until it is answered, such a tx is recorded in the log with
+its data and gets no result.
 
 A tx published while the agent is reconnecting must not be lost silently. v1
 connects with clean start and session expiry 0
@@ -1384,8 +1407,9 @@ Leave behind:
 
 ## Open decisions
 
-None. No item is open or proposed. The maintainer's answers to #23 and, for the
-message formats, to #11, both on 2026-09-29, settled every proposal and
-follow-up; they are recorded in their sections above.
+One, in "Writing: tx": the result of a tx the agent stops before writing
+(#19 Q1). The maintainer's answers to #23 and, for the message formats, to #11,
+both on 2026-09-29, settled every earlier proposal and follow-up; they are
+recorded in their sections above.
 
 Task numbers refer to PLAN-V2.md.

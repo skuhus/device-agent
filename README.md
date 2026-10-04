@@ -2,8 +2,8 @@
 
 Device agent that gives network access to devices physically attached to a host.
 It reads bytes from a serial port, USB-CDC or RS-232, and publishes each frame
-to an MQTT broker. Writing bytes received from MQTT to the port is not built yet
-(PLAN-V2.md, T14).
+to an MQTT broker, and it writes to the port the bytes that senders publish for
+it.
 
 It is a transport: it moves bytes and adds an envelope. It implements no device
 protocol; parsing, interpretation and relaying are done by services that
@@ -26,8 +26,8 @@ Every device has its own topics, and every agent its own status topic:
 
 ```
 skuhus/<project>/<site>/<station>/<device>/rx               each frame read from the port
-skuhus/<project>/<site>/<station>/<device>/status           the device's events
-skuhus/<project>/<site>/<station>/<device>/tx               reserved until writing is built (T14)
+skuhus/<project>/<site>/<station>/<device>/status           the device's events and tx results
+skuhus/<project>/<site>/<station>/<device>/tx               bytes for the port, from senders
 skuhus/<project>/<site>/<station>/agent/<instance>/status   the agent's keepalive and offline message
 ```
 
@@ -43,6 +43,7 @@ instance and the agent's version. Nothing is retained.
 |---|---|---|---|---|
 | `rx` | `<device>/rx` | 1 | the device's `message_expiry` | the whole frame, separator excluded, as `raw_b64`, and as `text` when it is valid UTF-8; `seq` counts the device's frames from 1 |
 | `event` | `<device>/status` | 1 | the device's | `port_opened`, `port_closed`, `port_lost`, `port_open_failed` or `bytes_discarded`, with the error class or the discard reason |
+| `tx_result` | `<device>/status` | 1 | the device's | what became of a tx: `accepted`, then `written` or `failed`, or `rejected` for a resend of a tx still in hand; a code, and the bytes written |
 | `keepalive` | `agent/<instance>/status` | 0 | `gone_after_s` | every device's state and counters, every `status.keepalive_interval` and whenever the connection comes up |
 | `offline` | `agent/<instance>/status` | 1 | none | `reason` `shutdown` when the agent stops cleanly, or `will`, published by the broker when the connection is lost |
 
@@ -53,7 +54,7 @@ a station subscribes to:
 
 ```
 skuhus/<project>/<site>/<station>/+/rx                every device's readings
-skuhus/<project>/<site>/<station>/+/status            every device's events
+skuhus/<project>/<site>/<station>/+/status            every device's events and tx results
 skuhus/<project>/<site>/<station>/agent/+/status      every agent's keepalives and offline messages
 ```
 
@@ -65,6 +66,38 @@ device's `message_expiry` by then is dropped.
 DESIGN-V2.md, "Message formats", has every field, with an example of each
 message; the tests in `internal/wire` fail when the examples and the code
 disagree.
+
+## Writing to a device
+
+A sender publishes a tx to the device's tx topic, at QoS 1 and with a message
+expiry:
+
+```json
+{"schema": 2, "id": "0192a3b4-c5d6-7e8f-9a0b-1c2d3e4f5a6b", "sender": "label-service", "raw_b64": "XlhBXkZEU0tVLTEwNDJeRlNeWFo="}
+```
+
+`id` is a UUID, and every field is required. The agent answers on the device's
+status topic: `accepted` at once, then `written` once the operating system has
+taken every byte, or `failed` with a code. A tx that cannot be read fails at
+once; one whose id is still queued or being written is `rejected` with where
+that one stands. A device's tx are written one at a time, whole, in the order
+they arrived, while reading carries on.
+
+`written` means the operating system took the bytes, not that the device has
+them. On the bench printer, an Epson TM-T20III at 9600 baud, it took about
+17 KB ahead of the line (docs/printers/epson-tm-t20iii.md).
+
+A tx that finds the port closed asks for it to be opened, up to
+`tx_open_attempts` times, `tx_open_interval` apart (3 and 1 s by default), and
+then fails as `port_unavailable` with the reason. Once writing has started
+nothing is retried, since a retry could print a job twice; `write_failed` says
+how many bytes were written. No attempt is made once the tx's message expiry
+has passed.
+
+A tx published while the agent is disconnected is lost and gets no result, and
+a sender treats a tx that got no result as not written. So does a tx the agent
+stops before writing, for now (#19 Q1). DESIGN-V2.md, "The tx contract", has
+the rest.
 
 ## Build and test
 
@@ -164,6 +197,17 @@ make consume TOPIC='skuhus/acme/vasby/pack-03/+/rx'   # one station's readings
 make consume FLAGS=--raw                              # payloads exactly as received
 ```
 
+`dev/sendtx` is the sending side: it publishes a tx as `ingest`, then prints
+the results the agent publishes for it.
+
+```
+make send-tx TX_TOPIC=skuhus/acme/vasby/pack-03/printer-1/tx FLAGS="--file dist/job.bin"
+make send-tx TX_TOPIC=skuhus/acme/vasby/pack-03/printer-1/tx FLAGS="--hex 1b40"
+```
+
+`--file` takes a path from the repository root. `--id` sends a chosen id, to
+see a resend rejected while the first is still being written.
+
 Each message prints its topic, QoS, retained flag and message expiry, a response
 topic or correlation data when it carries one, then the payload with JSON
 indented. An rx message gets one extra line decoding `raw_b64` back to bytes,
@@ -209,22 +253,22 @@ reason `shutdown`.
 skuhus-device-agent run --config /etc/skuhus-device-agent/config.yaml
 ```
 
-Opens the configured devices, connects to the broker, and publishes what each
-device reads until stopped. A device that is unplugged and a broker that is down
-are both expected conditions: the agent keeps running, and reopens the device
-with jittered backoff. It tries the broker at once and then every second,
-`broker.reconnect_interval`; `broker.reconnect_backoff` makes that wait grow
-instead. Each failed attempt to open a device is a `port_open_failed` event
-with its error class, and is counted in the keepalive.
+Opens the configured devices, connects to the broker, publishes what each device
+reads, and writes the tx each is sent, until stopped. A device that is unplugged
+and a broker that is down are both expected conditions: the agent keeps running,
+and reopens the device with jittered backoff. It tries the broker at once and
+then every second, `broker.reconnect_interval`; `broker.reconnect_backoff`
+makes that wait grow instead. Each failed attempt to open a device is a
+`port_open_failed` event with its error class, and is counted in the keepalive.
 
-SIGTERM and SIGINT stop it in this order: the keepalive stops; the devices
-close, so nothing new arrives; what is already framed is published, for at most
-5 seconds; the offline message goes out with reason `shutdown`; and only then
-does the connection close. A reading still buffered after those 5 seconds is
-recorded in the log as dropped, with its data, because a reading whose session
-has ended is not worth delivering late. A clean stop exits 0. An unknown
-command or a positional argument exits 2, and any other error 1, a flag that
-does not exist included.
+SIGTERM and SIGINT stop it in this order: no tx is started any more; the
+keepalive stops; the devices close, so nothing new arrives; what is already
+framed is published, for at most 5 seconds; the offline message goes out with
+reason `shutdown`; and only then does the connection close. A reading still
+buffered after those 5 seconds is recorded in the log as dropped, with its data,
+because a reading whose session has ended is not worth delivering late. A clean
+stop exits 0. An unknown command or a positional argument exits 2, and any other
+error 1, a flag that does not exist included.
 
 Broker credentials come from `broker.credentials_file`:
 
@@ -495,12 +539,15 @@ internal/version/          the release version, and the injected commit and date
 test/integration/          the agent's binary end to end, behind the integration build tag
 dev/rabbitmq/              local broker: compose, config, definitions
 dev/consumer/              subscribes and prints, for watching the wire
+dev/sendtx/                sends a tx and prints its results
 dev/agent.local.yaml       agent config for a workstation and the local broker
 Dockerfile                 build stage plus an Alpine runtime
 .github/workflows/         ci and release
 spike/brokerinfo/          what a broker is and which MQTT levels it answers
 spike/mqtt5/               M0 broker property verification, not part of the agent
+spike/serialbench/         a serial printer's line settings and write timing, run on the host
 docs/scanners/             per-model scanner measurements
+docs/printers/             per-model printer measurements
 docs/spikes/               spike results
 ```
 
