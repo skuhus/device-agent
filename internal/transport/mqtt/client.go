@@ -41,7 +41,9 @@ type Options struct {
 	CAFile   string
 	// Insecure allows a plaintext URL and skips certificate verification. The
 	// configuration layer already refuses a plaintext URL without it.
-	Insecure  bool
+	Insecure bool
+	// Keepalive must be positive: zero would turn keepalive off, and a
+	// half-open connection would go undetected.
 	Keepalive time.Duration
 
 	// Reconnect is the wait after a failed attempt to connect. The first
@@ -101,6 +103,9 @@ type Client struct {
 func Dial(ctx context.Context, opts Options) (*Client, error) {
 	if opts.ClientID == "" {
 		return nil, errors.New("mqtt: client id is required")
+	}
+	if opts.Keepalive <= 0 {
+		return nil, fmt.Errorf("mqtt: keepalive must be positive, got %s", opts.Keepalive)
 	}
 	if err := opts.Reconnect.Validate(); err != nil {
 		return nil, fmt.Errorf("mqtt: reconnect: %w", err)
@@ -360,13 +365,10 @@ func expirySeconds(delay time.Duration) uint32 {
 	return uint32(seconds)
 }
 
-// keepaliveSeconds converts to the protocol's unit. Zero disables keepalive
-// entirely, which would leave a half-open connection undetected, so a
-// non-positive value falls back to the specification's 30 seconds.
+// keepaliveSeconds converts a positive keepalive to whole seconds, the
+// protocol's unit: rounded, at least 1, because 0 would turn keepalive off,
+// and at most the field's maximum.
 func keepaliveSeconds(delay time.Duration) uint16 {
-	if delay <= 0 {
-		return 30
-	}
 	seconds := math.Round(delay.Seconds())
 	if seconds > math.MaxUint16 {
 		return math.MaxUint16

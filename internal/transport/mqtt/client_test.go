@@ -43,8 +43,6 @@ func TestKeepaliveSeconds(t *testing.T) {
 		want uint16
 	}{
 		{30 * time.Second, 30},
-		{0, 30},                           // Zero would disable keepalive entirely.
-		{-time.Second, 30},                //
 		{500 * time.Millisecond, 1},       // Sub-second still has to keep alive.
 		{100 * time.Hour, math.MaxUint16}, // Clamped rather than overflowed.
 	}
@@ -145,6 +143,9 @@ func TestDialRejectsUnusableOptions(t *testing.T) {
 		want   string
 	}{
 		{"no client id", func(opts *Options) { opts.ClientID = "" }, "client id is required"},
+		// Zero would turn keepalive off, and a half-open connection would go
+		// undetected; the configuration refuses it, and so does Dial.
+		{"no keepalive", func(opts *Options) { opts.Keepalive = 0 }, "keepalive must be positive, got 0s"},
 		{"no reconnect interval", func(opts *Options) { opts.Reconnect = backoff.Policy{} }, "reconnect: the interval must be positive"},
 		{"unparseable url", func(opts *Options) { opts.URL = "://nope" }, "broker url"},
 		{"missing ca file", func(opts *Options) {
