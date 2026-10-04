@@ -1,11 +1,13 @@
 package serial
 
 import (
+	"strings"
 	"sync"
 	"syscall"
 	"testing"
 	"time"
 
+	"github.com/skuhus/device-agent/internal/backoff"
 	goserial "go.bug.st/serial"
 )
 
@@ -55,8 +57,7 @@ func TestFlappingDeviceBacksOff(t *testing.T) {
 	var mu sync.Mutex
 	opens := 0
 	opts := serialOpts("flapping", "/dev/fake", "\r")
-	opts.BackoffInitial = initial
-	opts.BackoffMax = ceiling
+	opts.Reopen = backoff.Policy{Interval: initial, Grow: true, Max: ceiling, Jitter: 0.3}
 	opts.Open = func(string, *goserial.Mode) (goserial.Port, error) {
 		mu.Lock()
 		opens++
@@ -85,39 +86,56 @@ func TestFlappingDeviceBacksOff(t *testing.T) {
 	t.Logf("%d reopens in %s", got, window)
 }
 
-// A session that stayed up must reset the backoff, so a device that has been
-// working for a long time reconnects promptly rather than waiting the ceiling.
+// A session that stayed up must start the wait over, so a device that has
+// been working for a long time reconnects promptly rather than waiting the
+// ceiling. A session counts as stable once it lasted the longest wait.
 func TestStableSessionResetsBackoff(t *testing.T) {
+	const (
+		interval = 10 * time.Millisecond
+		ceiling  = 100 * time.Millisecond
+		// Each session lasts longer than the ceiling, so each one is stable.
+		session = 150 * time.Millisecond
+	)
 	var mu sync.Mutex
-	var gaps []time.Duration
-	last := time.Now()
+	var opens []time.Time
 
 	opts := serialOpts("stable", "/dev/fake", "\r")
-	opts.BackoffInitial = 10 * time.Millisecond
-	opts.BackoffMax = 400 * time.Millisecond
-	opts.StableAfter = 50 * time.Millisecond
+	opts.Reopen = backoff.Policy{Interval: interval, Grow: true, Max: ceiling}
 	opts.Open = func(string, *goserial.Mode) (goserial.Port, error) {
 		mu.Lock()
-		gaps = append(gaps, time.Since(last))
-		last = time.Now()
+		opens = append(opens, time.Now())
 		mu.Unlock()
-		return &blockingPort{hold: 120 * time.Millisecond}, nil
+		return &blockingPort{hold: session}, nil
 	}
 	runDevice(t, opts, 1)
 
-	time.Sleep(700 * time.Millisecond)
+	time.Sleep(1200 * time.Millisecond)
 
 	mu.Lock()
 	defer mu.Unlock()
-	if len(gaps) < 3 {
-		t.Fatalf("got %d opens, want at least 3", len(gaps))
+	// Without the reset the waits are 10, 20, 40 and 80 ms, so the fourth gap
+	// between opens is the session and 80 ms. With it, each is the session and
+	// 10 ms.
+	if len(opens) < 5 {
+		t.Fatalf("got %d opens, want at least 5", len(opens))
 	}
-	// Every session lasts longer than StableAfter, so the wait before each
-	// reopen must stay near the initial backoff instead of doubling.
-	for i, gap := range gaps[2:] {
-		if gap > 200*time.Millisecond {
-			t.Errorf("gap %d was %s; backoff grew even though every session was stable", i+2, gap)
+	const limit = session + 60*time.Millisecond
+	for index := 1; index < len(opens); index++ {
+		if gap := opens[index].Sub(opens[index-1]); gap > limit {
+			t.Errorf("open %d came %s after the one before, over %s; the wait grew although every session was stable",
+				index, gap, limit)
 		}
+	}
+}
+
+// A device that would reopen with no wait at all spins (section 4.4), so New
+// refuses it rather than running it.
+func TestNewRejectsAnUnusableReopenPolicy(t *testing.T) {
+	opts := serialOpts("scanner-1", "/dev/fake", "\r")
+	opts.Reopen = backoff.Policy{}
+	_, err := New(opts)
+	if err == nil || !strings.Contains(err.Error(), "device scanner-1: reopen: the interval must be positive, got 0s") {
+		t.Errorf("err = %v, want the reopen interval refused", err)
 	}
 }
 

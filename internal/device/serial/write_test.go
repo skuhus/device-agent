@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/skuhus/device-agent/internal/backoff"
 	"github.com/skuhus/device-agent/internal/device"
 	goserial "go.bug.st/serial"
 )
@@ -203,7 +204,7 @@ func TestRetryOpenCutsTheBackoffShort(t *testing.T) {
 	var mu sync.Mutex
 	var attempts []time.Time
 	opts := serialOpts("printer-1", "/dev/absent", "\r\n")
-	opts.BackoffInitial, opts.BackoffMax = time.Minute, time.Minute
+	opts.Reopen = backoff.Policy{Interval: time.Minute}
 	opts.Open = func(string, *goserial.Mode) (goserial.Port, error) {
 		mu.Lock()
 		defer mu.Unlock()

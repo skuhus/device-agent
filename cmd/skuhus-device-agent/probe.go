@@ -158,6 +158,7 @@ func runProbe(args []string, stdout, stderr io.Writer) error {
 		InterCharTimeout: dev.InterCharTimeout.Duration(),
 		LogPayloads:      *logPayloads,
 		Logger:           log,
+		Reopen:           serialdev.DefaultReopen,
 	})
 	if err != nil {
 		return err

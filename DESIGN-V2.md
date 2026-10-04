@@ -527,8 +527,8 @@ message. `reason` is one of `oversize`, `inter_char_timeout`, `resync` and
 `[Decided]` `port_open_failed` is published on every attempt to open the port,
 which keeps the rule simple. Source: maintainer, 2026-09-29 (#11 Q8). A scale
 unplugged overnight, retried every 30 s at most (v1's backoff limit,
-internal/device/serial/serial.go:27), publishes about 1,440 of them in 12
-hours.
+internal/device/serial/serial.go, DefaultReopen), publishes about 1,440 of them
+in 12 hours.
 
 A device's events are published in the order they happened, with `agent_ts`
 the time they happened.
@@ -894,8 +894,8 @@ Backoff). The agent used to answer with its full first delay there, and took
 With the backoff off, every wait is the interval exactly, with no jitter. With
 it on, the wait doubles from the interval up to `max`, and each wait is spread
 by `jitter`, a fraction either way, so that stations that lost the broker
-together do not retry in step (internal/transport/mqtt/client.go,
-reconnectDelay).
+together do not retry in step (internal/backoff, Policy.Wait, which the
+device reopen uses as well).
 
 0.3.0's `broker.connect_backoff` is refused with its replacements named, as
 every removed key is ("Loading is strict in both directions").
@@ -1075,14 +1075,14 @@ drops, so the backoff returns to its initial value on every cycle. Measured in
 v1 against an injected failing port, that produced 87 reopens a second,
 indefinitely.
 
-The backoff resets only when a session lasted at least `StableAfter`, which
-defaults to the backoff ceiling of 30 s (internal/device/serial/serial.go). A
-device that has been up for half a minute counts as healthy and reconnects
-promptly; one that flaps backs off to the ceiling. The same measurement
-produced 7 reopens per second and climbing.
+The backoff resets only when a session lasted at least the backoff's ceiling,
+30 s (internal/device/serial/serial.go, DefaultReopen and Run). A device that
+has been up for half a minute counts as healthy and reconnects promptly; one
+that flaps backs off to the ceiling. The same measurement produced 7 reopens
+per second and climbing.
 
-`StableAfter` is an internal option, not a configuration key: it is a tuning
-constant rather than a per-station decision.
+The threshold is the ceiling rather than a value of its own, so that the
+reopen has one set of values (#30).
 
 ### The agent does not ask whether the clock is synchronised
 

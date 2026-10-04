@@ -197,6 +197,7 @@ func runAgent(ctx context.Context, cfg *config.Config, warnings []config.Warning
 			InterCharTimeout: deviceCfg.InterCharTimeout.Duration(),
 			LogPayloads:      cfg.Logging.LogPayloads,
 			Logger:           log,
+			Reopen:           serialdev.DefaultReopen,
 		})
 		if err != nil {
 			return err
@@ -250,22 +251,19 @@ func runAgent(ctx context.Context, cfg *config.Config, warnings []config.Warning
 		}
 	}
 	client, err := mqtt.Dial(connCtx, mqtt.Options{
-		URL:               cfg.Broker.URL,
-		ClientID:          cfg.Identity.Instance,
-		Username:          creds.Username,
-		Password:          creds.Password,
-		CAFile:            cfg.Broker.CAFile,
-		Insecure:          cfg.Broker.Insecure,
-		Keepalive:         cfg.Broker.Keepalive.Duration(),
-		ReconnectInterval: cfg.Broker.ReconnectInterval.Duration(),
-		ReconnectBackoff:  cfg.Broker.ReconnectBackoff.Enabled,
-		BackoffMax:        cfg.Broker.ReconnectBackoff.Max.Duration(),
-		BackoffJitter:     cfg.Broker.ReconnectBackoff.Jitter,
-		Subscriptions:     txTopics,
-		OnMessage:         onMessage,
-		WillTopic:         agentTopics.Status(),
-		Will:              will,
-		Logger:            log,
+		URL:           cfg.Broker.URL,
+		ClientID:      cfg.Identity.Instance,
+		Username:      creds.Username,
+		Password:      creds.Password,
+		CAFile:        cfg.Broker.CAFile,
+		Insecure:      cfg.Broker.Insecure,
+		Keepalive:     cfg.Broker.Keepalive.Duration(),
+		Reconnect:     cfg.Broker.ReconnectPolicy(),
+		Subscriptions: txTopics,
+		OnMessage:     onMessage,
+		WillTopic:     agentTopics.Status(),
+		Will:          will,
+		Logger:        log,
 		OnUp: func() {
 			select {
 			case connected <- struct{}{}:

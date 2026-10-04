@@ -13,11 +13,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"math/rand/v2"
 	"sync"
 	"syscall"
 	"time"
 
+	"github.com/skuhus/device-agent/internal/backoff"
 	"github.com/skuhus/device-agent/internal/device"
 	"github.com/skuhus/device-agent/internal/logging"
 	"github.com/skuhus/device-agent/internal/wire"
@@ -54,12 +54,11 @@ func invert[V comparable](byName map[string]V) map[V]string {
 	return names
 }
 
-// Backoff bounds for reopening an absent device.
-const (
-	DefaultBackoffInitial = 100 * time.Millisecond
-	DefaultBackoffMax     = 30 * time.Second
-	backoffJitter         = 0.3
+// DefaultReopen is how a device is reopened after it fails: from 100 ms,
+// doubling to 30 s, v1's limits.
+var DefaultReopen = backoff.Policy{Interval: 100 * time.Millisecond, Grow: true, Max: 30 * time.Second, Jitter: 0.3}
 
+const (
 	minReadChunk = 64
 	maxReadChunk = 4096
 
@@ -94,25 +93,21 @@ type Options struct {
 
 	Logger *slog.Logger
 
-	BackoffInitial time.Duration
-	BackoffMax     time.Duration
-	// StableAfter is how long a session must last before the device counts as
-	// healthy and the backoff resets. Defaults to BackoffMax.
-	StableAfter time.Duration
+	// Reopen is the wait before each attempt to open the port again after it
+	// failed or closed. A session that lasts as long as the policy's longest
+	// wait counts as healthy, and the wait starts over.
+	Reopen backoff.Policy
 	// Open defaults to the real serial port opener.
 	Open OpenFunc
 }
 
 // Device is a serial-attached device.
 type Device struct {
-	opts     Options
-	mode     *goserial.Mode
-	chunk    int
-	log      *slog.Logger
-	open     OpenFunc
-	backoffI time.Duration
-	backoffM time.Duration
-	stable   time.Duration
+	opts  Options
+	mode  *goserial.Mode
+	chunk int
+	log   *slog.Logger
+	open  OpenFunc
 
 	// retry cuts the reopen backoff short, for a tx waiting for the port.
 	retry chan struct{}
@@ -151,6 +146,9 @@ func New(opts Options) (*Device, error) {
 	if _, err := NewFramer(opts.Terminator, opts.MaxFrameBytes); err != nil {
 		return nil, fmt.Errorf("device %s: %w", opts.ID, err)
 	}
+	if err := opts.Reopen.Validate(); err != nil {
+		return nil, fmt.Errorf("device %s: reopen: %w", opts.ID, err)
+	}
 
 	dev := &Device{
 		opts: opts,
@@ -164,13 +162,10 @@ func New(opts Options) (*Device, error) {
 			// outright on any port without modem control. The lines are raised
 			// after open instead, where failing to do so is not fatal.
 		},
-		chunk:    min(max(opts.MaxFrameBytes, minReadChunk), maxReadChunk),
-		log:      opts.Logger,
-		open:     opts.Open,
-		backoffI: opts.BackoffInitial,
-		backoffM: opts.BackoffMax,
-		stable:   opts.StableAfter,
-		retry:    make(chan struct{}, 1),
+		chunk: min(max(opts.MaxFrameBytes, minReadChunk), maxReadChunk),
+		log:   opts.Logger,
+		open:  opts.Open,
+		retry: make(chan struct{}, 1),
 	}
 	if dev.log == nil {
 		dev.log = slog.New(slog.DiscardHandler)
@@ -178,15 +173,6 @@ func New(opts Options) (*Device, error) {
 	dev.log = dev.log.With("device_id", opts.ID, "device_path", opts.Path)
 	if dev.open == nil {
 		dev.open = goserial.Open
-	}
-	if dev.backoffI <= 0 {
-		dev.backoffI = DefaultBackoffInitial
-	}
-	if dev.backoffM < dev.backoffI {
-		dev.backoffM = max(DefaultBackoffMax, dev.backoffI)
-	}
-	if dev.stable <= 0 {
-		dev.stable = dev.backoffM
 	}
 	return dev, nil
 }
@@ -205,13 +191,15 @@ func (dev *Device) Direction() device.Direction { return device.Inbound }
 
 // Run opens the device, frames what it reads and sends frames to sink until
 // ctx is cancelled, reporting every port event to report, which may be nil.
-// Open failures and disconnects are retried with jittered exponential backoff;
-// Run returns only on context cancellation.
+// Open failures and disconnects are retried as Options.Reopen says; Run
+// returns only on context cancellation.
 func (dev *Device) Run(ctx context.Context, sink chan<- device.Frame, report func(device.Event)) error {
 	if report == nil {
 		report = func(device.Event) {}
 	}
-	backoff := dev.backoffI
+	policy := dev.opts.Reopen
+	stableAfter := policy.Max
+	retry := 0
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -225,18 +213,19 @@ func (dev *Device) Run(ctx context.Context, sink chan<- device.Frame, report fun
 			return ctxErr
 		}
 
-		// The backoff resets only for a session that stayed up, not for one
-		// that merely opened. A failing cable lets the port open and read once
-		// before it drops, and resetting on that reopens the device several
-		// times a second for as long as the fault lasts.
-		if lasted >= dev.stable {
-			backoff = dev.backoffI
+		// The wait starts over only after a session that stayed up, not after
+		// one that merely opened. A failing cable lets the port open and read
+		// once before it drops, and starting over on that reopens the device
+		// several times a second for as long as the fault lasts.
+		if lasted >= stableAfter {
+			retry = 0
 		}
-		wait := jittered(backoff)
+		retry++
+		wait := policy.Wait(retry)
 		dev.log.Warn("device unavailable, reopening after backoff",
 			"error", errText(err), "error_class", classify(err),
-			"backoff", wait.String(), "session_worked", worked,
-			"session_duration", lasted.String(), "stable_after", dev.stable.String())
+			"backoff", wait.String(), "retry", retry, "session_worked", worked,
+			"session_duration", lasted.String(), "stable_after", stableAfter.String())
 
 		select {
 		case <-ctx.Done():
@@ -245,7 +234,6 @@ func (dev *Device) Run(ctx context.Context, sink chan<- device.Frame, report fun
 		case <-dev.retry:
 			dev.log.Debug("reopening before the backoff ends, for a tx waiting for the port")
 		}
-		backoff = min(backoff*2, dev.backoffM)
 	}
 }
 
@@ -569,14 +557,4 @@ func errText(err error) string {
 		return ""
 	}
 	return err.Error()
-}
-
-// jittered spreads reconnect attempts so a site full of stations does not
-// retry in lockstep after a broker or USB hub blip.
-func jittered(dev time.Duration) time.Duration {
-	if dev <= 0 {
-		return 0
-	}
-	delta := float64(dev) * backoffJitter
-	return time.Duration(float64(dev) - delta + rand.Float64()*2*delta)
 }

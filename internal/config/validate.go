@@ -145,19 +145,8 @@ func validateBroker(broker Broker, env map[string]string) ([]error, []Warning) {
 	if broker.Keepalive <= 0 {
 		problems = append(problems, fmt.Errorf("broker.keepalive must be positive, got %s", broker.Keepalive))
 	}
-	if broker.ReconnectInterval <= 0 {
-		problems = append(problems, fmt.Errorf("broker.reconnect_interval must be positive, got %s", broker.ReconnectInterval))
-	}
-	// Max and jitter are checked only when the backoff is on: off, they are not
-	// used, and an error about them would name a setting that does nothing.
-	if backoff := broker.ReconnectBackoff; backoff.Enabled {
-		if backoff.Max < broker.ReconnectInterval {
-			problems = append(problems, fmt.Errorf("broker.reconnect_backoff.max (%s) must be at least broker.reconnect_interval (%s)",
-				backoff.Max, broker.ReconnectInterval))
-		}
-		if backoff.Jitter < 0 || backoff.Jitter > 1 {
-			problems = append(problems, fmt.Errorf("broker.reconnect_backoff.jitter must be between 0 and 1, got %v", backoff.Jitter))
-		}
+	if err := broker.ReconnectPolicy().Validate(); err != nil {
+		problems = append(problems, fmt.Errorf("broker.reconnect_interval and broker.reconnect_backoff: %w", err))
 	}
 	return problems, warnings
 }

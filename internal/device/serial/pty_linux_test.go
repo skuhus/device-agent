@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/skuhus/device-agent/internal/backoff"
 	"github.com/skuhus/device-agent/internal/device"
 	"github.com/skuhus/device-agent/internal/logging/logtest"
 	goserial "go.bug.st/serial"
@@ -60,12 +61,6 @@ func runDeviceReporting(t *testing.T, opts Options, sinkCap int, report func(dev
 		// writes is held to the log's rules when the test ends.
 		opts.Logger, _ = logtest.New(t, "debug")
 	}
-	if opts.BackoffInitial == 0 {
-		opts.BackoffInitial = 5 * time.Millisecond
-	}
-	if opts.BackoffMax == 0 {
-		opts.BackoffMax = 20 * time.Millisecond
-	}
 	d, err := New(opts)
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -91,6 +86,10 @@ func runDeviceReporting(t *testing.T, opts Options, sinkCap int, report func(dev
 	return frames, cancel
 }
 
+// fastReopen is the reopen policy of tests that do not test it: v1's shape,
+// scaled down so that a test does not wait on it.
+var fastReopen = backoff.Policy{Interval: 5 * time.Millisecond, Grow: true, Max: 20 * time.Millisecond, Jitter: 0.3}
+
 func serialOpts(id, path string, term string) Options {
 	return Options{
 		ID:               id,
@@ -99,6 +98,7 @@ func serialOpts(id, path string, term string) Options {
 		Terminator:       []byte(term),
 		MaxFrameBytes:    4096,
 		InterCharTimeout: 50 * time.Millisecond,
+		Reopen:           fastReopen,
 	}
 }
 

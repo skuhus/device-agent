@@ -336,11 +336,12 @@ func TestReconnectSettingsAreValidated(t *testing.T) {
 	cases := []struct {
 		name, settings, want string
 	}{
-		{"zero interval", "  reconnect_interval: 0s\n", "broker.reconnect_interval must be positive"},
+		{"zero interval", "  reconnect_interval: 0s\n",
+			"broker.reconnect_interval and broker.reconnect_backoff: the interval must be positive, got 0s"},
 		{"max below the interval", "  reconnect_interval: 5s\n  reconnect_backoff: { enabled: true, max: 1s }\n",
-			"broker.reconnect_backoff.max (1s) must be at least broker.reconnect_interval (5s)"},
+			"broker.reconnect_interval and broker.reconnect_backoff: max (1s) must be at least the interval (5s)"},
 		{"jitter above 1", "  reconnect_interval: 1s\n  reconnect_backoff: { enabled: true, jitter: 1.5 }\n",
-			"broker.reconnect_backoff.jitter must be between 0 and 1"},
+			"broker.reconnect_interval and broker.reconnect_backoff: jitter must be between 0 and 1, got 1.5"},
 		{"backoff off ignores max and jitter", "  reconnect_interval: 5s\n  reconnect_backoff: { enabled: false, max: 1s, jitter: 1.5 }\n", ""},
 	}
 	for _, tc := range cases {

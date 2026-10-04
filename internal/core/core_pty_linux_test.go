@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/skuhus/device-agent/internal/backoff"
 	"github.com/skuhus/device-agent/internal/device"
 	"github.com/skuhus/device-agent/internal/device/serial"
 	"github.com/skuhus/device-agent/internal/wire"
@@ -80,7 +81,7 @@ func TestEveryFrameIsOneRxMessageOnItsDeviceTopic(t *testing.T) {
 		reader, err := serial.New(serial.Options{
 			ID: capture.id, Path: slave, Baud: 9600, Terminator: []byte("\r\n"),
 			MaxFrameBytes: 4096, InterCharTimeout: 50 * time.Millisecond,
-			BackoffInitial: 5 * time.Millisecond, BackoffMax: 20 * time.Millisecond,
+			Reopen: backoff.Policy{Interval: 5 * time.Millisecond, Grow: true, Max: 20 * time.Millisecond, Jitter: 0.3},
 		})
 		if err != nil {
 			t.Fatalf("serial.New: %v", err)
@@ -166,7 +167,7 @@ func ptyReader(t *testing.T, id, slave string, separator string) device.Device {
 	reader, err := serial.New(serial.Options{
 		ID: id, Path: slave, Baud: 9600, Terminator: []byte(separator),
 		MaxFrameBytes: 4096, InterCharTimeout: 50 * time.Millisecond,
-		BackoffInitial: 5 * time.Millisecond, BackoffMax: 20 * time.Millisecond,
+		Reopen: backoff.Policy{Interval: 5 * time.Millisecond, Grow: true, Max: 20 * time.Millisecond, Jitter: 0.3},
 	})
 	if err != nil {
 		t.Fatalf("serial.New: %v", err)

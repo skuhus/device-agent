@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/skuhus/device-agent/internal/backoff"
 	"gopkg.in/yaml.v3"
 )
 
@@ -78,6 +79,16 @@ func (broker Broker) RedactedURL() string {
 		return broker.URL
 	}
 	return parsed.Redacted()
+}
+
+// ReconnectPolicy is the wait before each attempt to connect.
+func (broker Broker) ReconnectPolicy() backoff.Policy {
+	return backoff.Policy{
+		Interval: broker.ReconnectInterval.Duration(),
+		Grow:     broker.ReconnectBackoff.Enabled,
+		Max:      broker.ReconnectBackoff.Max.Duration(),
+		Jitter:   broker.ReconnectBackoff.Jitter,
+	}
 }
 
 // ReconnectBackoff makes the wait between attempts to connect grow. Enabled,

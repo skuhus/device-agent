@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/eclipse/paho.golang/paho"
+	"github.com/skuhus/device-agent/internal/backoff"
 	"github.com/skuhus/device-agent/internal/logging/logtest"
 )
 
@@ -54,50 +55,28 @@ func TestKeepaliveSeconds(t *testing.T) {
 	}
 }
 
-// By default the agent tries the broker at once, at start and after losing it,
-// and then every interval, exactly: the backoff is off and so is its jitter
-// (#13 Q3). autopaho asks for attempt 0 before the first attempt.
-func TestReconnectEveryIntervalWithTheBackoffOff(t *testing.T) {
-	delay := reconnectDelay(time.Second, false, time.Minute, 0.3)
-	if got := delay(0); got != 0 {
-		t.Errorf("wait before the first attempt = %s, want none", got)
-	}
-	for attempt := 1; attempt <= 20; attempt++ {
-		if got := delay(attempt); got != time.Second {
-			t.Errorf("wait before attempt %d = %s, want 1s", attempt, got)
+// The agent tries the broker at once, at start and after losing it: autopaho
+// asks for attempt 0 before the first attempt. After that, attempt n waits
+// what the policy gives retry n, which internal/backoff tests.
+func TestReconnectAtOnceThenAsThePolicySays(t *testing.T) {
+	fixed := reconnectDelay(backoff.Policy{Interval: time.Second})
+	growing := reconnectDelay(backoff.Policy{Interval: time.Second, Grow: true, Max: 8 * time.Second})
+	for _, delay := range []func(int) time.Duration{fixed, growing} {
+		if got := delay(0); got != 0 {
+			t.Errorf("wait before the first attempt = %s, want none", got)
 		}
 	}
-}
-
-// With the backoff on, the wait doubles after each failed attempt and stops at
-// its ceiling, so that a broker that stays away is not tried every interval.
-func TestReconnectBackoffGrowsAndIsBounded(t *testing.T) {
-	delay := reconnectDelay(time.Second, true, 8*time.Second, 0)
-	want := []time.Duration{0, time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second, 8 * time.Second}
-	for attempt, w := range want {
-		if got := delay(attempt); got != w {
-			t.Errorf("wait before attempt %d = %s, want %s", attempt, got, w)
+	for attempt := 1; attempt <= 5; attempt++ {
+		if got := fixed(attempt); got != time.Second {
+			t.Errorf("backoff off: wait before attempt %d = %s, want 1s", attempt, got)
 		}
 	}
-}
-
-// Jitter is what keeps a site full of stations from reconnecting in lockstep
-// after a broker restart, so with the backoff on it has to vary, and stay in
-// range.
-func TestReconnectBackoffJitterVariesWithinBounds(t *testing.T) {
-	const jitter = 0.3
-	delay := reconnectDelay(time.Second, true, time.Minute, jitter)
-
-	seen := make(map[time.Duration]bool)
-	for i := 0; i < 50; i++ {
-		got := delay(1)
-		if got < time.Duration(float64(time.Second)*(1-jitter)) || got > time.Duration(float64(time.Second)*(1+jitter)) {
-			t.Fatalf("wait = %s, outside 1s +/- %v%%", got, jitter*100)
+	want := []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second, 8 * time.Second}
+	for index, expected := range want {
+		attempt := index + 1
+		if got := growing(attempt); got != expected {
+			t.Errorf("backoff on: wait before attempt %d = %s, want %s", attempt, got, expected)
 		}
-		seen[got] = true
-	}
-	if len(seen) < 10 {
-		t.Errorf("only %d distinct waits in 50 draws; the jitter is not spreading reconnects", len(seen))
 	}
 }
 
@@ -153,27 +132,34 @@ func TestTLSConfigUsesHostnameAndRejectsBadCA(t *testing.T) {
 	}
 }
 
+// Each case changes one thing in options Dial accepts, so that each refusal
+// is for the reason the case names.
 func TestDialRejectsUnusableOptions(t *testing.T) {
+	usable := Options{
+		URL: "tcp://localhost:1883", ClientID: "pack-03", Keepalive: 30 * time.Second,
+		Reconnect: backoff.Policy{Interval: time.Second},
+	}
 	tests := []struct {
-		name string
-		opts Options
-		want string
+		name   string
+		change func(*Options)
+		want   string
 	}{
-		{"no client id", Options{URL: "tcp://localhost:1883"}, "client id is required"},
-		{"unparseable url", Options{URL: "://nope", ClientID: "pack-03"}, "broker url"},
-		{
-			"missing ca file",
-			Options{URL: "tls://mq.internal:8883", ClientID: "pack-03", CAFile: "/nonexistent/ca.pem"},
-			"ca_file",
-		},
-		{"will without a topic", Options{URL: "tcp://localhost:1883", ClientID: "pack-03", Will: func() ([]byte, error) { return []byte("{}"), nil }}, "a will needs both"},
-		{"will topic without a payload", Options{URL: "tcp://localhost:1883", ClientID: "pack-03", WillTopic: "t"}, "a will needs both"},
+		{"no client id", func(opts *Options) { opts.ClientID = "" }, "client id is required"},
+		{"no reconnect interval", func(opts *Options) { opts.Reconnect = backoff.Policy{} }, "reconnect: the interval must be positive"},
+		{"unparseable url", func(opts *Options) { opts.URL = "://nope" }, "broker url"},
+		{"missing ca file", func(opts *Options) {
+			opts.URL, opts.CAFile = "tls://mq.internal:8883", "/nonexistent/ca.pem"
+		}, "ca_file"},
+		{"will without a topic", func(opts *Options) { opts.Will = func() ([]byte, error) { return []byte("{}"), nil } }, "a will needs both"},
+		{"will topic without a payload", func(opts *Options) { opts.WillTopic = "t" }, "a will needs both"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			_, err := Dial(ctx, tc.opts)
+			opts := usable
+			tc.change(&opts)
+			_, err := Dial(ctx, opts)
 			if err == nil {
 				t.Fatal("expected an error")
 			}

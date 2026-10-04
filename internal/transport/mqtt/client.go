@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
-	"math/rand/v2"
 	"net/url"
 	"os"
 	"runtime"
@@ -17,6 +16,7 @@ import (
 
 	"github.com/eclipse/paho.golang/autopaho"
 	"github.com/eclipse/paho.golang/paho"
+	"github.com/skuhus/device-agent/internal/backoff"
 )
 
 // QoS levels, as DESIGN-V2.md, "Message formats", assigns them.
@@ -44,13 +44,9 @@ type Options struct {
 	Insecure  bool
 	Keepalive time.Duration
 
-	// ReconnectInterval is the wait between attempts to connect. With
-	// ReconnectBackoff the wait doubles after each failed attempt, up to
-	// BackoffMax, and is spread by BackoffJitter, a fraction either way.
-	ReconnectInterval time.Duration
-	ReconnectBackoff  bool
-	BackoffMax        time.Duration
-	BackoffJitter     float64
+	// Reconnect is the wait after a failed attempt to connect. The first
+	// attempt, at start and after a connection is lost, goes at once.
+	Reconnect backoff.Policy
 
 	// Will composes the offline message the broker publishes on WillTopic if
 	// this agent stops without disconnecting. It is called for every connection
@@ -106,6 +102,9 @@ func Dial(ctx context.Context, opts Options) (*Client, error) {
 	if opts.ClientID == "" {
 		return nil, errors.New("mqtt: client id is required")
 	}
+	if err := opts.Reconnect.Validate(); err != nil {
+		return nil, fmt.Errorf("mqtt: reconnect: %w", err)
+	}
 	brokerURL, err := url.Parse(opts.URL)
 	if err != nil {
 		return nil, fmt.Errorf("mqtt: broker url %q: %w", opts.URL, err)
@@ -145,7 +144,7 @@ func clientConfig(opts Options, brokerURL *url.URL, tlsCfg *tls.Config, log *slo
 		SessionExpiryInterval:         0,
 		ConnectUsername:               opts.Username,
 		ConnectPassword:               []byte(opts.Password),
-		ReconnectBackoff:              reconnectDelay(opts.ReconnectInterval, opts.ReconnectBackoff, opts.BackoffMax, opts.BackoffJitter),
+		ReconnectBackoff:              reconnectDelay(opts.Reconnect),
 		ConnectTimeout:                10 * time.Second,
 		// Queue stays nil on purpose. With a queue, a publish while
 		// disconnected is accepted and sent later, which is exactly the
@@ -381,34 +380,13 @@ func keepaliveSeconds(delay time.Duration) uint16 {
 // reconnectDelay returns autopaho's wait before each attempt to connect.
 // autopaho asks for attempt 0 before the first attempt, at start and after a
 // connection is lost, and that one goes at once (autopaho/backoff.go, Backoff).
-// After a failed attempt the wait is the interval, every time, unless grow is
-// set (#13 Q3). With grow it doubles after each failed attempt up to maxDelay,
-// with proportional jitter, so that stations that lost the broker together do
-// not retry in lockstep.
-func reconnectDelay(interval time.Duration, grow bool, maxDelay time.Duration, jitter float64) func(int) time.Duration {
-	if interval <= 0 {
-		interval = time.Second
-	}
-	if maxDelay < interval {
-		maxDelay = interval
-	}
+// Attempt n after it is retry n of the policy.
+func reconnectDelay(policy backoff.Policy) func(attempt int) time.Duration {
 	return func(attempt int) time.Duration {
 		if attempt <= 0 {
 			return 0
 		}
-		if !grow {
-			return interval
-		}
-		delay := interval
-		for i := 1; i < attempt && delay < maxDelay; i++ {
-			delay *= 2
-		}
-		delay = min(delay, maxDelay)
-		if jitter <= 0 {
-			return delay
-		}
-		spread := float64(delay) * jitter
-		return time.Duration(float64(delay) - spread + rand.Float64()*2*spread)
+		return policy.Wait(attempt)
 	}
 }
 
