@@ -131,6 +131,7 @@ func TestReadingsEventsKeepaliveAndCleanStop(t *testing.T) {
 
 // A tx published through the broker, as a sender does, reaches the device's
 // port byte for byte, and its sender hears that it was accepted and written.
+// Sent again, it is answered already_written and not written twice.
 func TestTxReachesThePort(t *testing.T) {
 	run := newRun(t)
 	agent := run.start(t)
@@ -164,7 +165,20 @@ func TestTxReachesThePort(t *testing.T) {
 	if detail["bytes_written"] != float64(len(job)) || results[1].qos != 1 || results[1].str("sender") != "e2e" {
 		t.Errorf("written = %v at QoS %d, want %d bytes from e2e at QoS 1", results[1].body, results[1].qos, len(job))
 	}
-	run.waitFor(t, "a keepalive counting the tx", func(m message) bool {
+	// The same tx again, as a sender that timed out would resend it: it is
+	// answered and not written a second time (#11 Q6a).
+	if _, err := run.observer.Publish(ctx, &paho.Publish{Topic: run.deviceTopic("tx"), QoS: 1, Payload: payload,
+		Properties: &paho.PublishProperties{MessageExpiry: &expiry}}); err != nil {
+		t.Fatalf("publish the tx again: %v", err)
+	}
+	all := run.waitForCount(t, "the resend's answer", 3, func(m message) bool { return m.str("kind") == "tx_result" && m.str("tx_id") == id })
+	if all[2].str("state") != "written" || all[2].str("code") != "already_written" {
+		t.Errorf("the resend got %s/%s, want written/already_written", all[2].str("state"), all[2].str("code"))
+	}
+	if more := readFor(t, run.master, time.Second); len(more) > 0 {
+		t.Errorf("the resend put %d more bytes on the port", len(more))
+	}
+	run.waitFor(t, "a keepalive counting one write", func(m message) bool {
 		device, ok := m.firstDevice()
 		return m.str("kind") == "keepalive" && ok && device["tx_written"] == float64(1)
 	})
@@ -175,6 +189,23 @@ func TestTxReachesThePort(t *testing.T) {
 	}
 	if written := agent.records(t, "tx written"); len(written) != 1 {
 		t.Errorf("%d tx written records in the log, want 1", len(written))
+	}
+}
+
+// readFor reads whatever the pseudo-terminal's master gets within d.
+func readFor(t *testing.T, master *os.File, d time.Duration) []byte {
+	t.Helper()
+	var got []byte
+	buf := make([]byte, 4096)
+	if err := master.SetReadDeadline(time.Now().Add(d)); err != nil {
+		t.Fatalf("read deadline: %v", err)
+	}
+	for {
+		k, err := master.Read(buf)
+		got = append(got, buf[:k]...)
+		if err != nil {
+			return got
+		}
 	}
 }
 
