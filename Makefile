@@ -53,6 +53,7 @@ help:
 	@echo "broker-reset   stop it and discard its volume"
 	@echo "broker-logs    tail its log"
 	@echo "consume        subscribe and print what reaches the broker"
+	@echo "send-tx        publish a tx to TX_TOPIC and print its results (FLAGS: --text, --file, --hex)"
 	@echo "test-broker    publish the v2 messages through the broker, check each filter and the users' topic permissions"
 	@echo "test-integration  run the agent against the broker and a pseudo-terminal, end to end"
 	@echo
@@ -236,6 +237,15 @@ consume: caches network
 		-w /src -e GOFLAGS=-buildvcs=false $(GO_IMAGE) \
 		go -C dev run ./consumer --broker $(BROKER) --username $(INGEST_USER) --password $(INGEST_PASS) \
 			--topic '$(TOPIC)' $(FLAGS)
+
+# A tx, sent as the ingest user. The binary is built first and run from /src, so
+# that --file takes a path from the repository root.
+TX_TOPIC ?= skuhus/acme/vasby/pack-03/scanner-main/tx
+
+.PHONY: send-tx
+send-tx: caches network
+	$(GO_NET) sh -c 'go -C dev build -o /tmp/sendtx ./sendtx && /tmp/sendtx --broker $(BROKER) \
+		--username $(INGEST_USER) --password $(INGEST_PASS) --topic "$(TX_TOPIC)" $(FLAGS)'
 
 # The consumer filters in internal/wire, checked against a real broker and its
 # topic permissions. Not part of check, which needs no broker: run broker-up
