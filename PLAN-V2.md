@@ -490,6 +490,10 @@ Depends on: T2 to T12, T14, T16.
 
 ### T14. tx: receive and write
 
+Status: done on branch gh-19-tx, not yet merged. One question is open: what a
+tx gets when the agent stops before writing it (#19 Q1). Until it is answered,
+such a tx is recorded in the log with its data and gets no result.
+
 Motivation. Printers are the main reason for writing (DESIGN-V2.md, "Scope"),
 and 2.0.0 now releases writing (DESIGN-V2.md, "Version"). The bench printer is
 an Epson TM-T20III on RS-232 through an ATEN UC-232A adapter (PL2303), at 9600
