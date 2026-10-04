@@ -19,6 +19,7 @@ func TestConfigFrom030IsRefusedNamingEveryRemovedKey(t *testing.T) {
 	want := []string{
 		"line 89: devices[0].terminator was removed in 2.0.0; rename it to separator",
 		"line 102: devices[0].assert_config was removed in 2.0.0; remove it; the agent does not configure devices",
+		"line 59: broker.connect_backoff was removed in 2.0.0; use broker.reconnect_interval, and broker.reconnect_backoff to make the wait grow",
 		"line 113: delivery.scan_ttl was removed in 2.0.0; set message_expiry on each device",
 		"line 131: logging.audit_file was removed in 2.0.0; use logging.file",
 		"line 132: logging.audit_max_size_mb was removed in 2.0.0; use logging.max_size_mb",
@@ -285,5 +286,87 @@ func TestSampleConfigValidates(t *testing.T) {
 	}
 	if len(cfg.Devices) != 1 || cfg.Devices[0].Separator != "\r" {
 		t.Errorf("devices = %+v, want the one sample device with a CR separator", cfg.Devices)
+	}
+}
+
+// The agent tries the broker every second by default, with the backoff off,
+// and a station can set another interval in its file or its environment
+// (#13 Q3).
+func TestReconnectEverySecondUnlessConfigured(t *testing.T) {
+	withoutInterval := strings.Replace(validConfig, "  reconnect_interval: 1s\n", "", 1)
+	if withoutInterval == validConfig {
+		t.Fatal("validConfig no longer sets reconnect_interval; this test needs a file without it")
+	}
+	cfg, _, err := load(t, newFixture(t, withoutInterval).path, noEnv(), Overrides{})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.Broker.ReconnectInterval.Duration(); got != time.Second {
+		t.Errorf("default reconnect_interval = %s, want 1s", got)
+	}
+	if cfg.Broker.ReconnectBackoff.Enabled {
+		t.Error("the backoff is on by default, want off")
+	}
+
+	set := strings.Replace(validConfig, "  reconnect_interval: 1s\n",
+		"  reconnect_interval: 5s\n  reconnect_backoff: { enabled: true, max: 2m }\n", 1)
+	cfg, _, err = load(t, newFixture(t, set).path, noEnv(), Overrides{})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	backoff := cfg.Broker.ReconnectBackoff
+	if cfg.Broker.ReconnectInterval.Duration() != 5*time.Second || !backoff.Enabled ||
+		backoff.Max.Duration() != 2*time.Minute || backoff.Jitter != DefaultBackoffJitter {
+		t.Errorf("reconnect_interval %s, reconnect_backoff %+v; want 5s, enabled, max 2m, the default jitter",
+			cfg.Broker.ReconnectInterval, backoff)
+	}
+
+	cfg, _, err = load(t, newFixture(t, validConfig).path, []string{EnvPrefix + "BROKER_RECONNECT_INTERVAL=3s"}, Overrides{})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.Broker.ReconnectInterval.Duration(); got != 3*time.Second {
+		t.Errorf("reconnect_interval from the environment = %s, want 3s", got)
+	}
+}
+
+// Max and jitter are checked only while the backoff is on, since off they do
+// nothing; the interval is always checked.
+func TestReconnectSettingsAreValidated(t *testing.T) {
+	cases := []struct {
+		name, settings, want string
+	}{
+		{"zero interval", "  reconnect_interval: 0s\n", "broker.reconnect_interval must be positive"},
+		{"max below the interval", "  reconnect_interval: 5s\n  reconnect_backoff: { enabled: true, max: 1s }\n",
+			"broker.reconnect_backoff.max (1s) must be at least broker.reconnect_interval (5s)"},
+		{"jitter above 1", "  reconnect_interval: 1s\n  reconnect_backoff: { enabled: true, jitter: 1.5 }\n",
+			"broker.reconnect_backoff.jitter must be between 0 and 1"},
+		{"backoff off ignores max and jitter", "  reconnect_interval: 5s\n  reconnect_backoff: { enabled: false, max: 1s, jitter: 1.5 }\n", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			body := strings.Replace(validConfig, "  reconnect_interval: 1s\n", tc.settings, 1)
+			_, _, err := load(t, newFixture(t, body).path, noEnv(), Overrides{})
+			switch {
+			case tc.want == "" && err != nil:
+				t.Errorf("rejected: %v", err)
+			case tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want)):
+				t.Errorf("error = %v, want it to contain %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// A file that still has 0.3.0's connect_backoff is refused with its
+// replacement named, rather than reconnecting on a schedule nobody chose.
+func TestConnectBackoffIsRefusedNamingItsReplacement(t *testing.T) {
+	body := strings.Replace(validConfig, "  reconnect_interval: 1s\n", "  connect_backoff: { initial: 1s, max: 60s, jitter: 0.3 }\n", 1)
+	_, _, err := load(t, newFixture(t, body).path, noEnv(), Overrides{})
+	if err == nil {
+		t.Fatal("broker.connect_backoff was accepted")
+	}
+	want := "broker.connect_backoff was removed in 2.0.0; use broker.reconnect_interval, and broker.reconnect_backoff to make the wait grow"
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("error = %v, want it to contain %q", err, want)
 	}
 }

@@ -344,7 +344,7 @@ func (r *run) start(t *testing.T) *agentProcess {
 broker:
   url: tcp://%s
   insecure: true
-  connect_backoff: { initial: 100ms, max: 500ms }
+  reconnect_interval: 100ms
 devices:
   - id: %s
     path: %s

@@ -224,19 +224,20 @@ func runAgent(ctx context.Context, cfg *config.Config, warnings []config.Warning
 	// second would.
 	connected := make(chan struct{}, 1)
 	client, err := mqtt.Dial(connCtx, mqtt.Options{
-		URL:            cfg.Broker.URL,
-		ClientID:       cfg.Identity.Instance,
-		Username:       creds.Username,
-		Password:       creds.Password,
-		CAFile:         cfg.Broker.CAFile,
-		Insecure:       cfg.Broker.Insecure,
-		Keepalive:      cfg.Broker.Keepalive.Duration(),
-		BackoffInitial: cfg.Broker.ConnectBackoff.Initial.Duration(),
-		BackoffMax:     cfg.Broker.ConnectBackoff.Max.Duration(),
-		BackoffJitter:  cfg.Broker.ConnectBackoff.Jitter,
-		WillTopic:      agentTopics.Status(),
-		Will:           will,
-		Logger:         log,
+		URL:               cfg.Broker.URL,
+		ClientID:          cfg.Identity.Instance,
+		Username:          creds.Username,
+		Password:          creds.Password,
+		CAFile:            cfg.Broker.CAFile,
+		Insecure:          cfg.Broker.Insecure,
+		Keepalive:         cfg.Broker.Keepalive.Duration(),
+		ReconnectInterval: cfg.Broker.ReconnectInterval.Duration(),
+		ReconnectBackoff:  cfg.Broker.ReconnectBackoff.Enabled,
+		BackoffMax:        cfg.Broker.ReconnectBackoff.Max.Duration(),
+		BackoffJitter:     cfg.Broker.ReconnectBackoff.Jitter,
+		WillTopic:         agentTopics.Status(),
+		Will:              will,
+		Logger:            log,
 		OnUp: func() {
 			select {
 			case connected <- struct{}{}:

@@ -54,36 +54,50 @@ func TestKeepaliveSeconds(t *testing.T) {
 	}
 }
 
-// Section 4.4's rule against spinning applies to the broker as well: the delay
-// has to grow, and stop at the ceiling.
-func TestBackoffGrowsAndIsBounded(t *testing.T) {
-	initial, maxDelay := time.Second, 8*time.Second
-	b := backoff(initial, maxDelay, 0)
+// By default the agent tries the broker at once, at start and after losing it,
+// and then every interval, exactly: the backoff is off and so is its jitter
+// (#13 Q3). autopaho asks for attempt 0 before the first attempt.
+func TestReconnectEveryIntervalWithTheBackoffOff(t *testing.T) {
+	delay := reconnectDelay(time.Second, false, time.Minute, 0.3)
+	if got := delay(0); got != 0 {
+		t.Errorf("wait before the first attempt = %s, want none", got)
+	}
+	for attempt := 1; attempt <= 20; attempt++ {
+		if got := delay(attempt); got != time.Second {
+			t.Errorf("wait before attempt %d = %s, want 1s", attempt, got)
+		}
+	}
+}
 
-	want := []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second, 8 * time.Second}
+// With the backoff on, the wait doubles after each failed attempt and stops at
+// its ceiling, so that a broker that stays away is not tried every interval.
+func TestReconnectBackoffGrowsAndIsBounded(t *testing.T) {
+	delay := reconnectDelay(time.Second, true, 8*time.Second, 0)
+	want := []time.Duration{0, time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second, 8 * time.Second}
 	for attempt, w := range want {
-		if got := b(attempt); got != w {
-			t.Errorf("backoff attempt %d = %s, want %s", attempt, got, w)
+		if got := delay(attempt); got != w {
+			t.Errorf("wait before attempt %d = %s, want %s", attempt, got, w)
 		}
 	}
 }
 
 // Jitter is what keeps a site full of stations from reconnecting in lockstep
-// after a broker restart, so it has to actually vary, and stay in range.
-func TestBackoffJitterVariesWithinBounds(t *testing.T) {
+// after a broker restart, so with the backoff on it has to vary, and stay in
+// range.
+func TestReconnectBackoffJitterVariesWithinBounds(t *testing.T) {
 	const jitter = 0.3
-	b := backoff(time.Second, time.Minute, jitter)
+	delay := reconnectDelay(time.Second, true, time.Minute, jitter)
 
 	seen := make(map[time.Duration]bool)
 	for i := 0; i < 50; i++ {
-		got := b(0)
+		got := delay(1)
 		if got < time.Duration(float64(time.Second)*(1-jitter)) || got > time.Duration(float64(time.Second)*(1+jitter)) {
-			t.Fatalf("backoff = %s, outside 1s +/- %v%%", got, jitter*100)
+			t.Fatalf("wait = %s, outside 1s +/- %v%%", got, jitter*100)
 		}
 		seen[got] = true
 	}
 	if len(seen) < 10 {
-		t.Errorf("only %d distinct delays in 50 draws; the jitter is not spreading reconnects", len(seen))
+		t.Errorf("only %d distinct waits in 50 draws; the jitter is not spreading reconnects", len(seen))
 	}
 }
 

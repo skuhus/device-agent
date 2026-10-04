@@ -62,7 +62,10 @@ type Broker struct {
 	CAFile          string   `yaml:"ca_file"`
 	Insecure        bool     `yaml:"insecure"`
 	Keepalive       Duration `yaml:"keepalive"`
-	ConnectBackoff  Backoff  `yaml:"connect_backoff"`
+	// ReconnectInterval is the wait between attempts to connect, while the
+	// broker cannot be reached (#13 Q3).
+	ReconnectInterval Duration         `yaml:"reconnect_interval"`
+	ReconnectBackoff  ReconnectBackoff `yaml:"reconnect_backoff"`
 }
 
 // RedactedURL is the broker URL with any credentials replaced by "xxxxx". The
@@ -77,9 +80,13 @@ func (broker Broker) RedactedURL() string {
 	return parsed.Redacted()
 }
 
-// Backoff is an exponential backoff schedule with proportional jitter.
-type Backoff struct {
-	Initial Duration `yaml:"initial"`
+// ReconnectBackoff makes the wait between attempts to connect grow. Enabled,
+// the wait doubles after each failed attempt, from the reconnect interval up to
+// Max, and each wait is spread by Jitter, a fraction of it either way. Off,
+// which is the default, every wait is the reconnect interval exactly, and Max
+// and Jitter are not used (#13 Q3).
+type ReconnectBackoff struct {
+	Enabled bool     `yaml:"enabled"`
 	Max     Duration `yaml:"max"`
 	Jitter  float64  `yaml:"jitter"`
 }

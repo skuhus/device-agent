@@ -140,6 +140,7 @@ func Load(opts Options) (*Config, []Warning, error) {
 // station learn what changed from the error rather than from the release notes.
 // "devices[]" matches the key in every device entry.
 var removedKeys = []struct{ path, instead string }{
+	{"broker.connect_backoff", "use broker.reconnect_interval, and broker.reconnect_backoff to make the wait grow"},
 	{"delivery.scan_ttl", "set message_expiry on each device"},
 	{"logging.audit_file", "use logging.file"},
 	{"logging.audit_max_size_mb", "use logging.max_size_mb"},
@@ -324,6 +325,9 @@ func envTargets(cfg *Config) map[string]func(string) error {
 		EnvPrefix + "BROKER_CA_FILE":          setString(&cfg.Broker.CAFile),
 		EnvPrefix + "BROKER_INSECURE":         setBool(&cfg.Broker.Insecure),
 		EnvPrefix + "BROKER_KEEPALIVE":        setDuration(&cfg.Broker.Keepalive),
+		// reconnect_backoff is a mapping and has no variable, as devices have
+		// none: a mapping does not map onto flat variables.
+		EnvPrefix + "BROKER_RECONNECT_INTERVAL": setDuration(&cfg.Broker.ReconnectInterval),
 
 		EnvPrefix + "DELIVERY_PUBLISH_TIMEOUT": setDuration(&cfg.Delivery.PublishTimeout),
 		EnvPrefix + "DELIVERY_BUFFER_SIZE":     setInt(&cfg.Delivery.BufferSize),

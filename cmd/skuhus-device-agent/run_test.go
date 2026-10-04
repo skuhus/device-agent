@@ -57,7 +57,7 @@ func TestAgentLogKeepsTheRulesInBothDestinations(t *testing.T) {
 broker:
   url: tcp://127.0.0.1:1
   insecure: true
-  connect_backoff: { initial: 100ms, max: 200ms }
+  reconnect_interval: 100ms
 devices:
   - id: scanner-main
     path: %s

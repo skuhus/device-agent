@@ -48,7 +48,7 @@ broker:
   url: tls://mq.internal:8883
   credentials_file: {{credentials}}
   keepalive: 30s
-  connect_backoff: { initial: 1s, max: 60s, jitter: 0.3 }
+  reconnect_interval: 1s
 
 devices:
   - id: scanner-main
@@ -155,9 +155,10 @@ devices:
 		{"message_expiry", d.MessageExpiry.Duration(), DefaultMessageExpiry},
 		{"device_type", d.DeviceType, ""},
 		{"keepalive", cfg.Broker.Keepalive.Duration(), DefaultKeepalive},
-		{"connect_backoff.initial", cfg.Broker.ConnectBackoff.Initial.Duration(), DefaultBackoffInitial},
-		{"connect_backoff.max", cfg.Broker.ConnectBackoff.Max.Duration(), DefaultBackoffMax},
-		{"connect_backoff.jitter", cfg.Broker.ConnectBackoff.Jitter, DefaultBackoffJitter},
+		{"reconnect_interval", cfg.Broker.ReconnectInterval.Duration(), DefaultReconnectInterval},
+		{"reconnect_backoff.enabled", cfg.Broker.ReconnectBackoff.Enabled, false},
+		{"reconnect_backoff.max", cfg.Broker.ReconnectBackoff.Max.Duration(), DefaultBackoffMax},
+		{"reconnect_backoff.jitter", cfg.Broker.ReconnectBackoff.Jitter, DefaultBackoffJitter},
 		{"publish_timeout", cfg.Delivery.PublishTimeout.Duration(), DefaultPublishTimeout},
 		{"buffer_size", cfg.Delivery.BufferSize, DefaultBufferSize},
 		{"keepalive_interval", cfg.Status.KeepaliveInterval.Duration(), DefaultKeepaliveInterval},
@@ -603,8 +604,8 @@ func TestValidateBrokerScheme(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			problems, _ := validateBroker(Broker{
 				URL: tc.url, Insecure: tc.insecure, CredentialsFile: "",
-				Keepalive:      Duration(DefaultKeepalive),
-				ConnectBackoff: Backoff{Initial: Duration(time.Second), Max: Duration(time.Minute), Jitter: 0.3},
+				Keepalive:         Duration(DefaultKeepalive),
+				ReconnectInterval: Duration(time.Second),
 			}, map[string]string{EnvMQTTPassword: "x"})
 			if gotErr := len(problems) > 0; gotErr != tc.wantErr {
 				t.Errorf("error = %t, want %t (%v)", gotErr, tc.wantErr, problems)
@@ -618,8 +619,8 @@ func TestValidateBrokerScheme(t *testing.T) {
 func TestValidatePlaintextBrokerWarnsWhenAllowed(t *testing.T) {
 	problems, warnings := validateBroker(Broker{
 		URL: "tcp://mq.internal:1883", Insecure: true,
-		Keepalive:      Duration(DefaultKeepalive),
-		ConnectBackoff: Backoff{Initial: Duration(time.Second), Max: Duration(time.Minute), Jitter: 0.3},
+		Keepalive:         Duration(DefaultKeepalive),
+		ReconnectInterval: Duration(time.Second),
 	}, map[string]string{EnvMQTTPassword: "x"})
 	if len(problems) > 0 {
 		t.Fatalf("insecure plaintext should be allowed: %v", problems)

@@ -210,9 +210,11 @@ skuhus-device-agent run --config /etc/skuhus-device-agent/config.yaml
 
 Opens the configured devices, connects to the broker, and publishes what each
 device reads until stopped. A device that is unplugged and a broker that is down
-are both expected conditions: the agent keeps running, reopens the device and
-reconnects with jittered backoff. Each failed attempt to open a device is a
-`port_open_failed` event with its error class, and is counted in the keepalive.
+are both expected conditions: the agent keeps running, and reopens the device
+with jittered backoff. It tries the broker at once and then every second,
+`broker.reconnect_interval`; `broker.reconnect_backoff` makes that wait grow
+instead. Each failed attempt to open a device is a `port_open_failed` event
+with its error class, and is counted in the keepalive.
 
 SIGTERM and SIGINT stop it in this order: the keepalive stops; the devices
 close, so nothing new arrives; what is already framed is published, for at most
@@ -260,10 +262,10 @@ The full rules are in DESIGN-V2.md, "Logging: one common log".
 
 Precedence is CLI flags, then `SH_DEV_AGENT_*` environment variables, then the
 config file, then defaults. `SH_DEV_AGENT_CONFIG` names the file. Every key
-outside `devices` and `broker.connect_backoff` has a variable named after its
-section and key, such as `SH_DEV_AGENT_BROKER_URL` for `broker.url`; devices
-have none, because a list does not map onto flat variables. `run` and
-`validate` take flags for the identity, the broker and the log:
+outside `devices` and `broker.reconnect_backoff` has a variable named after its
+section and key, such as `SH_DEV_AGENT_BROKER_URL` for `broker.url`; those two
+have none, because a list or a mapping does not map onto flat variables. `run`
+and `validate` take flags for the identity, the broker and the log:
 
 ```
 --config --project --site --station --instance

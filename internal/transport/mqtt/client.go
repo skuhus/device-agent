@@ -44,9 +44,13 @@ type Options struct {
 	Insecure  bool
 	Keepalive time.Duration
 
-	BackoffInitial time.Duration
-	BackoffMax     time.Duration
-	BackoffJitter  float64
+	// ReconnectInterval is the wait between attempts to connect. With
+	// ReconnectBackoff the wait doubles after each failed attempt, up to
+	// BackoffMax, and is spread by BackoffJitter, a fraction either way.
+	ReconnectInterval time.Duration
+	ReconnectBackoff  bool
+	BackoffMax        time.Duration
+	BackoffJitter     float64
 
 	// Will composes the offline message the broker publishes on WillTopic if
 	// this agent stops without disconnecting. It is called for every connection
@@ -122,7 +126,7 @@ func clientConfig(opts Options, brokerURL *url.URL, tlsCfg *tls.Config, log *slo
 		SessionExpiryInterval:         0,
 		ConnectUsername:               opts.Username,
 		ConnectPassword:               []byte(opts.Password),
-		ReconnectBackoff:              backoff(opts.BackoffInitial, opts.BackoffMax, opts.BackoffJitter),
+		ReconnectBackoff:              reconnectDelay(opts.ReconnectInterval, opts.ReconnectBackoff, opts.BackoffMax, opts.BackoffJitter),
 		ConnectTimeout:                10 * time.Second,
 		// Queue stays nil on purpose. With a queue, a publish while
 		// disconnected is accepted and sent later, which is exactly the
@@ -304,24 +308,32 @@ func keepaliveSeconds(delay time.Duration) uint16 {
 	return uint16(seconds)
 }
 
-// backoff returns autopaho's per-attempt delay: exponential from initial to
-// max, with proportional jitter so a site full of stations does not reconnect
-// in lockstep after a broker restart.
-func backoff(initial, maxDelay time.Duration, jitter float64) func(int) time.Duration {
-	if initial <= 0 {
-		initial = time.Second
+// reconnectDelay returns autopaho's wait before each attempt to connect.
+// autopaho asks for attempt 0 before the first attempt, at start and after a
+// connection is lost, and that one goes at once (autopaho/backoff.go, Backoff).
+// After a failed attempt the wait is the interval, every time, unless grow is
+// set (#13 Q3). With grow it doubles after each failed attempt up to maxDelay,
+// with proportional jitter, so that stations that lost the broker together do
+// not retry in lockstep.
+func reconnectDelay(interval time.Duration, grow bool, maxDelay time.Duration, jitter float64) func(int) time.Duration {
+	if interval <= 0 {
+		interval = time.Second
 	}
-	if maxDelay < initial {
-		maxDelay = initial
+	if maxDelay < interval {
+		maxDelay = interval
 	}
 	return func(attempt int) time.Duration {
-		delay := initial
-		for i := 0; i < attempt && delay < maxDelay; i++ {
+		if attempt <= 0 {
+			return 0
+		}
+		if !grow {
+			return interval
+		}
+		delay := interval
+		for i := 1; i < attempt && delay < maxDelay; i++ {
 			delay *= 2
 		}
-		if delay > maxDelay {
-			delay = maxDelay
-		}
+		delay = min(delay, maxDelay)
 		if jitter <= 0 {
 			return delay
 		}

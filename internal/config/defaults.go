@@ -17,10 +17,14 @@ const (
 	// DefaultMessageExpiry is v1's delivery.scan_ttl, now set per device.
 	DefaultMessageExpiry = 30 * time.Second
 
-	DefaultKeepalive      = 30 * time.Second
-	DefaultBackoffInitial = 1 * time.Second
-	DefaultBackoffMax     = 60 * time.Second
-	DefaultBackoffJitter  = 0.3
+	DefaultKeepalive = 30 * time.Second
+	// DefaultReconnectInterval is how often the agent tries the broker while it
+	// cannot be reached, with the backoff off, which is its default (#13 Q3).
+	DefaultReconnectInterval = 1 * time.Second
+	// DefaultBackoffMax and DefaultBackoffJitter apply once the backoff is
+	// enabled. They are the specification's connect_backoff values.
+	DefaultBackoffMax    = 60 * time.Second
+	DefaultBackoffJitter = 0.3
 
 	DefaultPublishTimeout = 2 * time.Second
 	DefaultBufferSize     = 64
@@ -57,11 +61,11 @@ func DefaultPath() string {
 func Defaults() Config {
 	return Config{
 		Broker: Broker{
-			Keepalive: Duration(DefaultKeepalive),
-			ConnectBackoff: Backoff{
-				Initial: Duration(DefaultBackoffInitial),
-				Max:     Duration(DefaultBackoffMax),
-				Jitter:  DefaultBackoffJitter,
+			Keepalive:         Duration(DefaultKeepalive),
+			ReconnectInterval: Duration(DefaultReconnectInterval),
+			ReconnectBackoff: ReconnectBackoff{
+				Max:    Duration(DefaultBackoffMax),
+				Jitter: DefaultBackoffJitter,
 			},
 		},
 		Delivery: Delivery{

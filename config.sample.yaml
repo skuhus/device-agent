@@ -54,7 +54,16 @@ broker:
   # insecure: false
 
   keepalive: 30s
-  connect_backoff: { initial: 1s, max: 60s, jitter: 0.3 }
+
+  # While the broker cannot be reached, the agent tries it at once and then
+  # every reconnect_interval. Every reading made while the connection is down
+  # fails, so a short interval keeps that window short.
+  reconnect_interval: 1s
+  # Off by default. Enabled, the wait doubles after each failed attempt, from
+  # reconnect_interval up to max, and each wait is spread by jitter, a fraction
+  # either way, so that stations which lost the broker together do not retry
+  # in step. Off, max and jitter are not used.
+  reconnect_backoff: { enabled: false, max: 60s, jitter: 0.3 }
 
 devices:
   # A level of this device's topics, skuhus/<project>/<site>/<station>/<id>/rx
