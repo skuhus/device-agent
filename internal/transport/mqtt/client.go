@@ -61,12 +61,31 @@ type Options struct {
 	WillTopic string
 	Will      func() ([]byte, error)
 
+	// Subscriptions are the topics subscribed to at QoS 1 on every
+	// connection: each starts clean, so the broker keeps no subscription
+	// across a reconnect. OnMessage receives what arrives on them. It is
+	// called on paho's own goroutine, one message after another, and must not
+	// block: hand the message on.
+	Subscriptions []string
+	OnMessage     func(Message)
+
 	Logger *slog.Logger
 	// OnUp and OnDown report connection transitions. They are called from the
 	// connection manager's own goroutine and must not block: hand the event to
 	// a channel rather than publishing from inside them.
 	OnUp   func()
 	OnDown func()
+}
+
+// Message is a publish that arrived on a subscription.
+type Message struct {
+	Topic   string
+	Payload []byte
+	// Expiry is what remained of the message's expiry when it arrived, and
+	// HasExpiry whether it had one at all.
+	Expiry    time.Duration
+	HasExpiry bool
+	Received  time.Time
 }
 
 // Client is the agent's connection to the broker.
@@ -132,8 +151,13 @@ func clientConfig(opts Options, brokerURL *url.URL, tlsCfg *tls.Config, log *slo
 		// disconnected is accepted and sent later, which is exactly the
 		// offline replay section 6 forbids. Nil makes it fail immediately.
 		Queue: nil,
-		OnConnectionUp: func(_ *autopaho.ConnectionManager, connack *paho.Connack) {
+		OnConnectionUp: func(cm *autopaho.ConnectionManager, connack *paho.Connack) {
 			log.Info("broker connected", "session_present", connack.SessionPresent)
+			if len(opts.Subscriptions) > 0 {
+				// Subscribing waits for the broker's answer, and this must
+				// not block the connection manager.
+				go subscribe(cm, opts.Subscriptions, log)
+			}
 			if opts.OnUp != nil {
 				opts.OnUp()
 			}
@@ -156,6 +180,14 @@ func clientConfig(opts Options, brokerURL *url.URL, tlsCfg *tls.Config, log *slo
 			ClientID: opts.ClientID,
 		},
 	}
+	if opts.OnMessage != nil {
+		cfg.OnPublishReceived = []func(paho.PublishReceived) (bool, error){
+			func(received paho.PublishReceived) (bool, error) {
+				opts.OnMessage(messageOf(received.Packet, time.Now()))
+				return true, nil
+			},
+		}
+	}
 	if opts.Will != nil {
 		var noDelay uint32 // Publish the will immediately; a delay only hides a death.
 		cfg.WillMessage = &paho.WillMessage{Topic: opts.WillTopic, QoS: qosAtLeastOnce}
@@ -176,6 +208,44 @@ func clientConfig(opts Options, brokerURL *url.URL, tlsCfg *tls.Config, log *slo
 		}
 	}
 	return cfg
+}
+
+// subscribe asks for every topic at QoS 1 and logs what the broker answered.
+// A refused topic is an ERROR: its device will never receive a tx, and the
+// usual cause, the station's topic permission, is the operator's to fix.
+func subscribe(cm *autopaho.ConnectionManager, topics []string, log *slog.Logger) {
+	subscriptions := make([]paho.SubscribeOptions, 0, len(topics))
+	for _, topic := range topics {
+		subscriptions = append(subscriptions, paho.SubscribeOptions{Topic: topic, QoS: qosAtLeastOnce})
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	suback, err := cm.Subscribe(ctx, &paho.Subscribe{Subscriptions: subscriptions})
+	if err != nil {
+		log.Error("subscribing failed; no tx will arrive until the next connection", "topics", topics, "error", err.Error())
+		return
+	}
+	for i, topic := range topics {
+		if i >= len(suback.Reasons) {
+			log.Error("the broker answered fewer subscriptions than were asked for", "topic", topic, "answers", len(suback.Reasons))
+			continue
+		}
+		if code := suback.Reasons[i]; code >= 0x80 {
+			log.Error("subscription refused; this device will receive no tx", "topic", topic, "reason", fmt.Sprintf("0x%02x", code))
+			continue
+		}
+		log.Info("subscribed", "topic", topic, "qos", suback.Reasons[i])
+	}
+}
+
+// messageOf takes what the agent needs from a received publish.
+func messageOf(packet *paho.Publish, received time.Time) Message {
+	message := Message{Topic: packet.Topic, Payload: packet.Payload, Received: received}
+	if packet.Properties != nil && packet.Properties.MessageExpiry != nil {
+		message.HasExpiry = true
+		message.Expiry = time.Duration(*packet.Properties.MessageExpiry) * time.Second
+	}
+	return message
 }
 
 // AwaitConnection blocks until the connection is up or ctx ends.

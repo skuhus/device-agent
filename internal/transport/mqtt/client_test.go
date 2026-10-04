@@ -288,3 +288,42 @@ func TestConnectionLinesReportEachTransition(t *testing.T) {
 		}
 	}
 }
+
+// A tx's expiry is what was left of its MQTT message expiry when it arrived,
+// and a tx without one says so rather than reading as expired.
+func TestMessagesCarryTheirExpiry(t *testing.T) {
+	received := time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
+	seconds := uint32(27)
+	with := messageOf(&paho.Publish{Topic: "skuhus/acme/vasby/pack-03/printer-1/tx", Payload: []byte("{}"),
+		Properties: &paho.PublishProperties{MessageExpiry: &seconds}}, received)
+	if !with.HasExpiry || with.Expiry != 27*time.Second || with.Received != received || with.Topic != "skuhus/acme/vasby/pack-03/printer-1/tx" {
+		t.Errorf("message = %+v, want a 27 s expiry from %s", with, received)
+	}
+	without := messageOf(&paho.Publish{Topic: "t", Payload: []byte("{}")}, received)
+	if without.HasExpiry || without.Expiry != 0 {
+		t.Errorf("message without an expiry = %+v", without)
+	}
+}
+
+// Every publish the connection receives reaches OnMessage, and is marked
+// handled.
+func TestReceivedPublishesReachOnMessage(t *testing.T) {
+	brokerURL, _ := url.Parse("tcp://skuhus-dev-rabbitmq:1883")
+	var got []Message
+	cfg := clientConfig(Options{ClientID: "pack-03", OnMessage: func(message Message) { got = append(got, message) }},
+		brokerURL, nil, slog.New(slog.DiscardHandler), &lineGate{})
+	if len(cfg.OnPublishReceived) != 1 {
+		t.Fatalf("%d publish handlers, want 1", len(cfg.OnPublishReceived))
+	}
+	handled, err := cfg.OnPublishReceived[0](paho.PublishReceived{Packet: &paho.Publish{Topic: "a/tx", Payload: []byte("job")}})
+	if !handled || err != nil {
+		t.Errorf("handler returned %t, %v; want handled", handled, err)
+	}
+	if len(got) != 1 || got[0].Topic != "a/tx" || string(got[0].Payload) != "job" {
+		t.Errorf("OnMessage got %+v", got)
+	}
+	none := clientConfig(Options{ClientID: "pack-03"}, brokerURL, nil, slog.New(slog.DiscardHandler), &lineGate{})
+	if len(none.OnPublishReceived) != 0 {
+		t.Errorf("a connection without OnMessage has %d publish handlers", len(none.OnPublishReceived))
+	}
+}
