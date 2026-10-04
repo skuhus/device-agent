@@ -129,6 +129,75 @@ func TestReadingsEventsKeepaliveAndCleanStop(t *testing.T) {
 	}
 }
 
+// A tx published through the broker, as a sender does, reaches the device's
+// port byte for byte, and its sender hears that it was accepted and written.
+func TestTxReachesThePort(t *testing.T) {
+	run := newRun(t)
+	agent := run.start(t)
+	run.waitFor(t, "port_opened", func(m message) bool { return m.isEvent(run.device, "port_opened") })
+	run.waitFor(t, "the agent to subscribe", func(m message) bool { return m.str("kind") == "keepalive" })
+	// Subscribing happens just after the connection comes up, and a keepalive
+	// goes out at the same moment; the record of the subscription is what says
+	// a tx can be sent.
+	waitUntil(t, "the tx subscription", 10*time.Second, func() bool { return len(agent.records(t, "subscribed")) > 0 })
+
+	job := append([]byte("\x1b@e2e "+run.id+"\n"), bytes.Repeat([]byte("0123456789abcdef"), 192)...)
+	const id = "0192a3b4-c5d6-4e8f-9a0b-1c2d3e4f5a6b"
+	payload, _ := json.Marshal(map[string]any{"schema": 2, "id": id, "sender": "e2e", "raw_b64": base64.StdEncoding.EncodeToString(job)})
+	expiry := uint32(30)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, err := run.observer.Publish(ctx, &paho.Publish{Topic: run.deviceTopic("tx"), QoS: 1, Payload: payload,
+		Properties: &paho.PublishProperties{MessageExpiry: &expiry}}); err != nil {
+		t.Fatalf("publish the tx: %v", err)
+	}
+
+	got := readExactly(t, run.master, len(job), 10*time.Second)
+	if !bytes.Equal(got, job) {
+		t.Errorf("the port got %d bytes that differ from the %d sent", len(got), len(job))
+	}
+	results := run.waitForCount(t, "accepted and written", 2, func(m message) bool { return m.str("kind") == "tx_result" && m.str("tx_id") == id })
+	if results[0].str("state") != "accepted" || results[1].str("state") != "written" {
+		t.Errorf("results = %s, %s; want accepted, then written", results[0].str("state"), results[1].str("state"))
+	}
+	detail, _ := results[1].body["detail"].(map[string]any)
+	if detail["bytes_written"] != float64(len(job)) || results[1].qos != 1 || results[1].str("sender") != "e2e" {
+		t.Errorf("written = %v at QoS %d, want %d bytes from e2e at QoS 1", results[1].body, results[1].qos, len(job))
+	}
+	run.waitFor(t, "a keepalive counting the tx", func(m message) bool {
+		device, ok := m.firstDevice()
+		return m.str("kind") == "keepalive" && ok && device["tx_written"] == float64(1)
+	})
+
+	agent.signal(t, syscall.SIGTERM)
+	if code := agent.wait(t, 15*time.Second); code != 0 {
+		t.Errorf("the agent exited %d on SIGTERM, want 0", code)
+	}
+	if written := agent.records(t, "tx written"); len(written) != 1 {
+		t.Errorf("%d tx written records in the log, want 1", len(written))
+	}
+}
+
+// readExactly reads n bytes from the pseudo-terminal's master, or fails once
+// timeout has passed.
+func readExactly(t *testing.T, master *os.File, n int, timeout time.Duration) []byte {
+	t.Helper()
+	var got []byte
+	buf := make([]byte, 4096)
+	deadline := time.Now().Add(timeout)
+	for len(got) < n {
+		if err := master.SetReadDeadline(deadline); err != nil {
+			t.Fatalf("read deadline: %v", err)
+		}
+		k, err := master.Read(buf)
+		got = append(got, buf[:k]...)
+		if err != nil {
+			t.Fatalf("after %d of %d bytes: %v", len(got), n, err)
+		}
+	}
+	return got
+}
+
 // SIGKILL leaves the broker to say the agent is gone: it publishes the will.
 func TestWillAfterSIGKILL(t *testing.T) {
 	run := newRun(t)
@@ -198,6 +267,8 @@ type run struct {
 	master   *os.File
 	slave    string
 	relay    *relay
+	// observer is the ingest user's connection, which also sends tx.
+	observer *paho.Client
 
 	mu       sync.Mutex
 	messages []message
@@ -248,6 +319,7 @@ func (r *run) subscribe(t *testing.T) {
 		t.Fatalf("connect as %s: %v, %v", user, err, ack)
 	}
 	t.Cleanup(func() { _ = client.Disconnect(&paho.Disconnect{}) })
+	r.observer = client
 	subscription, err := client.Subscribe(ctx, &paho.Subscribe{Subscriptions: []paho.SubscribeOptions{
 		{Topic: "skuhus/acme/vasby/pack-03/" + r.device + "/+", QoS: 1},
 		{Topic: r.agentTopic(), QoS: 1},
