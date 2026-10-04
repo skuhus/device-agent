@@ -263,10 +263,11 @@ the operating system reports it. Success says nothing about the device. Source:
 maintainer, 2026-09-29.
 
 On the bench printer, an Epson TM-T20III behind a PL2303 adapter at 9600 baud
-on macOS, the operating system took about 17 KB ahead of the line, and Drain
-returned as soon as write(2) did (docs/printers/epson-tm-t20iii.md). So
-`written` can come seconds before the device has the bytes, and the agent does
-not use Drain (T14).
+on macOS, the adapter's driver takes a job in 16 KB blocks. write(2) accepted
+16 KB at once, then blocked for 16.3 s, the time that block takes on the line,
+before it took the next; Drain returned as soon as write(2) did
+(docs/printers/epson-tm-t20iii.md). So `written` can come up to about 17 s
+before the device has the last bytes, and the agent does not use Drain (T14).
 
 `[Decided]` Several senders may write to one device, and the agent does not
 prevent it. Source: maintainer, 2026-09-29.
@@ -309,9 +310,12 @@ never dropped to make room: a sender that hears nothing resends, and a printer
 prints the job twice. Results cannot pile up during an outage, because no tx
 arrives without the connection.
 
-`[Open]` The result of a tx the agent stops before writing, queued or part
-written: #19 Q1. Until it is answered, such a tx is recorded in the log with
-its data and gets no result.
+`[Decided]` A tx the agent stops before writing fails as `agent_stopping`,
+with the bytes written. A tx being written when the agent starts to stop goes
+on for at most the drain's 5 s, with its port still open, and then stops after
+the chunk in hand; a queued one, or one that arrives while the agent stops, is
+not started and gets `bytes_written` 0. Source: maintainer, 2026-10-04
+(#19 Q1).
 
 A tx published while the agent is reconnecting must not be lost silently. v1
 connects with clean start and session expiry 0
@@ -1139,6 +1143,15 @@ deadline.
 This is an internal constant rather than a configuration key: it is a tuning
 value.
 
+A tx being written when the agent starts to stop has the same 5 s before the
+readers stop, since its port has to stay open (#19 Q1). It stops after the
+chunk in hand, and that chunk cannot be cut short: go.bug.st/serial writes on a
+blocking descriptor. On the bench adapter, which takes 16 KB at a time, the
+chunk in hand returned 9.8 s after the 5 s, and closing the port took another
+4.5 s, most likely while the driver sent the block it held; the whole stop took
+19.3 s. A write deadline needs a port layer of the agent's own, the one #5
+proposes.
+
 ### Shutdown does not wait on the network without a bound
 
 Disconnecting writes a DISCONNECT packet, which means writing to a socket that
@@ -1376,6 +1389,13 @@ Measured in M0 (docs/spikes/m0-mqtt5.md):
   honours their message expiry.
 - On 4.3.5 a retained message reaches only a subscription naming its exact
   topic, not a wildcard subscription. Measured on 2026-09-29, during T4.
+- On 4.3.5 a QoS 1 publish can be answered with PUBACK reason 0x83 although it
+  was delivered. Seen on 2026-10-04, during T14: two subscribers waited for a
+  tx result each, and the second result was published just as the first
+  subscriber disconnected. The second subscriber received it, and the agent got
+  0x83 and recorded the publish as failed. The agent cannot tell this from a
+  refusal, so a reading published at such a moment would be recorded as failed
+  too.
 
 ## Implementation approach
 
@@ -1408,9 +1428,8 @@ Leave behind:
 
 ## Open decisions
 
-One, in "Writing: tx": the result of a tx the agent stops before writing
-(#19 Q1). The maintainer's answers to #23 and, for the message formats, to #11,
-both on 2026-09-29, settled every earlier proposal and follow-up; they are
-recorded in their sections above.
+None. The maintainer's answers to #23 and, for the message formats, to #11,
+both on 2026-09-29, settled every proposal and follow-up, and later questions
+were answered on their tickets; they are recorded in their sections above.
 
 Task numbers refer to PLAN-V2.md.

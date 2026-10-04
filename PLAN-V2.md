@@ -490,9 +490,8 @@ Depends on: T2 to T12, T14, T16.
 
 ### T14. tx: receive and write
 
-Status: done on branch gh-19-tx, not yet merged. One question is open: what a
-tx gets when the agent stops before writing it (#19 Q1). Until it is answered,
-such a tx is recorded in the log with its data and gets no result.
+Status: done on branch gh-19-tx, not yet merged. A tx the agent stops before
+writing fails as `agent_stopping` (#19 Q1).
 
 Motivation. Printers are the main reason for writing (DESIGN-V2.md, "Scope"),
 and 2.0.0 now releases writing (DESIGN-V2.md, "Version"). The bench printer is

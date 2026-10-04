@@ -84,8 +84,10 @@ that one stands. A device's tx are written one at a time, whole, in the order
 they arrived, while reading carries on.
 
 `written` means the operating system took the bytes, not that the device has
-them. On the bench printer, an Epson TM-T20III at 9600 baud, it took about
-17 KB ahead of the line (docs/printers/epson-tm-t20iii.md).
+them. On the bench printer, an Epson TM-T20III behind a USB to RS-232 adapter
+at 9600 baud, the adapter's driver took a job 16 KB at a time, so `written`
+came up to about 17 s before the printer had the last bytes
+(docs/printers/epson-tm-t20iii.md).
 
 A tx that finds the port closed asks for it to be opened, up to
 `tx_open_attempts` times, `tx_open_interval` apart (3 and 1 s by default), and
@@ -94,10 +96,12 @@ nothing is retried, since a retry could print a job twice; `write_failed` says
 how many bytes were written. No attempt is made once the tx's message expiry
 has passed.
 
-A tx published while the agent is disconnected is lost and gets no result, and
-a sender treats a tx that got no result as not written. So does a tx the agent
-stops before writing, for now (#19 Q1). DESIGN-V2.md, "The tx contract", has
-the rest.
+A tx the agent stops before writing fails as `agent_stopping`, with the bytes
+written: one being written goes on for 5 s first and then stops after the chunk
+in hand, which on the bench adapter took up to 16 s more; one still queued is
+not started. A tx published while the agent is disconnected is lost and gets no
+result, and a sender treats a tx that got no result as not written.
+DESIGN-V2.md, "The tx contract", has the rest.
 
 ## Build and test
 
@@ -261,7 +265,8 @@ then every second, `broker.reconnect_interval`; `broker.reconnect_backoff`
 makes that wait grow instead. Each failed attempt to open a device is a
 `port_open_failed` event with its error class, and is counted in the keepalive.
 
-SIGTERM and SIGINT stop it in this order: no tx is started any more; the
+SIGTERM and SIGINT stop it in this order: no tx is started any more, and one
+being written gets 5 seconds and then stops after the chunk in hand; the
 keepalive stops; the devices close, so nothing new arrives; what is already
 framed is published, for at most 5 seconds; the offline message goes out with
 reason `shutdown`; and only then does the connection close. A reading still
