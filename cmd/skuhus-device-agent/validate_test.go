@@ -63,7 +63,8 @@ func TestRunValidateAcceptsGoodConfig(t *testing.T) {
 	for _, want := range []string{"acme/vasby/pack-03", "scanner-main", "tls://mq.internal:8883",
 		"agent status   skuhus/acme/vasby/pack-03/agent/pack-03/status",
 		"rx skuhus/acme/vasby/pack-03/scanner-main/rx status skuhus/acme/vasby/pack-03/scanner-main/status tx skuhus/acme/vasby/pack-03/scanner-main/tx",
-		"tx_open_attempts=3 tx_open_interval=1s"} {
+		"tx_open_attempts=3 tx_open_interval=1s",
+		"reconnect_interval=1s reconnect_backoff=off"} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("stdout does not mention %q:\n%s", want, stdout)
 		}

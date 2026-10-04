@@ -80,7 +80,12 @@ func runValidate(args []string, stdout, stderr io.Writer) error {
 	fmt.Fprintf(stdout, "  station        %s/%s/%s\n", cfg.Identity.Project, cfg.Identity.Site, cfg.Identity.Station)
 	fmt.Fprintf(stdout, "  instance       %s (MQTT client id)\n", cfg.Identity.Instance)
 	fmt.Fprintf(stdout, "  agent status   %s\n", agentTopics.Status())
-	fmt.Fprintf(stdout, "  broker         %s\n", cfg.Broker.RedactedURL())
+	backoff := "off"
+	if cfg.Broker.ReconnectBackoff.Enabled {
+		backoff = fmt.Sprintf("max=%s jitter=%v", cfg.Broker.ReconnectBackoff.Max, cfg.Broker.ReconnectBackoff.Jitter)
+	}
+	fmt.Fprintf(stdout, "  broker         %s reconnect_interval=%s reconnect_backoff=%s\n",
+		cfg.Broker.RedactedURL(), cfg.Broker.ReconnectInterval, backoff)
 	fmt.Fprintf(stdout, "  devices        %d\n", len(cfg.Devices))
 	for _, deviceCfg := range cfg.Devices {
 		fmt.Fprintf(stdout, "    %-16s %s kind=%s baud=%d format=%d/%s/%s separator=%q max_frame=%d inter_char=%s message_expiry=%s device_type=%q tx_open_attempts=%d tx_open_interval=%s\n",
