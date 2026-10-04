@@ -839,6 +839,35 @@ A consumer at a station subscribes to:
 - `skuhus/<project>/<site>/<station>/agent/+/status` for every agent's
   keepalives and offline messages.
 
+## Reconnecting to the broker
+
+`[Decided]` While the broker cannot be reached, the agent tries it every second
+by default, and the configuration can set another interval. An exponential
+backoff can be turned on and off, and is off by default. Source: maintainer,
+2026-10-04 (#13 Q3). The interval is `broker.reconnect_interval`; the backoff
+is `broker.reconnect_backoff`, with `enabled`, `max` and `jitter`.
+
+The question came from a measurement with the Symbol 05e0:1701. The agent then
+used the specification's `connect_backoff`: 1 s doubling to a 60 s cap, with
+30% jitter (device-agent-spec.md:303). After a 98 s outage it reconnected 31 s
+after the broker was back. A reading made in that time failed, and the 8 events
+of an unplug during the outage were dropped as older than their 30 s message
+expiry. With a 1 s interval, it reconnected 0.85 s after the broker was back.
+
+The first attempt does not wait, at start and after a lost connection.
+autopaho asks for a wait before that attempt as well (autopaho/backoff.go,
+Backoff). The agent used to answer with its full first delay there, and took
+1.06 s to connect at every start.
+
+With the backoff off, every wait is the interval exactly, with no jitter. With
+it on, the wait doubles from the interval up to `max`, and each wait is spread
+by `jitter`, a fraction either way, so that stations that lost the broker
+together do not retry in step (internal/transport/mqtt/client.go,
+reconnectDelay).
+
+0.3.0's `broker.connect_backoff` is refused with its replacements named, as
+every removed key is ("Loading is strict in both directions").
+
 ## Absent port at startup
 
 `[Decided]` The agent keeps running, reports the port as absent on the device
