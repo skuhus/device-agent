@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
+	"sync"
 	"syscall"
 	"time"
 
@@ -61,6 +62,12 @@ const (
 
 	minReadChunk = 64
 	maxReadChunk = 4096
+
+	// writeChunk is how much one write takes the port's lock for. A close
+	// waits for the chunk in hand, not for the whole tx: at 9600 baud a
+	// kilobyte is about a second on the line once the operating system's
+	// buffer is full.
+	writeChunk = 1024
 )
 
 // OpenFunc opens a serial port. It is a field on Options so tests can inject
@@ -106,9 +113,18 @@ type Device struct {
 	backoffI time.Duration
 	backoffM time.Duration
 	stable   time.Duration
+
+	// retry cuts the reopen backoff short, for a tx waiting for the port.
+	retry chan struct{}
+	// mu guards current, the port while a session holds it open.
+	mu      sync.Mutex
+	current *sharedPort
 }
 
-var _ device.Device = (*Device)(nil)
+var (
+	_ device.Device = (*Device)(nil)
+	_ device.Writer = (*Device)(nil)
+)
 
 // New validates the options and builds a device. It does not open the port;
 // opening happens in Run and is retried, because a device that is unplugged at
@@ -154,6 +170,7 @@ func New(opts Options) (*Device, error) {
 		backoffI: opts.BackoffInitial,
 		backoffM: opts.BackoffMax,
 		stable:   opts.StableAfter,
+		retry:    make(chan struct{}, 1),
 	}
 	if dev.log == nil {
 		dev.log = slog.New(slog.DiscardHandler)
@@ -225,6 +242,8 @@ func (dev *Device) Run(ctx context.Context, sink chan<- device.Frame, report fun
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-time.After(wait):
+		case <-dev.retry:
+			dev.log.Debug("reopening before the backoff ends, for a tx waiting for the port")
 		}
 		backoff = min(backoff*2, dev.backoffM)
 	}
@@ -252,15 +271,22 @@ func (dev *Device) session(ctx context.Context, sink chan<- device.Frame, report
 		"terminator_hex", hex.EncodeToString(dev.opts.Terminator))
 	report(dev.event(device.PortOpened, nil))
 
+	// Writes go through the same port, under a lock that closing takes too
+	// (DESIGN-V2.md, "Writing: tx").
+	shared := &sharedPort{port: port}
+	dev.setCurrent(shared)
+
 	// Read blocks in select(2) and does not observe ctx. Closing the port is
 	// what unblocks it; the library signals pending reads through an internal
-	// pipe on Close.
+	// pipe on Close. The port stops taking writes first, and the close waits
+	// for a chunk already being written.
 	sessCtx, cancel := context.WithCancel(ctx)
 	closed := make(chan struct{})
 	go func() {
 		defer close(closed)
 		<-sessCtx.Done()
-		if cerr := port.Close(); cerr != nil {
+		dev.setCurrent(nil)
+		if cerr := shared.close(); cerr != nil {
 			dev.log.Debug("device close returned an error", "error", cerr.Error())
 		}
 	}()
@@ -332,6 +358,100 @@ func (dev *Device) session(ctx context.Context, sink chan<- device.Frame, report
 			}
 		}
 	}
+}
+
+// Write writes data through the port the reader has open, in chunks, and loops
+// over partial writes until every byte is written. It returns ErrNotOpen when
+// no session holds the port, or when the session closes it mid-write; any
+// other failure comes back as a *device.PortError with its class.
+func (dev *Device) Write(data []byte, progress func(written int)) (int, error) {
+	shared := dev.getCurrent()
+	if shared == nil {
+		return 0, device.ErrNotOpen
+	}
+	written, err := shared.write(data, progress)
+	if err != nil && !errors.Is(err, device.ErrNotOpen) {
+		err = &device.PortError{Class: classify(err), Err: fmt.Errorf("write %s: %w", dev.opts.Path, err)}
+	}
+	return written, err
+}
+
+// RetryOpen cuts the reopen backoff short, so that the reader tries the port
+// now. A request already pending is enough.
+func (dev *Device) RetryOpen() {
+	select {
+	case dev.retry <- struct{}{}:
+	default:
+	}
+}
+
+func (dev *Device) setCurrent(shared *sharedPort) {
+	dev.mu.Lock()
+	defer dev.mu.Unlock()
+	dev.current = shared
+}
+
+func (dev *Device) getCurrent() *sharedPort {
+	dev.mu.Lock()
+	defer dev.mu.Unlock()
+	return dev.current
+}
+
+// sharedPort is a port the reader holds open and a writer writes through. The
+// library's Write takes no lock and does not check that the port is open, so
+// a write racing a close would reach whatever descriptor reused the number
+// (serial_unix.go:112-118 in go.bug.st/serial v1.8.0). The lock is held across
+// each chunk and across Close, and a closed port takes no more writes.
+type sharedPort struct {
+	mu     sync.Mutex
+	port   goserial.Port
+	closed bool
+}
+
+func (shared *sharedPort) write(data []byte, progress func(int)) (int, error) {
+	written := 0
+	for written < len(data) {
+		end := min(written+writeChunk, len(data))
+		n, err := shared.writeChunk(data[written:end])
+		written += n
+		if n > 0 && progress != nil {
+			progress(written)
+		}
+		if err != nil {
+			return written, err
+		}
+	}
+	return written, nil
+}
+
+// writeChunk writes one chunk under the lock. The library makes one write(2)
+// call per Write and does not continue after a partial write, so this does.
+func (shared *sharedPort) writeChunk(chunk []byte) (int, error) {
+	shared.mu.Lock()
+	defer shared.mu.Unlock()
+	if shared.closed {
+		return 0, device.ErrNotOpen
+	}
+	written := 0
+	for written < len(chunk) {
+		n, err := shared.port.Write(chunk[written:])
+		written += n
+		if err != nil {
+			return written, err
+		}
+		if n == 0 {
+			// write(2) returning nothing and no error would loop forever.
+			return written, errors.New("the port accepted no bytes")
+		}
+	}
+	return written, nil
+}
+
+func (shared *sharedPort) close() error {
+	shared.mu.Lock()
+	defer shared.mu.Unlock()
+	shared.closed = true
+	return shared.port.Close()
 }
 
 // assertModemLines raises DTR and RTS.

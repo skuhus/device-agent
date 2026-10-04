@@ -9,6 +9,7 @@ package device
 
 import (
 	"context"
+	"errors"
 	"time"
 )
 
@@ -87,3 +88,32 @@ type Device interface {
 	// surfaces a stalled broker instead of hiding it behind a growing queue.
 	Run(ctx context.Context, sink chan<- Frame, report func(Event)) error
 }
+
+// ErrNotOpen is what Write returns when the device's port is not open, or was
+// closed before the write could finish.
+var ErrNotOpen = errors.New("the port is not open")
+
+// Writer is a device that bytes can be written to. Its reader keeps owning the
+// port: Write goes through the port the reader has open, and does not open it.
+type Writer interface {
+	// Write writes data to the port, all of it and in order, and calls
+	// progress with the total after each piece the operating system accepted.
+	// It returns how many bytes were written; with ErrNotOpen and none written,
+	// the port was not open, and the write can be tried again once it is.
+	// Write is not safe for concurrent use: a device has one writer.
+	Write(data []byte, progress func(written int)) (int, error)
+	// RetryOpen asks the reader to try opening the port now, rather than when
+	// its backoff ends. It does not wait for the attempt.
+	RetryOpen()
+}
+
+// PortError is a failure of the port, with the class the reader gives the
+// same failure in its events.
+type PortError struct {
+	Class string
+	Err   error
+}
+
+func (portErr *PortError) Error() string { return portErr.Err.Error() }
+
+func (portErr *PortError) Unwrap() error { return portErr.Err }
