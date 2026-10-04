@@ -572,12 +572,34 @@ kept so that references to T15 stay unambiguous.
 
 ### T16. tx idempotency
 
-Work. Keep a bounded set of recently written tx ids. A tx whose id is in the set
-is not written, and gets a result saying it was a duplicate. The set lives in
-memory; a restart forgets it, and the message format section says so. It is
-part of the running agent's state, which is all the agent keeps (#11 Q6, Q6a).
+Motivation. A sender that hears nothing within its own timeout resends, and a
+resend after the first copy was written would print it twice (#11 Q6a). T14
+already answers a resend while the first copy is queued or being written, with
+`in_progress`; T16 covers the time after it was written.
 
-Intended result. The same id sent twice produces one write and two results.
+Work.
+- Each device remembers, in memory, the ids of its most recent 1024 written
+  tx and when each was written; a restart forgets them (#11 Q6a). The number
+  is an internal constant, like the drain timeout: a sender resends within
+  seconds or minutes, and 1024 jobs is more than any station prints in that
+  time.
+- Only a tx that got `written` is remembered. One that failed, part way or not
+  at all, is written again if it is sent again: its sender was told what
+  became of it.
+- A tx whose id is remembered is not queued. It gets `written` /
+  `already_written` alone, at once, with `written_at` (DESIGN-V2.md, "tx
+  results"), as a resend in progress gets `in_progress` alone.
+- The keepalive's `tx_written` does not count it, since nothing was written.
+- Record it in the log, with its data, as every tx outcome is.
+
+Intended result.
+- A resend after `written` gets `already_written` with the first copy's
+  `written_at`, and nothing more is written; a resend after `write_failed` is
+  written again; the 1025th written id pushes out the oldest; a new agent
+  knows no id.
+- The end-to-end test sends one tx twice through the broker: it reaches the
+  pseudo-terminal once, and the second copy gets `already_written`.
+- On the bench, a job sent twice with one id prints once.
 
 Depends on: T14.
 
