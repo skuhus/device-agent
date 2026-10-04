@@ -83,15 +83,16 @@ func runValidate(args []string, stdout, stderr io.Writer) error {
 	fmt.Fprintf(stdout, "  broker         %s\n", cfg.Broker.RedactedURL())
 	fmt.Fprintf(stdout, "  devices        %d\n", len(cfg.Devices))
 	for _, deviceCfg := range cfg.Devices {
-		fmt.Fprintf(stdout, "    %-16s %s kind=%s baud=%d format=%d/%s/%s separator=%q max_frame=%d inter_char=%s message_expiry=%s device_type=%q\n",
+		fmt.Fprintf(stdout, "    %-16s %s kind=%s baud=%d format=%d/%s/%s separator=%q max_frame=%d inter_char=%s message_expiry=%s device_type=%q tx_open_attempts=%d tx_open_interval=%s\n",
 			deviceCfg.ID, deviceCfg.Path, deviceCfg.Kind, deviceCfg.Baud,
 			deviceCfg.DataBits, deviceCfg.Parity, deviceCfg.StopBits, deviceCfg.Separator,
-			deviceCfg.MaxFrameBytes, deviceCfg.InterCharTimeout, deviceCfg.MessageExpiry, deviceCfg.DeviceType)
+			deviceCfg.MaxFrameBytes, deviceCfg.InterCharTimeout, deviceCfg.MessageExpiry, deviceCfg.DeviceType,
+			deviceCfg.TxOpenAttempts, deviceCfg.TxOpenInterval)
 		topics, err := stationTopics.Device(deviceCfg.ID)
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(stdout, "    %-16s rx %s status %s\n", "", topics.Rx(), topics.Status())
+		fmt.Fprintf(stdout, "    %-16s rx %s status %s tx %s\n", "", topics.Rx(), topics.Status(), topics.Tx())
 	}
 	fmt.Fprintf(stdout, "  delivery       publish_timeout=%s buffer_size=%d\n",
 		cfg.Delivery.PublishTimeout, cfg.Delivery.BufferSize)

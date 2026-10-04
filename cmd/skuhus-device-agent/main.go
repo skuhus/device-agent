@@ -28,8 +28,8 @@ Usage:
   skuhus-device-agent <command> [flags]
 
 Commands:
-  run        Open the configured devices, connect to the broker, and publish
-             scans until stopped.
+  run        Open the configured devices, connect to the broker, publish what
+             they read and write what they are sent, until stopped.
   validate   Load the configuration, report every problem, and exit non-zero if
              any are fatal.
   probe      Enumerate candidate devices, or open one and print decoded frames.

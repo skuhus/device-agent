@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -21,14 +22,19 @@ import (
 	goserial "go.bug.st/serial"
 )
 
+// txIntake is how many tx can wait between paho and the core. The core takes
+// each at once, so it matters only when senders flood a station.
+const txIntake = 256
+
 func runRun(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() {
 		fmt.Fprint(fs.Output(), "Usage: skuhus-device-agent run [flags]\n\n"+
-			"Opens the configured devices, connects to the broker, and publishes\n"+
-			"what each device reads until stopped. SIGTERM and SIGINT drain what is\n"+
-			"already framed, publish the offline message and disconnect.\n\n"+
+			"Opens the configured devices, connects to the broker, publishes what each\n"+
+			"device reads, and writes to each device the tx it is sent, until stopped.\n"+
+			"SIGTERM and SIGINT drain what is already framed, publish the offline\n"+
+			"message and disconnect.\n\n"+
 			"Broker credentials come from broker.credentials_file or from\n"+
 			"SH_DEV_AGENT_MQTT_USERNAME and SH_DEV_AGENT_MQTT_PASSWORD. There is\n"+
 			"no flag for them: ps would expose them to every user on the host.\n\n")
@@ -169,6 +175,7 @@ func runAgent(ctx context.Context, cfg *config.Config, warnings []config.Warning
 	}, nil)
 
 	devices := make([]core.Device, 0, len(cfg.Devices))
+	txTopics := make([]string, 0, len(cfg.Devices))
 	for _, deviceCfg := range cfg.Devices {
 		topics, err := station.Device(deviceCfg.ID)
 		if err != nil {
@@ -195,10 +202,13 @@ func runAgent(ctx context.Context, cfg *config.Config, warnings []config.Warning
 			return err
 		}
 		devices = append(devices, core.Device{
-			Reader: reader,
-			Wire:   wire.Device{ID: deviceCfg.ID, Type: deviceCfg.DeviceType, Expiry: deviceCfg.MessageExpiry.Duration()},
-			Topics: topics,
+			Reader:         reader,
+			Wire:           wire.Device{ID: deviceCfg.ID, Type: deviceCfg.DeviceType, Expiry: deviceCfg.MessageExpiry.Duration()},
+			Topics:         topics,
+			TxOpenAttempts: deviceCfg.TxOpenAttempts,
+			TxOpenInterval: deviceCfg.TxOpenInterval.Duration(),
 		})
+		txTopics = append(txTopics, topics.Tx())
 	}
 	log.Info("topics", "agent_status", agentTopics.Status(), "every_device_rx", station.EveryDeviceRx(),
 		"every_device_status", station.EveryDeviceStatus(),
@@ -223,6 +233,22 @@ func runAgent(ctx context.Context, cfg *config.Config, warnings []config.Warning
 	// out at once. OnUp must not block, and one pending signal says all a
 	// second would.
 	connected := make(chan struct{}, 1)
+	// txIn carries each tx from paho's goroutine to the core. paho delivers
+	// one message after another and must not wait, or every acknowledgement
+	// behind it waits too, so a tx that finds the channel full is recorded as
+	// dropped. Its sender gets no result and treats it as not written.
+	txIn := make(chan core.TxMessage, txIntake)
+	onMessage := func(message mqtt.Message) {
+		select {
+		case txIn <- core.TxMessage{Topic: message.Topic, Payload: message.Payload, Expiry: message.Expiry,
+			HasExpiry: message.HasExpiry, Received: message.Received}:
+		default:
+			ref, _, _ := wire.ReadTx(message.Payload)
+			logging.Record(log, slog.LevelError, "tx dropped: the agent's intake is full",
+				append([]any{"topic", message.Topic, "tx_id", ref.ID, "sender", ref.Sender, "intake", txIntake},
+					logging.Payload(message.Payload)...)...)
+		}
+	}
 	client, err := mqtt.Dial(connCtx, mqtt.Options{
 		URL:               cfg.Broker.URL,
 		ClientID:          cfg.Identity.Instance,
@@ -235,6 +261,8 @@ func runAgent(ctx context.Context, cfg *config.Config, warnings []config.Warning
 		ReconnectBackoff:  cfg.Broker.ReconnectBackoff.Enabled,
 		BackoffMax:        cfg.Broker.ReconnectBackoff.Max.Duration(),
 		BackoffJitter:     cfg.Broker.ReconnectBackoff.Jitter,
+		Subscriptions:     txTopics,
+		OnMessage:         onMessage,
 		WillTopic:         agentTopics.Status(),
 		Will:              will,
 		Logger:            log,
@@ -264,6 +292,7 @@ func runAgent(ctx context.Context, cfg *config.Config, warnings []config.Warning
 		MissedKeepalives:  cfg.Status.MissedKeepalives,
 		Connected:         connected,
 		Started:           started,
+		TxIn:              txIn,
 		LogPayloads:       cfg.Logging.LogPayloads,
 		Logger:            log,
 	})
