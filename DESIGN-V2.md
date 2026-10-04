@@ -580,7 +580,9 @@ Senders set an MQTT message expiry on every tx (#23 Q19).
 On `<device>/status`, with `kind` `tx_result`. A tx the agent can read gets
 `accepted`, then `written` or `failed`. A tx it cannot read, or whose id is not a
 UUID, gets `failed` alone. A tx whose id belongs to a tx still queued or being
-written gets `rejected` alone, and the earlier one carries on.
+written gets `rejected` alone, and the earlier one carries on. A tx whose id
+was written recently gets `already_written` alone, and is not written again
+(#11 Q6a, T16).
 
 ```json tx_result
 {
@@ -627,7 +629,7 @@ written gets `rejected` alone, and the earlier one carries on.
 |---|---|---|---|
 | `accepted` | `accepted` | | Received and queued for the port. |
 | `written` | `written` | `bytes_written`, `open_attempts` | Every byte reached the port. |
-| `written` | `already_written` | `written_at` | A tx with this id was written before, so this one was not (#23 Q15). The agent remembers a bounded number of written ids in memory, and a restart forgets them (#11 Q6a, T16). |
+| `written` | `already_written` | `written_at` | A tx with this id was written before, so this one was not (#23 Q15). The agent remembers the ids of the last 1024 tx written to each device, in memory, and a restart forgets them (#11 Q6a, T16). |
 | `rejected` | `in_progress` | `stage`, `since`, `bytes_written` | A tx with this id is queued or being written, so this one is not taken (#11 Q6). |
 | `failed` | `invalid_message` | `error` | Not JSON, `schema` is not 2, a field is missing or unknown, or `raw_b64` is not base64. |
 | `failed` | `invalid_id` | | `id` is not a UUID. |
@@ -658,6 +660,9 @@ or `writing`, and `since` is when the earlier tx entered that stage.
   holds: the txs queued or being written, and a bounded set of recently written
   ids. A restart forgets both. A resend after `written` gets `already_written`
   while the id is in the set. Source: maintainer, 2026-09-29 (#11 Q6, Q6a).
+  Only a written tx joins the set: one that failed, part way or not at all, is
+  written again if it is sent again, since its sender was told what became of
+  it (T16).
 - `accepted` says the tx reached the agent. Only `written` says the bytes
   reached the port, and it says nothing about the device ("Writing: tx").
 
