@@ -60,6 +60,7 @@ help:
 	@echo "spike-mqtt5        the M0 property spike; see docs/spikes/m0-mqtt5.md"
 	@echo "spike-cluster-up   add a second broker node, for the retained check"
 	@echo "spike-mosquitto-up a Mosquitto broker, which retains wills, for the spike"
+	@echo "spike-serialbench  the serial printer bench, built to run on this host; see docs/printers/"
 
 # --- build -----------------------------------------------------------------
 
@@ -262,3 +263,15 @@ spike-brokerinfo: caches network
 .PHONY: spike-mqtt5
 spike-mqtt5: caches network
 	$(GO_NET) go -C spike run ./mqtt5 --broker $(BROKER) --username $(MQTT_USER) --password $(MQTT_PASS) $(FLAGS)
+
+# The serial bench runs on the host, next to the device: Docker Desktop on macOS
+# cannot pass a USB serial device through to a container. It is built here and
+# run from dist/.
+HOST_OS   := $(shell uname -s | tr '[:upper:]' '[:lower:]')
+HOST_ARCH := $(shell uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/')
+
+.PHONY: spike-serialbench
+spike-serialbench: caches
+	$(GO) env CGO_ENABLED=0 GOOS=$(HOST_OS) GOARCH=$(HOST_ARCH) \
+		go -C spike build -trimpath -o ../dist/serialbench-$(HOST_OS)-$(HOST_ARCH) ./serialbench
+	@echo "built dist/serialbench-$(HOST_OS)-$(HOST_ARCH); run it on this host"
