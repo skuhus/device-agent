@@ -2,7 +2,8 @@
 
 Device agent that gives network access to devices physically attached to a host.
 It reads bytes from a serial port, USB-CDC or RS-232, and publishes each frame
-to an MQTT broker. Writing bytes received from MQTT to the port comes in 2.1.0.
+to an MQTT broker. Writing bytes received from MQTT to the port is not built yet
+(PLAN-V2.md, T14).
 
 It is a transport: it moves bytes and adds an envelope. It implements no device
 protocol; parsing, interpretation and relaying are done by services that
@@ -26,7 +27,7 @@ Every device has its own topics, and every agent its own status topic:
 ```
 skuhus/<project>/<site>/<station>/<device>/rx               each frame read from the port
 skuhus/<project>/<site>/<station>/<device>/status           the device's events
-skuhus/<project>/<site>/<station>/<device>/tx               reserved; the agent subscribes from 2.1.0
+skuhus/<project>/<site>/<station>/<device>/tx               reserved until writing is built (T14)
 skuhus/<project>/<site>/<station>/agent/<instance>/status   the agent's keepalive and offline message
 ```
 

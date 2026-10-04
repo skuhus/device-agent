@@ -220,8 +220,8 @@ type TxResult struct {
 	Detail map[string]any `json:"detail"`
 }
 
-// Tx is what a sender publishes on a device's tx topic. The agent reads it from
-// 2.1.0 on; until then the topic is reserved.
+// Tx is what a sender publishes on a device's tx topic. The agent reads it once
+// writing is built (PLAN-V2.md, T14); until then the topic is reserved.
 type Tx struct {
 	Schema int    `json:"schema"`
 	ID     string `json:"id"`

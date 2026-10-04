@@ -8,8 +8,9 @@ Task numbers are referenced from DESIGN-V2.md, "Open decisions". Decision
 markers ([Decided], [Proposed], [Open]) have the meanings given there. File
 references are to commit f97c736.
 
-Phase 1 delivers reading and is released as 2.0.0. Phase 2 delivers writing and
-is released as 2.1.0. Decided by the maintainer on 2026-09-29.
+Phase 1 delivers reading and phase 2 writing, and both are released together
+as 2.0.0 (T13). Decided by the maintainer on 2026-10-04, replacing the decision
+of 2026-09-29 to release reading as 2.0.0 and writing as 2.1.0.
 
 Postponed out of #4 into their own tickets: #5 flow control and write pacing
 (formerly T17), #6 reloading the configuration on SIGHUP, #7 framing for devices
@@ -18,7 +19,8 @@ that send no separator.
 ## Tracking
 
 Every task is a sub-issue of #4, in this order: the order the tasks can be done
-in, each after the tasks it depends on. T11 therefore comes before T10. T1 was finished before issues
+in, each after the tasks it depends on. T11 therefore comes before T10, and T13
+after T16. T1 was finished before issues
 were created for the plan, so it has none. #6 and #7 are sub-issues of #4 too,
 postponed beyond it, as are #20 (formerly T15), #26, #27 and #28. #24 and #25 are
 defects found in review, fixed within T11 and T4.
@@ -37,12 +39,12 @@ defects found in review, fixed within T11 and T4.
 | T11 | #16 | Development environment for v2 |
 | T10 | #15 | End-to-end test in CI |
 | T12 | #17 | Documentation |
-| T13 | #18 | Release 2.0.0 |
 | T14 | #19 | tx: receive and write |
 | T15 | #20 | tx through reconnects, postponed out of #4 |
 | T16 | #21 | tx idempotency |
 | T17 | #5 | Flow control and write pacing, postponed out of #4 |
-| T18 | #22 | Release 2.1.0 |
+| T13 | #18 | Release 2.0.0 |
+| T18 | #22 | Release 2.1.0, merged into T13 |
 
 ## Order
 
@@ -52,9 +54,7 @@ defects found in review, fixed within T11 and T4.
                                 +--> T5 config --+
                                 +--> T6 messages +--> T7 core --> T8 status --+
                                                  |           +--> T9 logging  |
-                                                 +--> T11 dev env ------------+--> T10 e2e --> T12 docs --> T13 release 2.0.0
-                                                                                                            |
-                                                                                                            +--> T14 tx --> T16 tx idempotency --> T18 release 2.1.0
+                                                 +--> T11 dev env ------------+--> T10 e2e --> T12 docs --> T14 tx --> T16 tx idempotency --> T13 release 2.0.0
 
 T3 goes first among the code tasks so that every later pull request is written
 against the final names, and the rename is a single diff with no behaviour
@@ -472,8 +472,11 @@ Depends on: T3 to T11.
 
 ### T13. Release 2.0.0
 
+2.0.0 releases reading and writing together (maintainer, 2026-10-04), so this
+task comes after phase 2.
+
 Work.
-- Set the version constant to 2.0.0 in the pull request that completes phase 1.
+- Set the version constant to 2.0.0 in the pull request that completes phase 2.
 - The release pushes the image to GHCR, as decided; check that it does, under
   the new name.
 - Check that the release assets carry the new binary name.
@@ -481,7 +484,7 @@ Work.
 Intended result. The merge creates tag v2.0.0 and a release with six tarballs,
 six bare binaries and checksums.txt, and the image appears on GHCR.
 
-Depends on: T2 to T12.
+Depends on: T2 to T12, T14, T16.
 
 ## Phase 2: writing
 
@@ -523,7 +526,7 @@ intact; many concurrent tx messages arrive as whole, uninterleaved blocks; a tx
 to an absent port fails with its error class; every tx id gets a result; a write
 racing a close fails and never reaches another descriptor.
 
-Depends on: T13.
+Depends on: T7 to T12.
 
 ### T15. Postponed: tx through reconnects
 
@@ -551,11 +554,11 @@ why go.bug.st/serial cannot provide them, the alternatives evaluated, and the
 proposed replacement. The number is kept so that references to T17 stay
 unambiguous.
 
-### T18. Release 2.1.0
+### T18. Merged into T13
 
-Intended result. Tag v2.1.0, releasing writing.
-
-Depends on: T14, T16.
+T18 was to release writing as 2.1.0. On 2026-10-04 the maintainer decided that
+reading and writing are released together as 2.0.0, so T13 releases both. The
+number is kept so that references to T18 stay unambiguous.
 
 ## Outside #4
 

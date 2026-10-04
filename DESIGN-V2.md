@@ -62,10 +62,9 @@ Builds before that stay on 0.x; the constant is 0.3.0
 to master carries a version that has no tag yet (.github/workflows/release.yml),
 so 2.0.0 is set in the pull request that completes the release scope.
 
-`[Decided]` 2.0.0 releases reading; 2.1.0 releases writing. Source: maintainer,
-2026-09-29. With the topic layout reserving tx and the status channel in place
-from 2.0.0, writing adds topics and messages without changing any existing one,
-which is a minor version under semantic versioning.
+`[Decided]` 2.0.0 releases reading and writing together. Source: maintainer,
+2026-10-04 ("we need both rx and tx in the release now"). This replaces the
+decision of 2026-09-29 that 2.0.0 releases reading and 2.1.0 writing.
 
 ## Naming
 
@@ -526,8 +525,8 @@ one of the events that waits (measured in #13).
 
 ### tx
 
-On `<device>/tx`, published by senders. Reserved in 2.0.0: the agent subscribes
-to it from 2.1.0.
+On `<device>/tx`, published by senders. The agent subscribes to it (PLAN-V2.md,
+T14).
 
 ```json tx
 {
@@ -765,7 +764,7 @@ list in "Status channel" (#23 Q9):
 | discards | Discards by reason, one per `bytes_discarded` event. |
 | failed_opens | Failed attempts to open the port by error class, one per `port_open_failed` event. |
 | publish_failures | Readings the broker did not take: failed, or dropped at the shutdown drain. Each has a record in the log file. |
-| tx_written, tx_failed | Tx results, from 2.1.0; 0 until then. |
+| tx_written, tx_failed | Tx results (PLAN-V2.md, T14). |
 | buffer_depth | Frames waiting to be published now. |
 
 Every reason and every class is present, at 0 when nothing happened, so a
