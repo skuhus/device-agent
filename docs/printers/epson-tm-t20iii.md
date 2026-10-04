@@ -102,4 +102,11 @@ job queued behind it, was sent SIGINT:
 Two jobs of 20 KB of NUL bytes, each followed by a text line and a cut, were
 sent through the agent on 2026-10-04, each left to clear the line before the
 next. The status the printer reported after each (`DLE EOT 1` to `4`, sent as
-a tx, its reply read back as rx) was clean: `16 12 12 12`.
+a tx, its reply read back as rx) was clean: `16 12 12 12`. Both printed, each
+with its line, `job A: ...` and `job B: ...`, and a cut between them.
+
+They were sent to check an earlier pair, from the same day: two jobs of the
+same size with the same line, both reported written, of which one line and one
+cut were on the paper. The receipts from that run were separate cut pieces, so
+a piece gone astray is as possible as bytes lost after write(2). The pair with
+different lines did not reproduce it, and which it was is not settled.
