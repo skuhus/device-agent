@@ -572,6 +572,8 @@ kept so that references to T15 stay unambiguous.
 
 ### T16. tx idempotency
 
+Status: done on branch gh-21-idempotency, not yet merged.
+
 Motivation. A sender that hears nothing within its own timeout resends, and a
 resend after the first copy was written would print it twice (#11 Q6a). T14
 already answers a resend while the first copy is queued or being written, with
