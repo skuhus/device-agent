@@ -230,6 +230,17 @@ func (run *txRun) counters() wire.KeepaliveDevice {
 	return keepalives[len(keepalives)-1].Devices[0]
 }
 
+// resultsForAll is every result published for the tx so far, without waiting.
+func (run *txRun) resultsForAll(id string) []wire.TxResult {
+	var mine []wire.TxResult
+	for _, result := range run.results() {
+		if result.TxID != nil && *result.TxID == id {
+			mine = append(mine, result)
+		}
+	}
+	return mine
+}
+
 func codes(results []wire.TxResult) string {
 	var out []string
 	for _, result := range results {
@@ -586,4 +597,95 @@ func requireRecord(t *testing.T, records []map[string]any, keyValues ...any) {
 		}
 	}
 	t.Errorf("no record with %v among %d: %v", keyValues, len(records), records)
+}
+
+// A resend after the first copy was written is answered, already_written with
+// when, and nothing more is written; tx_written counts the one write
+// (#11 Q6a).
+func TestResendAfterWrittenIsNotWrittenAgain(t *testing.T) {
+	transport := &fakeTransport{}
+	printer := newFakePrinter("printer-1", true)
+	run := startTxRun(t, transport, printer, 3, 10*time.Millisecond)
+	run.send(txA, []byte("label 1042"), 30*time.Second)
+	first := run.resultsFor(txA)
+
+	run.send(txA, []byte("label 1042"), 30*time.Second)
+	var all []wire.TxResult
+	waitUntil(t, "the resend's answer", func() bool {
+		all = run.resultsForAll(txA)
+		return len(all) == 3
+	})
+	if got := codes(all); got != "accepted/accepted written/written written/already_written" {
+		t.Fatalf("results = %s, want accepted, written, then already_written alone", got)
+	}
+	if written, answered := first[1].AgentTS, all[2].Detail["written_at"]; answered != written {
+		t.Errorf("written_at = %v, want the first copy's written time %s", answered, written)
+	}
+	if writes, _ := printer.snapshot(); len(writes) != 1 {
+		t.Errorf("%d writes, want 1", len(writes))
+	}
+	if counters := run.counters(); counters.TxWritten != 1 {
+		t.Errorf("tx_written = %d, want 1: the resend wrote nothing", counters.TxWritten)
+	}
+	run.stop()
+	requireRecord(t, run.log.WithMessage(t, "tx already written"), "tx_id", txA, "outcome", "already_written", "data_text", "label 1042")
+}
+
+// A tx that failed is not remembered: sent again, it is written again, since
+// its sender was told what became of the first copy.
+func TestResendAfterFailureIsWrittenAgain(t *testing.T) {
+	transport := &fakeTransport{}
+	printer := newFakePrinter("printer-1", true)
+	printer.failAfter = 3
+	printer.failErr = &device.PortError{Class: "disconnected", Err: syscall.EIO}
+	run := startTxRun(t, transport, printer, 3, 10*time.Millisecond)
+	run.send(txA, []byte("label 1042"), 30*time.Second)
+	if got := codes(run.resultsFor(txA)); got != "accepted/accepted failed/write_failed" {
+		t.Fatalf("first copy: %s", got)
+	}
+	printer.mu.Lock()
+	printer.failAfter = -1
+	printer.mu.Unlock()
+
+	run.send(txA, []byte("label 1042"), 30*time.Second)
+	waitUntil(t, "the second copy's results", func() bool { return len(run.resultsForAll(txA)) == 4 })
+	if got := codes(run.resultsForAll(txA)); got != "accepted/accepted failed/write_failed accepted/accepted written/written" {
+		t.Errorf("results = %s, want the second copy accepted and written", got)
+	}
+}
+
+// The set keeps the most recent ids, so the oldest is forgotten first, and the
+// agent remembers rememberedWritten of them.
+func TestWrittenIDsKeepTheMostRecent(t *testing.T) {
+	ids := newWrittenIDs(3)
+	at := time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
+	for i, id := range []string{"a", "b", "c", "d"} {
+		ids.remember(id, at.Add(time.Duration(i)*time.Second))
+	}
+	if _, known := ids.lookup("a"); known {
+		t.Error("the oldest of four ids is remembered by a set of three")
+	}
+	for i, id := range []string{"b", "c", "d"} {
+		if when, known := ids.lookup(id); !known || !when.Equal(at.Add(time.Duration(i+1)*time.Second)) {
+			t.Errorf("%s: %s, %t; want remembered with its time", id, when, known)
+		}
+	}
+	if rememberedWritten != 1024 {
+		t.Errorf("rememberedWritten = %d, want the 1024 T16 names", rememberedWritten)
+	}
+}
+
+// What the agent remembers, a new agent does not: a restart forgets it.
+func TestANewAgentKnowsNoID(t *testing.T) {
+	first := startTxRun(t, &fakeTransport{}, newFakePrinter("printer-1", true), 3, 10*time.Millisecond)
+	first.send(txA, []byte("label"), 30*time.Second)
+	first.resultsFor(txA)
+	first.stop()
+
+	printer := newFakePrinter("printer-1", true)
+	second := startTxRun(t, &fakeTransport{}, printer, 3, 10*time.Millisecond)
+	second.send(txA, []byte("label"), 30*time.Second)
+	if got := codes(second.resultsFor(txA)); got != "accepted/accepted written/written" {
+		t.Errorf("after a restart: %s, want written again", got)
+	}
 }

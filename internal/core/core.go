@@ -136,9 +136,12 @@ type pipeline struct {
 
 	// opened receives a value when the port opens, for a tx waiting for it.
 	opened chan struct{}
-	// txMu guards txActive: the tx queued or being written, by id.
+	// txMu guards txActive, the tx queued or being written, by id, and
+	// written, the ids most recently written. An id leaves the one and joins
+	// the other under the lock, so a resend always finds it in one of them.
 	txMu     sync.Mutex
 	txActive map[string]*txJob
+	written  *writtenIDs
 
 	// mu guards open, the last port failure and counters, which the reader,
 	// the publishers, the tx writer and the keepalive all reach.
@@ -225,6 +228,7 @@ func (core *Core) Run(ctx context.Context) error {
 			tx:       newTxQueue(),
 			opened:   make(chan struct{}, 1),
 			txActive: map[string]*txJob{},
+			written:  newWrittenIDs(rememberedWritten),
 		}
 		pipelines = append(pipelines, line)
 		byTxTopic[dev.Topics.Tx()] = line

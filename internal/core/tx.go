@@ -31,6 +31,9 @@ const (
 	txOutcomeWritten  = "written"
 	txOutcomeFailed   = "failed"
 	txOutcomeRejected = "rejected"
+	// txOutcomeAlreadyWritten is a resend of a tx written before: answered,
+	// and not written again (#11 Q6a).
+	txOutcomeAlreadyWritten = "already_written"
 	// txOutcomeNotTaken is a tx that arrived as the connection closed, too
 	// late for any result to be published.
 	txOutcomeNotTaken = "not_taken"
@@ -73,6 +76,46 @@ func (job *txJob) standing() (wire.TxStage, time.Time, int) {
 
 func (job *txJob) expired(now time.Time) bool {
 	return !job.deadline.IsZero() && !now.Before(job.deadline)
+}
+
+// rememberedWritten is how many written tx ids each device remembers. A
+// sender resends within its own timeout, seconds or minutes, and this is more
+// jobs than a station prints in that time. A tuning value, not a setting, as
+// the drain timeout is (PLAN-V2.md, T16).
+const rememberedWritten = 1024
+
+// writtenIDs remembers the most recently written tx ids, and when each was
+// written, so that a resend is answered rather than printed twice (#11 Q6a).
+// Only the running agent holds them: a restart forgets them. The caller holds
+// the pipeline's txMu.
+type writtenIDs struct {
+	limit int
+	at    map[string]time.Time
+	// order holds the ids oldest first, so that the oldest is forgotten when
+	// the limit is reached.
+	order []string
+}
+
+func newWrittenIDs(limit int) *writtenIDs {
+	return &writtenIDs{limit: limit, at: make(map[string]time.Time, limit)}
+}
+
+func (ids *writtenIDs) remember(id string, at time.Time) {
+	if _, known := ids.at[id]; known {
+		ids.at[id] = at
+		return
+	}
+	if len(ids.order) >= ids.limit {
+		delete(ids.at, ids.order[0])
+		ids.order = ids.order[1:]
+	}
+	ids.at[id] = at
+	ids.order = append(ids.order, id)
+}
+
+func (ids *writtenIDs) lookup(id string) (time.Time, bool) {
+	at, known := ids.at[id]
+	return at, known
 }
 
 // txQueue holds a device's tx in the order they arrived, for its one writer.
@@ -203,6 +246,12 @@ func (core *Core) intake(byTopic map[string]*pipeline, message TxMessage) {
 		core.txResult(line, result, now, nil)
 		return
 	}
+	if writtenAt, known := line.written.lookup(ref.ID); known {
+		line.txMu.Unlock()
+		result := core.opts.Builder.TxAlreadyWritten(dev, line.isOpen(), ref, writtenAt, now)
+		core.txResult(line, result, now, append([]any{"written_at", writtenAt.UTC().Format(wire.TimeFormat)}, logging.Payload(data)...))
+		return
+	}
 	core.intakeMu.Lock()
 	if core.stopping.Load() {
 		core.intakeMu.Unlock()
@@ -238,9 +287,12 @@ func (core *Core) writeTxs(line *pipeline) {
 		if !ok {
 			return
 		}
-		core.writeTx(line, job)
+		writtenAt, written := core.writeTx(line, job)
 		line.txMu.Lock()
 		delete(line.txActive, job.ref.ID)
+		if written {
+			line.written.remember(job.ref.ID, writtenAt)
+		}
 		line.txMu.Unlock()
 	}
 }
@@ -248,8 +300,9 @@ func (core *Core) writeTxs(line *pipeline) {
 // writeTx writes one tx through the device's port. A tx that finds the port
 // closed asks the reader to open it, up to the device's open attempts, the
 // open interval apart; once writing has started, nothing is retried
-// (DESIGN-V2.md, "Writing: tx").
-func (core *Core) writeTx(line *pipeline, job *txJob) {
+// (DESIGN-V2.md, "Writing: tx"). It reports when the tx was written, and
+// whether it was.
+func (core *Core) writeTx(line *pipeline, job *txJob) (time.Time, bool) {
 	dev := line.device.Wire
 	writer, writable := line.device.Reader.(device.Writer)
 	attempts := 0
@@ -259,17 +312,17 @@ func (core *Core) writeTx(line *pipeline, job *txJob) {
 		if core.stopping.Load() {
 			core.txResult(line, core.opts.Builder.TxAgentStopping(dev, line.isOpen(), job.ref, 0, now), now,
 				append([]any{"bytes_written", 0, "open_attempts", attempts}, logging.Payload(job.data)...))
-			return
+			return time.Time{}, false
 		}
 		if job.expired(now) {
 			core.txResult(line, core.opts.Builder.TxExpired(dev, line.isOpen(), job.ref, attempts, now), now,
 				append([]any{"open_attempts", attempts}, logging.Payload(job.data)...))
-			return
+			return time.Time{}, false
 		}
 		if !writable {
 			core.txResult(line, core.opts.Builder.TxPortUnavailable(dev, line.isOpen(), job.ref, wire.ErrorUnknown,
 				"this device cannot be written", attempts, now), now, logging.Payload(job.data))
-			return
+			return time.Time{}, false
 		}
 
 		job.setStage(wire.TxWriting, now)
@@ -279,7 +332,7 @@ func (core *Core) writeTx(line *pipeline, job *txJob) {
 			core.txResult(line, core.opts.Builder.TxWritten(dev, line.isOpen(), job.ref, written, attempts, now), now,
 				append([]any{"bytes_written", written, "open_attempts", attempts, "took", now.Sub(started).String()},
 					core.payloadIf(job.data)...))
-			return
+			return now, true
 		}
 		if errors.Is(err, device.ErrNotOpen) && written == 0 {
 			job.setStage(wire.TxQueued, now)
@@ -287,7 +340,7 @@ func (core *Core) writeTx(line *pipeline, job *txJob) {
 				class, failure := line.lastFailure()
 				core.txResult(line, core.opts.Builder.TxPortUnavailable(dev, line.isOpen(), job.ref, class, failure, attempts, now),
 					now, append([]any{"open_attempts", attempts}, logging.Payload(job.data)...))
-				return
+				return time.Time{}, false
 			}
 			attempts++
 			core.awaitPort(line, writer, job)
@@ -296,7 +349,7 @@ func (core *Core) writeTx(line *pipeline, job *txJob) {
 		if core.writeCtx.Err() != nil && errors.Is(err, core.writeCtx.Err()) {
 			core.txResult(line, core.opts.Builder.TxAgentStopping(dev, line.isOpen(), job.ref, written, now), now,
 				append([]any{"bytes_written", written, "open_attempts", attempts}, logging.Payload(job.data)...))
-			return
+			return time.Time{}, false
 		}
 		class, failure := classOf(err)
 		if errors.Is(err, device.ErrNotOpen) {
@@ -306,7 +359,7 @@ func (core *Core) writeTx(line *pipeline, job *txJob) {
 		}
 		core.txResult(line, core.opts.Builder.TxWriteFailed(dev, line.isOpen(), job.ref, class, failure, written, attempts, now),
 			now, append([]any{"bytes_written", written, "open_attempts", attempts}, logging.Payload(job.data)...))
-		return
+		return time.Time{}, false
 	}
 }
 
@@ -337,14 +390,17 @@ func (core *Core) awaitPort(line *pipeline, writer device.Writer, job *txJob) {
 // events do.
 func (core *Core) txResult(line *pipeline, result wire.TxResult, at time.Time, extra []any) {
 	outcome, level, message := txOutcomeAccepted, slog.LevelInfo, "tx accepted"
-	switch result.State {
-	case wire.TxWritten:
+	switch {
+	case result.Code == wire.TxCodeAlreadyWritten:
+		// Answered, not written: tx_written counts writes.
+		outcome, message = txOutcomeAlreadyWritten, "tx already written"
+	case result.State == wire.TxWritten:
 		outcome, message = txOutcomeWritten, "tx written"
 		line.countTx(true)
-	case wire.TxFailed:
+	case result.State == wire.TxFailed:
 		outcome, level, message = txOutcomeFailed, slog.LevelError, "tx failed"
 		line.countTx(false)
-	case wire.TxRejected:
+	case result.State == wire.TxRejected:
 		outcome, level, message = txOutcomeRejected, slog.LevelWarn, "tx rejected"
 	}
 	attrs := []any{"tx_id", deref(result.TxID), "sender", deref(result.Sender), "device_id", result.DeviceID,
