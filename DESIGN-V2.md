@@ -630,6 +630,7 @@ written gets `rejected` alone, and the earlier one carries on.
 | `failed` | `port_unavailable` | `error_class`, `error`, `open_attempts` | The port could not be opened in the configured number of attempts (#23 Q17). |
 | `failed` | `write_failed` | `error_class`, `error`, `bytes_written`, `open_attempts` | Writing started and failed. It is not retried, and `bytes_written` says how far it got (#23 Q17a). |
 | `failed` | `expired` | `open_attempts` | The tx's message expiry passed before an attempt could start (#23 Q17a). |
+| `failed` | `agent_stopping` | `bytes_written` | The agent stopped before the tx was written, or part way through (#19 Q1). |
 
 `error_class` and `error` are as in device events. `bytes_written` is how many
 bytes reached the port, for `in_progress` so far. `open_attempts` counts the

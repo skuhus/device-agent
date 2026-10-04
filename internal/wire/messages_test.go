@@ -43,6 +43,7 @@ func everyTxResult(builder *Builder, device Device) []TxResult {
 		builder.TxPortUnavailable(device, false, tx, ErrorBusy, "device or resource busy", 3, at),
 		builder.TxWriteFailed(device, false, tx, ErrorDisconnected, "input/output error", 40, 0, at),
 		builder.TxExpired(device, false, tx, 2, at),
+		builder.TxAgentStopping(device, true, tx, 1024, at),
 	}
 }
 

@@ -174,6 +174,9 @@ const (
 	TxCodePortUnavailable TxCode = "port_unavailable"
 	TxCodeWriteFailed     TxCode = "write_failed"
 	TxCodeExpired         TxCode = "expired"
+	// TxCodeAgentStopping is a tx the agent stopped before writing, or part
+	// way through (#19 Q1).
+	TxCodeAgentStopping TxCode = "agent_stopping"
 )
 
 // txCodeStates is the state each code reports.
@@ -187,6 +190,7 @@ var txCodeStates = map[TxCode]TxState{
 	TxCodePortUnavailable: TxFailed,
 	TxCodeWriteFailed:     TxFailed,
 	TxCodeExpired:         TxFailed,
+	TxCodeAgentStopping:   TxFailed,
 }
 
 // TxStage is where a tx that is still being processed stands.
@@ -529,6 +533,17 @@ func (builder *Builder) TxWriteFailed(device Device, deviceOpen bool, tx TxRef, 
 func (builder *Builder) TxExpired(device Device, deviceOpen bool, tx TxRef, openAttempts int, at time.Time) TxResult {
 	return builder.txResult(device, deviceOpen, tx, TxCodeExpired, "the message expiry passed before the port could be written",
 		map[string]any{"open_attempts": openAttempts}, at)
+}
+
+// TxAgentStopping reports a tx the agent stopped before writing, with
+// bytesWritten 0, or part way through, with how far it got.
+func (builder *Builder) TxAgentStopping(device Device, deviceOpen bool, tx TxRef, bytesWritten int, at time.Time) TxResult {
+	text := "the agent stopped before this tx was written"
+	if bytesWritten > 0 {
+		text = fmt.Sprintf("the agent stopped while this tx was being written, after %d bytes", bytesWritten)
+	}
+	return builder.txResult(device, deviceOpen, tx, TxCodeAgentStopping, text,
+		map[string]any{"bytes_written": bytesWritten}, at)
 }
 
 func (builder *Builder) txResult(device Device, deviceOpen bool, tx TxRef, code TxCode, text string, detail map[string]any, at time.Time) TxResult {
