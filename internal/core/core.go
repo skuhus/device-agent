@@ -52,6 +52,10 @@ type Device struct {
 	// message expiry every reading and event is published with.
 	Wire   wire.Device
 	Topics wire.DeviceTopics
+	// TxOpenAttempts is how many times a tx that finds the port closed asks
+	// the reader to open it, TxOpenInterval apart, before it fails.
+	TxOpenAttempts int
+	TxOpenInterval time.Duration
 }
 
 // Options configures the core. Configuration rules are the configuration
@@ -89,8 +93,13 @@ type Options struct {
 	// from. It defaults to when New is called.
 	Started time.Time
 
-	// LogPayloads puts each published reading's data on its record. A reading
-	// the broker did not take carries its data regardless.
+	// TxIn delivers the tx that arrive on the devices' tx topics. Nil means
+	// no tx is taken.
+	TxIn <-chan TxMessage
+
+	// LogPayloads puts each published reading's data on its record, and each
+	// accepted and written tx's. A reading the broker did not take, and a tx
+	// that failed, carry their data regardless.
 	LogPayloads bool
 	Logger      *slog.Logger
 	// Now defaults to time.Now. It is a field so tests do not have to sleep.
@@ -104,6 +113,10 @@ type Core struct {
 	// drainDeadlineMS is zero while the devices run, and is set to the moment
 	// the shutdown drain gives up. Written by Run, read by every publisher.
 	drainDeadlineMS atomic.Int64
+	// stopping is set, and stoppingCh closed, when the agent starts to stop,
+	// so that no tx is started after it.
+	stopping   atomic.Bool
+	stoppingCh chan struct{}
 }
 
 // pipeline is one device's frames and events, the sequence number of its
@@ -112,14 +125,23 @@ type pipeline struct {
 	device Device
 	frames chan device.Frame
 	events *eventQueue
+	tx     *txQueue
 	// seq is written only by the device's rx publisher.
 	seq uint64
 
-	// mu guards open and counters, which the reader, the rx publisher and the
-	// keepalive all reach.
-	mu       sync.Mutex
-	open     bool
-	counters wire.DeviceCounters
+	// opened receives a value when the port opens, for a tx waiting for it.
+	opened chan struct{}
+	// txMu guards txActive: the tx queued or being written, by id.
+	txMu     sync.Mutex
+	txActive map[string]*txJob
+
+	// mu guards open, the last port failure and counters, which the reader,
+	// the publishers, the tx writer and the keepalive all reach.
+	mu           sync.Mutex
+	open         bool
+	failureClass wire.ErrorClass
+	failure      string
+	counters     wire.DeviceCounters
 }
 
 // New checks the options and builds the core. It opens nothing: the readers
@@ -156,6 +178,9 @@ func New(opts Options) (*Core, error) {
 			// Every event would be older than its expiry, and none published.
 			return nil, fmt.Errorf("core: device %s has no message expiry", dev.Wire.ID)
 		}
+		if dev.TxOpenAttempts < 0 || dev.TxOpenInterval < 0 {
+			return nil, fmt.Errorf("core: device %s has negative tx open settings", dev.Wire.ID)
+		}
 	}
 	if opts.DrainTimeout <= 0 {
 		opts.DrainTimeout = DefaultDrainTimeout
@@ -169,7 +194,7 @@ func New(opts Options) (*Core, error) {
 	if opts.Started.IsZero() {
 		opts.Started = opts.Now()
 	}
-	return &Core{opts: opts, log: opts.Logger}, nil
+	return &Core{opts: opts, log: opts.Logger, stoppingCh: make(chan struct{})}, nil
 }
 
 // Run reads from every device and publishes until ctx is cancelled.
@@ -183,12 +208,18 @@ func New(opts Options) (*Core, error) {
 // instead, reporting a crash where there was an orderly stop.
 func (core *Core) Run(ctx context.Context) error {
 	pipelines := make([]*pipeline, 0, len(core.opts.Devices))
+	byTxTopic := make(map[string]*pipeline, len(core.opts.Devices))
 	for _, dev := range core.opts.Devices {
-		pipelines = append(pipelines, &pipeline{
-			device: dev,
-			frames: make(chan device.Frame, core.opts.BufferSize),
-			events: newEventQueue(core.opts.EventBufferSize),
-		})
+		line := &pipeline{
+			device:   dev,
+			frames:   make(chan device.Frame, core.opts.BufferSize),
+			events:   newEventQueue(core.opts.EventBufferSize),
+			tx:       newTxQueue(),
+			opened:   make(chan struct{}, 1),
+			txActive: map[string]*txJob{},
+		}
+		pipelines = append(pipelines, line)
+		byTxTopic[dev.Topics.Tx()] = line
 	}
 
 	// drained ends the event publishers' wait for the connection when the
@@ -201,8 +232,18 @@ func (core *Core) Run(ctx context.Context) error {
 	// they stop relative to everything else.
 	readerCtx, stopReaders := context.WithCancel(context.Background())
 	defer stopReaders()
-	var readers, publishers, keepalives sync.WaitGroup
+	var readers, publishers, keepalives, writers, intake sync.WaitGroup
+	intake.Add(1)
+	go func() {
+		defer intake.Done()
+		core.takeTxs(ctx, byTxTopic)
+	}()
 	for _, line := range pipelines {
+		writers.Add(1)
+		go func(line *pipeline) {
+			defer writers.Done()
+			core.writeTxs(line)
+		}(line)
 		readers.Add(1)
 		go func(line *pipeline) {
 			defer readers.Done()
@@ -237,11 +278,20 @@ func (core *Core) Run(ctx context.Context) error {
 
 	<-ctx.Done()
 	core.log.Info("shutting down", "buffered", buffered(pipelines))
+	// No tx is started from here; one being written ends when its port
+	// closes, and the rest are recorded as not written (#19 Q1).
+	core.stopping.Store(true)
+	close(core.stoppingCh)
+	intake.Wait()
 
 	close(stopKeepalive)
 	keepalives.Wait()
 	stopReaders()
 	readers.Wait()
+	for _, line := range pipelines {
+		line.tx.close()
+	}
+	writers.Wait()
 	core.drainDeadlineMS.Store(core.opts.Now().Add(core.opts.DrainTimeout).UnixMilli())
 	stopDrain := time.AfterFunc(core.opts.DrainTimeout, endDrain)
 	defer stopDrain.Stop()
@@ -360,9 +410,8 @@ func (core *Core) report(line *pipeline, event device.Event) {
 		return
 	}
 	core.log.Debug("port event", eventAttrs(event)...)
-	if dropped, full := line.events.push(event); full {
-		core.log.Warn("device event dropped: queue full, the most recent are kept",
-			append(eventAttrs(dropped), "queue_size", core.opts.EventBufferSize)...)
+	if dropped, full := line.events.push(statusItem{event: &event}); full {
+		core.logQueueFull(dropped)
 	}
 }
 
@@ -373,11 +422,20 @@ func (core *Core) count(line *pipeline, event device.Event) {
 	switch event.Kind {
 	case device.PortOpened:
 		line.open = true
-	case device.PortClosed, device.PortLost:
+		select {
+		case line.opened <- struct{}{}:
+		default:
+		}
+	case device.PortClosed:
 		line.open = false
+	case device.PortLost:
+		line.open = false
+		line.failureClass, _ = errorClass(event.ErrorClass)
+		line.failure = errString(event.Err)
 	case device.PortOpenFailed:
 		line.open = false
 		class, known := errorClass(event.ErrorClass)
+		line.failureClass, line.failure = class, errString(event.Err)
 		if !known {
 			core.log.Error("port event carries an error class the keepalive has no counter for; counted as unknown",
 				eventAttrs(event)...)
@@ -397,6 +455,34 @@ func (line *pipeline) countFrame() {
 	line.mu.Lock()
 	defer line.mu.Unlock()
 	line.counters.RxFrames++
+}
+
+// countTx counts a tx result: written, or failed.
+func (line *pipeline) countTx(written bool) {
+	line.mu.Lock()
+	defer line.mu.Unlock()
+	if written {
+		line.counters.TxWritten++
+	} else {
+		line.counters.TxFailed++
+	}
+}
+
+func (line *pipeline) isOpen() bool {
+	line.mu.Lock()
+	defer line.mu.Unlock()
+	return line.open
+}
+
+// lastFailure is the class and text of the port's last failure to open, or of
+// its loss, for a tx that could not be written because of it.
+func (line *pipeline) lastFailure() (wire.ErrorClass, string) {
+	line.mu.Lock()
+	defer line.mu.Unlock()
+	if line.failure == "" {
+		return wire.ErrorUnknown, "the port is not open"
+	}
+	return line.failureClass, line.failure
 }
 
 func (line *pipeline) countPublishFailure() {
@@ -433,8 +519,13 @@ func (core *Core) publishEvents(line *pipeline, drained context.Context) {
 			core.dropEvents(line, reason)
 			return
 		}
-		if event, ok := line.events.pop(); ok {
-			core.publishEvent(line, event)
+		item, ok := line.events.pop()
+		switch {
+		case !ok:
+		case item.tx != nil:
+			core.publishTxResult(line, item.tx)
+		default:
+			core.publishEvent(line, *item.event)
 		}
 	}
 }
@@ -481,11 +572,15 @@ func (core *Core) publishEvent(line *pipeline, event device.Event) {
 // published.
 func (core *Core) dropEvents(line *pipeline, reason string) {
 	for {
-		event, ok := line.events.pop()
+		item, ok := line.events.pop()
 		if !ok {
 			return
 		}
-		core.log.Warn("device event dropped", append(eventAttrs(event), "reason", reason)...)
+		message := "device event dropped"
+		if item.tx != nil {
+			message = "tx result dropped"
+		}
+		core.log.Warn(message, append(item.attrs(), "reason", reason)...)
 	}
 }
 
@@ -577,13 +672,47 @@ func (core *Core) pastDrainDeadline() bool {
 	return deadline > 0 && core.opts.Now().UnixMilli() > deadline
 }
 
-// eventQueue holds one device's events until they can be published, oldest
-// first. It keeps at most size of them: pushing onto a full queue drops the
-// oldest, so that after a long broker outage the most recent events are the
-// ones left. One goroutine pushes and one takes.
+// logQueueFull records an event dropped from a full queue.
+func (core *Core) logQueueFull(dropped statusItem) {
+	core.log.Warn("device event dropped: queue full, the most recent are kept",
+		append(dropped.attrs(), "queue_size", core.opts.EventBufferSize)...)
+}
+
+// statusItem is one message for a device's status topic: a port event, or a
+// tx result.
+type statusItem struct {
+	event *device.Event
+	tx    *txResultItem
+}
+
+// txResultItem is a tx result and when it was produced, which its expiry
+// counts from.
+type txResultItem struct {
+	result wire.TxResult
+	at     time.Time
+}
+
+// attrs are the log attributes of a status message that was not published.
+func (item statusItem) attrs() []any {
+	if item.tx != nil {
+		result := item.tx.result
+		return []any{"device_id", result.DeviceID, "tx_id", deref(result.TxID), "state", string(result.State),
+			"code", string(result.Code), "at", item.tx.at.UTC().Format(wire.TimeFormat)}
+	}
+	return eventAttrs(*item.event)
+}
+
+// eventQueue holds one device's status messages until they can be published,
+// oldest first. It keeps at most size events: pushing an event when size are
+// held drops the oldest, so that after a long broker outage the most recent
+// events are the ones left (#13 Q1). A tx result is never dropped for room. Its
+// sender waits for it and resends without it, and a printer prints a resent job
+// twice. Results cannot pile up during an outage either, since no tx arrives
+// without the connection. The reader and the tx side push, and one goroutine
+// takes.
 type eventQueue struct {
 	mu     sync.Mutex
-	events []device.Event
+	events []statusItem
 	size   int
 	closed bool
 	// ready holds a value after every push and at close, so that wait need
@@ -595,18 +724,29 @@ func newEventQueue(size int) *eventQueue {
 	return &eventQueue{size: size, ready: make(chan struct{}, 1)}
 }
 
-// push adds an event. When the queue was full it returns the oldest event,
-// which it dropped to make room, and true.
-func (queue *eventQueue) push(event device.Event) (device.Event, bool) {
+// push adds a message. When an event found size events held, it returns the
+// oldest, which it dropped to make room, and true.
+func (queue *eventQueue) push(item statusItem) (statusItem, bool) {
 	queue.mu.Lock()
 	defer queue.mu.Unlock()
-	var dropped device.Event
-	full := len(queue.events) >= queue.size
-	if full {
-		dropped = queue.events[0]
-		queue.events = queue.events[1:]
+	var dropped statusItem
+	full := false
+	if item.event != nil {
+		held, oldest := 0, -1
+		for i, queued := range queue.events {
+			if queued.event != nil {
+				held++
+				if oldest < 0 {
+					oldest = i
+				}
+			}
+		}
+		if full = held >= queue.size; full {
+			dropped = queue.events[oldest]
+			queue.events = append(queue.events[:oldest], queue.events[oldest+1:]...)
+		}
 	}
-	queue.events = append(queue.events, event)
+	queue.events = append(queue.events, item)
 	queue.signal()
 	return dropped, full
 }
@@ -636,12 +776,12 @@ func (queue *eventQueue) wait() bool {
 	}
 }
 
-// pop takes the oldest event, if there is one.
-func (queue *eventQueue) pop() (device.Event, bool) {
+// pop takes the oldest message, if there is one.
+func (queue *eventQueue) pop() (statusItem, bool) {
 	queue.mu.Lock()
 	defer queue.mu.Unlock()
 	if len(queue.events) == 0 {
-		return device.Event{}, false
+		return statusItem{}, false
 	}
 	event := queue.events[0]
 	queue.events = queue.events[1:]
