@@ -362,15 +362,16 @@ func (dev *Device) session(ctx context.Context, sink chan<- device.Frame, report
 
 // Write writes data through the port the reader has open, in chunks, and loops
 // over partial writes until every byte is written. It returns ErrNotOpen when
-// no session holds the port, or when the session closes it mid-write; any
-// other failure comes back as a *device.PortError with its class.
-func (dev *Device) Write(data []byte, progress func(written int)) (int, error) {
+// no session holds the port, or when the session closes it mid-write, and
+// ctx's error when ctx ends between chunks; any other failure comes back as a
+// *device.PortError with its class.
+func (dev *Device) Write(ctx context.Context, data []byte, progress func(written int)) (int, error) {
 	shared := dev.getCurrent()
 	if shared == nil {
 		return 0, device.ErrNotOpen
 	}
-	written, err := shared.write(data, progress)
-	if err != nil && !errors.Is(err, device.ErrNotOpen) {
+	written, err := shared.write(ctx, data, progress)
+	if err != nil && !errors.Is(err, device.ErrNotOpen) && ctx.Err() == nil {
 		err = &device.PortError{Class: classify(err), Err: fmt.Errorf("write %s: %w", dev.opts.Path, err)}
 	}
 	return written, err
@@ -408,9 +409,12 @@ type sharedPort struct {
 	closed bool
 }
 
-func (shared *sharedPort) write(data []byte, progress func(int)) (int, error) {
+func (shared *sharedPort) write(ctx context.Context, data []byte, progress func(int)) (int, error) {
 	written := 0
 	for written < len(data) {
+		if err := ctx.Err(); err != nil {
+			return written, err
+		}
 		end := min(written+writeChunk, len(data))
 		n, err := shared.writeChunk(data[written:end])
 		written += n

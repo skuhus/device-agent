@@ -31,9 +31,9 @@ const (
 	txOutcomeWritten  = "written"
 	txOutcomeFailed   = "failed"
 	txOutcomeRejected = "rejected"
-	// txOutcomeNotWritten is a tx the agent stopped before writing. It gets no
-	// result for now (#19 Q1).
-	txOutcomeNotWritten = "not_written"
+	// txOutcomeNotTaken is a tx that arrived as the connection closed, too
+	// late for any result to be published.
+	txOutcomeNotTaken = "not_taken"
 )
 
 // txJob is one tx taken for a device's port.
@@ -128,9 +128,10 @@ func (queue *txQueue) signal() {
 	}
 }
 
-// takeTxs reads the tx messages until ctx ends and gives each to its device.
-// What is still buffered when ctx ends is recorded as not taken.
-func (core *Core) takeTxs(ctx context.Context, byTopic map[string]*pipeline) {
+// takeTxs gives each tx to its device until stop is closed, and then takes
+// what is already waiting. While the agent stops, each still gets a result:
+// agent_stopping.
+func (core *Core) takeTxs(stop <-chan struct{}, byTopic map[string]*pipeline) {
 	if core.opts.TxIn == nil {
 		return
 	}
@@ -138,18 +139,35 @@ func (core *Core) takeTxs(ctx context.Context, byTopic map[string]*pipeline) {
 		select {
 		case message := <-core.opts.TxIn:
 			core.intake(byTopic, message)
-		case <-ctx.Done():
+		case <-stop:
 			for {
 				select {
 				case message := <-core.opts.TxIn:
-					ref, _, _ := wire.ReadTx(message.Payload)
-					logging.Record(core.log, slog.LevelError, "tx not taken: the agent is stopping",
-						append([]any{"topic", message.Topic, "tx_id", ref.ID, "sender", ref.Sender,
-							"outcome", txOutcomeNotWritten}, logging.Payload(message.Payload)...)...)
+					core.intake(byTopic, message)
 				default:
 					return
 				}
 			}
+		}
+	}
+}
+
+// recordUntaken logs each tx that arrived after the intake stopped. The
+// connection is closed by then, so no result can be published; the sender
+// treats the tx as not written, as for one lost in a reconnect.
+func (core *Core) recordUntaken() {
+	if core.opts.TxIn == nil {
+		return
+	}
+	for {
+		select {
+		case message := <-core.opts.TxIn:
+			ref, _, _ := wire.ReadTx(message.Payload)
+			logging.Record(core.log, slog.LevelError, "tx not taken: the agent had stopped",
+				append([]any{"topic", message.Topic, "tx_id", ref.ID, "sender", ref.Sender,
+					"outcome", txOutcomeNotTaken}, logging.Payload(message.Payload)...)...)
+		default:
+			return
 		}
 	}
 }
@@ -185,6 +203,14 @@ func (core *Core) intake(byTopic map[string]*pipeline, message TxMessage) {
 		core.txResult(line, result, now, nil)
 		return
 	}
+	core.intakeMu.Lock()
+	if core.stopping.Load() {
+		core.intakeMu.Unlock()
+		line.txMu.Unlock()
+		core.txResult(line, core.opts.Builder.TxAgentStopping(dev, line.isOpen(), ref, 0, now), now,
+			append([]any{"bytes_written", 0}, logging.Payload(data)...))
+		return
+	}
 	job := &txJob{ref: ref, data: data, received: message.Received, stage: wire.TxQueued, since: now}
 	if message.HasExpiry {
 		job.deadline = message.Received.Add(message.Expiry)
@@ -196,9 +222,12 @@ func (core *Core) intake(byTopic map[string]*pipeline, message TxMessage) {
 	if message.HasExpiry {
 		expiry = message.Expiry.String()
 	}
+	// accepted is queued before the writer can see the job, so that it goes
+	// out before the job's written or failed.
 	core.txResult(line, core.opts.Builder.TxAccepted(dev, line.isOpen(), ref, now), now,
 		append([]any{"bytes", len(data), "message_expiry", expiry}, core.payloadIf(data)...))
 	line.tx.push(job)
+	core.intakeMu.Unlock()
 }
 
 // writeTxs writes one device's tx in the order they were taken, until its
@@ -228,7 +257,8 @@ func (core *Core) writeTx(line *pipeline, job *txJob) {
 	for {
 		now := core.opts.Now()
 		if core.stopping.Load() {
-			core.txNotWritten(line, job, "the agent is stopping")
+			core.txResult(line, core.opts.Builder.TxAgentStopping(dev, line.isOpen(), job.ref, 0, now), now,
+				append([]any{"bytes_written", 0, "open_attempts", attempts}, logging.Payload(job.data)...))
 			return
 		}
 		if job.expired(now) {
@@ -243,7 +273,7 @@ func (core *Core) writeTx(line *pipeline, job *txJob) {
 		}
 
 		job.setStage(wire.TxWriting, now)
-		written, err := writer.Write(job.data, job.progress)
+		written, err := writer.Write(core.writeCtx, job.data, job.progress)
 		now = core.opts.Now()
 		if err == nil {
 			core.txResult(line, core.opts.Builder.TxWritten(dev, line.isOpen(), job.ref, written, attempts, now), now,
@@ -263,8 +293,9 @@ func (core *Core) writeTx(line *pipeline, job *txJob) {
 			core.awaitPort(line, writer, job)
 			continue
 		}
-		if core.stopping.Load() && errors.Is(err, device.ErrNotOpen) {
-			core.txNotWritten(line, job, "the agent stopped while it was being written")
+		if core.writeCtx.Err() != nil && errors.Is(err, core.writeCtx.Err()) {
+			core.txResult(line, core.opts.Builder.TxAgentStopping(dev, line.isOpen(), job.ref, written, now), now,
+				append([]any{"bytes_written", written, "open_attempts", attempts}, logging.Payload(job.data)...))
 			return
 		}
 		class, failure := classOf(err)
@@ -299,15 +330,6 @@ func (core *Core) awaitPort(line *pipeline, writer device.Writer, job *txJob) {
 	case <-timer.C:
 	case <-core.stoppingCh:
 	}
-}
-
-// txNotWritten records a tx the agent stopped before writing, with its data.
-// Whether it should get a result is #19 Q1.
-func (core *Core) txNotWritten(line *pipeline, job *txJob, reason string) {
-	_, _, written := job.standing()
-	logging.Record(core.log, slog.LevelError, "tx not written: "+reason,
-		append([]any{"tx_id", job.ref.ID, "sender", job.ref.Sender, "device_id", line.device.Wire.ID,
-			"bytes", len(job.data), "bytes_written", written, "outcome", txOutcomeNotWritten}, logging.Payload(job.data)...)...)
 }
 
 // txResult counts a result, records it in the log, and queues it for the

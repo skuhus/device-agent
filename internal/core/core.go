@@ -114,9 +114,14 @@ type Core struct {
 	// the shutdown drain gives up. Written by Run, read by every publisher.
 	drainDeadlineMS atomic.Int64
 	// stopping is set, and stoppingCh closed, when the agent starts to stop,
-	// so that no tx is started after it.
+	// so that no tx is started after it. intakeMu holds stopping still while a
+	// tx is queued, so that none is queued after the writers were told to end.
+	intakeMu   sync.Mutex
 	stopping   atomic.Bool
 	stoppingCh chan struct{}
+	// writeCtx ends when a tx being written at shutdown has had the drain
+	// timeout: it stops after the chunk in hand (#19 Q1).
+	writeCtx context.Context
 }
 
 // pipeline is one device's frames and events, the sequence number of its
@@ -199,9 +204,12 @@ func New(opts Options) (*Core, error) {
 
 // Run reads from every device and publishes until ctx is cancelled.
 //
-// Shutdown order matters and is deliberate. The keepalive stops, so none
-// follows the offline message. The readers stop, so nothing new arrives; each
-// reports its port closed. The publishers drain what is already framed and
+// Shutdown order matters and is deliberate. No tx is started: one queued or
+// waiting for its port fails as agent_stopping, and so does one that arrives
+// from then on. One being written goes on for at most the drain timeout, with
+// its port still open, and is then stopped after the chunk in hand (#19 Q1).
+// The keepalive stops, so none follows the offline message. The readers stop,
+// so nothing new arrives; each reports its port closed. The publishers drain what is already framed and
 // queued, for at most the drain timeout, including events still waiting for
 // the connection. The offline message goes out, and only then does the
 // connection close. Closing first would make the broker publish the will
@@ -232,11 +240,15 @@ func (core *Core) Run(ctx context.Context) error {
 	// they stop relative to everything else.
 	readerCtx, stopReaders := context.WithCancel(context.Background())
 	defer stopReaders()
+	writeCtx, stopWrites := context.WithCancel(context.Background())
+	defer stopWrites()
+	core.writeCtx = writeCtx
 	var readers, publishers, keepalives, writers, intake sync.WaitGroup
+	stopIntake := make(chan struct{})
 	intake.Add(1)
 	go func() {
 		defer intake.Done()
-		core.takeTxs(ctx, byTxTopic)
+		core.takeTxs(stopIntake, byTxTopic)
 	}()
 	for _, line := range pipelines {
 		writers.Add(1)
@@ -278,20 +290,25 @@ func (core *Core) Run(ctx context.Context) error {
 
 	<-ctx.Done()
 	core.log.Info("shutting down", "buffered", buffered(pipelines))
-	// No tx is started from here; one being written ends when its port
-	// closes, and the rest are recorded as not written (#19 Q1).
+	core.intakeMu.Lock()
 	core.stopping.Store(true)
+	core.intakeMu.Unlock()
 	close(core.stoppingCh)
-	intake.Wait()
+	for _, line := range pipelines {
+		line.tx.close()
+	}
+	cutWrites := time.AfterFunc(core.opts.DrainTimeout, stopWrites)
+	writers.Wait()
+	cutWrites.Stop()
 
 	close(stopKeepalive)
 	keepalives.Wait()
 	stopReaders()
 	readers.Wait()
-	for _, line := range pipelines {
-		line.tx.close()
-	}
-	writers.Wait()
+	// A tx that arrived while the writers finished has its result queued
+	// before the status queues close.
+	close(stopIntake)
+	intake.Wait()
 	core.drainDeadlineMS.Store(core.opts.Now().Add(core.opts.DrainTimeout).UnixMilli())
 	stopDrain := time.AfterFunc(core.opts.DrainTimeout, endDrain)
 	defer stopDrain.Stop()
@@ -313,6 +330,7 @@ func (core *Core) Run(ctx context.Context) error {
 	if err := core.opts.Transport.Close(closeCtx); err != nil {
 		core.log.Warn("broker disconnect failed", "error", err.Error())
 	}
+	core.recordUntaken()
 	core.log.Info("stopped")
 	return nil
 }

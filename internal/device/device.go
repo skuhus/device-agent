@@ -99,9 +99,10 @@ type Writer interface {
 	// Write writes data to the port, all of it and in order, and calls
 	// progress with the total after each piece the operating system accepted.
 	// It returns how many bytes were written; with ErrNotOpen and none written,
-	// the port was not open, and the write can be tried again once it is.
+	// the port was not open, and the write can be tried again once it is. When
+	// ctx ends it stops after the piece in hand and returns ctx's error.
 	// Write is not safe for concurrent use: a device has one writer.
-	Write(data []byte, progress func(written int)) (int, error)
+	Write(ctx context.Context, data []byte, progress func(written int)) (int, error)
 	// RetryOpen asks the reader to try opening the port now, rather than when
 	// its backoff ends. It does not wait for the attempt.
 	RetryOpen()

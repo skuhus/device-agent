@@ -111,7 +111,7 @@ func TestWriteReachesTheOpenPortWhole(t *testing.T) {
 	data := bytes.Repeat([]byte("0123456789"), 500)
 
 	var reported []int
-	written, err := dev.Write(data, func(total int) { reported = append(reported, total) })
+	written, err := dev.Write(context.Background(), data, func(total int) { reported = append(reported, total) })
 	if err != nil || written != len(data) {
 		t.Fatalf("Write = %d, %v; want %d, nil", written, err, len(data))
 	}
@@ -138,7 +138,7 @@ func TestWriteWithoutAnOpenPort(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	written, err := dev.Write([]byte("label"), nil)
+	written, err := dev.Write(context.Background(), []byte("label"), nil)
 	if written != 0 || !errors.Is(err, device.ErrNotOpen) {
 		t.Errorf("Write = %d, %v; want 0 and ErrNotOpen", written, err)
 	}
@@ -160,7 +160,7 @@ func TestWriteRacingACloseNeverReachesTheClosedPort(t *testing.T) {
 	var written int
 	go func() {
 		var err error
-		written, err = dev.Write(data, func(int) { once.Do(func() { close(started) }) })
+		written, err = dev.Write(context.Background(), data, func(int) { once.Do(func() { close(started) }) })
 		result <- err
 	}()
 	<-started
@@ -187,7 +187,7 @@ func TestWriteFailureCarriesItsClass(t *testing.T) {
 	port := newWrittenPort()
 	port.failAfter = 1500
 	dev, _ := runOn(t, port)
-	written, err := dev.Write(bytes.Repeat([]byte("y"), 4000), nil)
+	written, err := dev.Write(context.Background(), bytes.Repeat([]byte("y"), 4000), nil)
 	var portErr *device.PortError
 	if !errors.As(err, &portErr) || portErr.Class != "disconnected" || !errors.Is(err, syscall.EIO) {
 		t.Fatalf("Write error = %v, want a PortError of class disconnected wrapping EIO", err)
@@ -244,5 +244,24 @@ func TestRetryOpenCutsTheBackoffShort(t *testing.T) {
 	}
 	if gap := attempts[1].Sub(attempts[0]); gap > time.Second {
 		t.Errorf("the retry came %s after the first attempt, want well inside the minute's backoff", gap)
+	}
+}
+
+// A write told to stop finishes the chunk in hand and starts no other, so that
+// a stopping agent cuts a long job at a chunk boundary (#19 Q1).
+func TestWriteStopsBetweenChunksWhenAsked(t *testing.T) {
+	port := newWrittenPort()
+	port.delay = time.Millisecond
+	port.perCall = 256
+	dev, _ := runOn(t, port)
+	ctx, cancel := context.WithCancel(context.Background())
+	var once sync.Once
+	written, err := dev.Write(ctx, bytes.Repeat([]byte("z"), 64*1024), func(int) { once.Do(cancel) })
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Write ended with %v, want context.Canceled", err)
+	}
+	got, _, _ := port.state()
+	if written != writeChunk || len(got) != writeChunk {
+		t.Errorf("written %d, the port has %d; want the one chunk in hand, %d", written, len(got), writeChunk)
 	}
 }

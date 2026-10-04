@@ -58,7 +58,7 @@ func (printer *fakePrinter) Run(ctx context.Context, sink chan<- device.Frame, r
 	return printer.fakeReader.Run(ctx, sink, report)
 }
 
-func (printer *fakePrinter) Write(data []byte, progress func(int)) (int, error) {
+func (printer *fakePrinter) Write(ctx context.Context, data []byte, progress func(int)) (int, error) {
 	printer.mu.Lock()
 	if !printer.open {
 		printer.mu.Unlock()
@@ -74,7 +74,11 @@ func (printer *fakePrinter) Write(data []byte, progress func(int)) (int, error) 
 		if writing != nil {
 			writing <- struct{}{}
 		}
-		<-hold
+		select {
+		case <-hold:
+		case <-ctx.Done():
+			return written, ctx.Err()
+		}
 	}
 	if failAfter >= 0 && failAfter < len(data) {
 		progress(failAfter)
@@ -121,15 +125,23 @@ type txRun struct {
 	topics    wire.DeviceTopics
 	log       *logtest.Log
 	connected chan struct{}
+	core      *Core
 	cancel    context.CancelFunc
 	done      chan error
 }
 
 func startTxRun(t *testing.T, transport *fakeTransport, printer *fakePrinter, attempts int, interval time.Duration) *txRun {
 	t.Helper()
+	return startTxRunWith(t, transport, printer, attempts, interval, func(*Options) {})
+}
+
+// startTxRunWith is startTxRun with options the test sets itself.
+func startTxRunWith(t *testing.T, transport *fakeTransport, printer *fakePrinter, attempts int, interval time.Duration, set func(*Options)) *txRun {
+	t.Helper()
 	dev := coreDevice(t, printer, "epson-tm-t20iii")
 	dev.TxOpenAttempts, dev.TxOpenInterval = attempts, interval
 	opts := testOptions(t, transport, dev)
+	set(&opts)
 	logger, log := logtest.New(t, "debug")
 	opts.Logger = logger
 	txIn := make(chan TxMessage, 64)
@@ -139,7 +151,7 @@ func startTxRun(t *testing.T, transport *fakeTransport, printer *fakePrinter, at
 	running := newCore(t, opts)
 	ctx, cancel := context.WithCancel(context.Background())
 	run := &txRun{t: t, transport: transport, printer: printer, txIn: txIn, topics: dev.Topics, log: log,
-		connected: connected, cancel: cancel, done: make(chan error, 1)}
+		connected: connected, core: running, cancel: cancel, done: make(chan error, 1)}
 	go func() { run.done <- running.Run(ctx) }()
 	t.Cleanup(func() { run.stop() })
 	return run
@@ -466,9 +478,10 @@ func TestTxResultsWaitForTheConnection(t *testing.T) {
 	}
 }
 
-// When the agent stops, a tx not yet written is not started. It gets no
-// result for now (#19 Q1), and its record says so, with its data.
-func TestTxNotWrittenWhenTheAgentStops(t *testing.T) {
+// When the agent stops, a tx being written goes on within the drain, and one
+// still queued is not started: it fails as agent_stopping, with nothing
+// written (#19 Q1).
+func TestQueuedTxFailsWhenTheAgentStops(t *testing.T) {
 	transport := &fakeTransport{}
 	printer := newFakePrinter("printer-1", true)
 	printer.hold, printer.writing = make(chan struct{}), make(chan struct{}, 1)
@@ -484,17 +497,77 @@ func TestTxNotWrittenWhenTheAgentStops(t *testing.T) {
 	}()
 	run.stop()
 	writes, _ := printer.snapshot()
+	if len(writes) != 1 || string(writes[0]) != "first label" {
+		t.Errorf("writes = %q, want the first label only", writes)
+	}
+	if got := codes(run.resultsFor(txA)); got != "accepted/accepted written/written" {
+		t.Errorf("the tx being written: %s, want it written within the drain", got)
+	}
+	second := run.resultsFor(txB)
+	if got := codes(second); got != "accepted/accepted failed/agent_stopping" || second[1].Detail["bytes_written"] != float64(0) {
+		t.Errorf("the queued tx: %s %v, want agent_stopping with nothing written", got, second[len(second)-1].Detail)
+	}
+	requireRecord(t, run.log.WithMessage(t, "tx failed"), "tx_id", txB, "code", "agent_stopping", "data_text", "second label")
+}
+
+// A tx still being written when the drain runs out stops after the chunk in
+// hand, and its result says how far it got.
+func TestTxBeingWrittenIsCutAtTheDrain(t *testing.T) {
+	transport := &fakeTransport{}
+	printer := newFakePrinter("printer-1", true)
+	printer.hold, printer.writing = make(chan struct{}), make(chan struct{}, 1)
+	run := startTxRunWith(t, transport, printer, 3, 10*time.Millisecond, func(opts *Options) { opts.DrainTimeout = 100 * time.Millisecond })
+	run.send(txA, []byte("a label that never finishes"), 30*time.Second)
+	<-printer.writing
+
+	started := time.Now()
+	run.stop()
+	if took := time.Since(started); took > 2*time.Second {
+		t.Errorf("stopping took %s with a write held, want about the 100 ms drain", took)
+	}
+	results := run.resultsFor(txA)
+	if got := codes(results); got != "accepted/accepted failed/agent_stopping" || results[1].Detail["bytes_written"] != float64(1) {
+		t.Errorf("results = %s %v, want agent_stopping after the 1 byte written", got, results[len(results)-1].Detail)
+	}
+}
+
+// A tx that arrives while the agent stops gets agent_stopping at once, and is
+// not queued.
+func TestTxArrivingWhileTheAgentStopsFails(t *testing.T) {
+	transport := &fakeTransport{}
+	printer := newFakePrinter("printer-1", true)
+	printer.hold, printer.writing = make(chan struct{}), make(chan struct{}, 1)
+	run := startTxRun(t, transport, printer, 3, 10*time.Millisecond)
+	run.send(txA, []byte("held label"), 30*time.Second)
+	<-printer.writing
+
+	stopped := make(chan struct{})
+	go func() {
+		run.stop()
+		close(stopped)
+	}()
+	waitUntil(t, "the agent to begin stopping", func() bool { return run.core.stopping.Load() })
+	run.send(txB, []byte("late label"), 30*time.Second)
+	waitUntil(t, "the late tx's result", func() bool {
+		for _, result := range run.results() {
+			if result.TxID != nil && *result.TxID == txB {
+				return true
+			}
+		}
+		return false
+	})
+	close(printer.hold)
+	<-stopped
+	late := run.resultsFor(txB)
+	if got := codes(late); got != "failed/agent_stopping" {
+		t.Errorf("the late tx: %s, want agent_stopping alone", got)
+	}
+	writes, _ := printer.snapshot()
 	for _, write := range writes {
-		if bytes.Contains(write, []byte("second")) {
-			t.Errorf("the second tx was written after the agent began to stop")
+		if bytes.Contains(write, []byte("late")) {
+			t.Error("the late tx was written")
 		}
 	}
-	for _, result := range run.results() {
-		if result.TxID != nil && *result.TxID == txB && result.State != wire.TxAccepted {
-			t.Errorf("the second tx got %s/%s, want no result beyond accepted", result.State, result.Code)
-		}
-	}
-	requireRecord(t, run.log.WithMessage(t, "tx not written: the agent is stopping"), "tx_id", txB, "outcome", "not_written", "data_text", "second label")
 }
 
 // requireRecord fails unless one of the records holds every key with its value.
