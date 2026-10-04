@@ -764,6 +764,7 @@ func validDevice(path string) Device {
 		ID: "d", Kind: KindSerial, Path: path, Baud: 9600,
 		DataBits: 8, Parity: ParityNone, StopBits: StopBitsOne,
 		Separator: "\r", MaxFrameBytes: 4096, InterCharTimeout: Duration(200 * time.Millisecond),
-		MessageExpiry: Duration(30 * time.Second),
+		MessageExpiry:  Duration(30 * time.Second),
+		TxOpenAttempts: DefaultTxOpenAttempts, TxOpenInterval: Duration(DefaultTxOpenInterval),
 	}
 }

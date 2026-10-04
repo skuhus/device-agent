@@ -123,6 +123,14 @@ devices:
     # does not interpret it.
     # device_type: honeywell-1470g
 
+    # A tx that finds this device's port closed asks for it to be opened, up
+    # to tx_open_attempts times, tx_open_interval apart, and then fails with
+    # the reason the port did not open. Once writing has started nothing is
+    # retried: a retry could put a job on the wire twice, and a printer would
+    # print it twice.
+    tx_open_attempts: 3
+    tx_open_interval: 1s
+
     # There is no symbology setting. The agent publishes the complete frame
     # with only the separator removed, so any code identifier the scanner
     # prefixes stays in the payload for the upstream side to decode. See

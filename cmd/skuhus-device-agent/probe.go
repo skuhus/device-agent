@@ -85,6 +85,9 @@ func runProbe(args []string, stdout, stderr io.Writer) error {
 		MaxFrameBytes:    *maxFrame,
 		InterCharTimeout: config.Duration(*interChar),
 		MessageExpiry:    config.Duration(config.DefaultMessageExpiry),
+		// probe writes nothing; these only have to satisfy validation.
+		TxOpenAttempts: config.DefaultTxOpenAttempts,
+		TxOpenInterval: config.Duration(config.DefaultTxOpenInterval),
 	}
 
 	if *deviceID != "" {

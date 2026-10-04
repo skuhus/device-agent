@@ -261,6 +261,12 @@ func validateDevices(devices []Device) ([]error, []Warning) {
 		}
 		problems = append(problems, wholeSeconds(where+".message_expiry", deviceCfg.MessageExpiry,
 			"MQTT carries the message expiry in whole seconds")...)
+		if deviceCfg.TxOpenAttempts < 1 {
+			problems = append(problems, fmt.Errorf("%s.tx_open_attempts must be at least 1, got %d", where, deviceCfg.TxOpenAttempts))
+		}
+		if deviceCfg.TxOpenInterval <= 0 {
+			problems = append(problems, fmt.Errorf("%s.tx_open_interval must be positive, got %s", where, deviceCfg.TxOpenInterval))
+		}
 		problems = append(problems, validateDeviceType(where, deviceCfg.DeviceType)...)
 	}
 	return problems, warnings

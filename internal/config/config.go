@@ -122,6 +122,11 @@ type Device struct {
 	// DeviceType is carried in every message about the device, for the
 	// services behind the broker, and never interpreted by the agent.
 	DeviceType string `yaml:"device_type"`
+	// TxOpenAttempts is how many times a tx that finds the port closed asks
+	// for it to be opened, TxOpenInterval apart, before it fails. Once
+	// writing has started nothing is retried (DESIGN-V2.md, "Writing: tx").
+	TxOpenAttempts int      `yaml:"tx_open_attempts"`
+	TxOpenInterval Duration `yaml:"tx_open_interval"`
 }
 
 // Parity names a serial parity setting.

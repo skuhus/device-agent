@@ -16,6 +16,10 @@ const (
 	DefaultInterCharTimeout = 200 * time.Millisecond
 	// DefaultMessageExpiry is v1's delivery.scan_ttl, now set per device.
 	DefaultMessageExpiry = 30 * time.Second
+	// DefaultTxOpenAttempts and DefaultTxOpenInterval bound how long a tx waits
+	// for a closed port: about 3 s (PLAN-V2.md, T14).
+	DefaultTxOpenAttempts = 3
+	DefaultTxOpenInterval = 1 * time.Second
 
 	DefaultKeepalive = 30 * time.Second
 	// DefaultReconnectInterval is how often the agent tries the broker while it
@@ -119,6 +123,12 @@ func applyDeviceDefaults(devices []Device) {
 		}
 		if deviceCfg.MessageExpiry == 0 {
 			deviceCfg.MessageExpiry = Duration(DefaultMessageExpiry)
+		}
+		if deviceCfg.TxOpenAttempts == 0 {
+			deviceCfg.TxOpenAttempts = DefaultTxOpenAttempts
+		}
+		if deviceCfg.TxOpenInterval == 0 {
+			deviceCfg.TxOpenInterval = Duration(DefaultTxOpenInterval)
 		}
 	}
 }
