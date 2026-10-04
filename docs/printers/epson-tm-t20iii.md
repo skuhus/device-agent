@@ -61,3 +61,45 @@ handshaking (its self-test print lists it), whether the adapter's cable carries
 the handshake lines, and what a job larger than the printer's receive buffer
 does while the printer is stopped. go.bug.st/serial cannot turn flow control on
 in any case (#5).
+
+## The adapter's driver takes a job 16 KB at a time
+
+Measured with the agent stopped, writing NUL bytes, which the printer ignores,
+in 1 KB chunks:
+
+```
+serialbench flood --path /dev/cu.usbserial-111420 --baud 9600 --bytes 40960 --chunk 1024
+       0s  write(2)  1024 bytes in        0s,   1024 in all
+       ...                                     (16 chunks at once)
+    816ms  write(2)  1024 bytes in     816ms,  17408 in all
+   17.11s  write(2)  1024 bytes in   16.294s,  18432 in all
+       ...                                     (15 chunks at once)
+  18.197s  write(2)  1024 bytes in    1.087s,  33792 in all
+   34.49s  write(2)  1024 bytes in   16.293s,  34816 in all
+```
+
+write(2) took 16 KB at once, then one chunk blocked for 16.3 s, the time
+16 KB takes at 9600 baud, and the next 16 KB went at once again. So a write
+returns up to about 17 s before the bytes have left the adapter, and a write
+can block for as long.
+
+## A tx being written when the agent stops
+
+On 2026-10-04 the agent, writing a 61,486-byte job of NUL bytes with a second
+job queued behind it, was sent SIGINT:
+- The long job stopped after 20,480 bytes, at a chunk boundary, with
+  `agent_stopping`. The chunk in hand returned 9.8 s after the drain's 5 s,
+  because it waited for the driver to take its next block.
+- The queued job got `agent_stopping` with 0 bytes. Neither job's text line was
+  written: it came after byte 20,480 of the first, and the second was not
+  started.
+- The reader's close of the port returned 4.5 s later. What it waited for was
+  not measured; the block the driver still held is the likely reason. The
+  whole stop took 19.3 s, with exit 0 and the offline message.
+
+## Two 20 KB jobs, and their status
+
+Two jobs of 20 KB of NUL bytes, each followed by a text line and a cut, were
+sent through the agent on 2026-10-04, each left to clear the line before the
+next. The status the printer reported after each (`DLE EOT 1` to `4`, sent as
+a tx, its reply read back as rx) was clean: `16 12 12 12`.

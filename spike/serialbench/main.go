@@ -11,6 +11,9 @@
 //	print   prints a job of numbered lines, so that a lost or damaged line can be
 //	        seen on the paper, and reports how long write(2) took to accept the
 //	        job and how long until Drain said it had left the port.
+//	flood   writes NUL bytes, which a printer ignores, in fixed chunks, and
+//	        times every write(2): how the operating system and the adapter take
+//	        a long job, without printing anything.
 //
 // Neither mode turns flow control on: the library cannot (#5).
 package main
@@ -49,6 +52,8 @@ func main() {
 		err = runStatus(os.Args[2:])
 	case "print":
 		err = runPrint(os.Args[2:])
+	case "flood":
+		err = runFlood(os.Args[2:])
 	default:
 		err = fmt.Errorf("unknown mode %q; expected status or print", os.Args[1])
 	}
@@ -292,6 +297,46 @@ func runPrint(args []string) error {
 			return err
 		}
 		fmt.Printf("after the job, DLE EOT %d (%s status): % x\n", n, statusNames[n], readFor(port, 300*time.Millisecond))
+	}
+	return nil
+}
+
+func runFlood(args []string) error {
+	fs := flag.NewFlagSet("flood", flag.ContinueOnError)
+	lf := addLineFlags(fs)
+	baud := fs.Int("baud", 0, "baud rate, as status found it")
+	total := fs.Int("bytes", 61440, "NUL bytes to write")
+	chunk := fs.Int("chunk", 1024, "bytes per Write call")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *baud <= 0 || *chunk <= 0 {
+		return errors.New("--baud and a positive --chunk are required")
+	}
+	mode, err := lf.mode(*baud)
+	if err != nil {
+		return err
+	}
+	port, err := serial.Open(*lf.path, mode)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", *lf.path, err)
+	}
+	defer port.Close()
+	data := make([]byte, *chunk)
+	start := time.Now()
+	written := 0
+	fmt.Printf("writing %d NUL bytes in %d-byte chunks at %d baud; the line needs %s\n", *total, *chunk, *baud,
+		(time.Duration(float64(*total)*10/float64(*baud)) * time.Second).Round(time.Millisecond))
+	for written < *total {
+		part := data[:min(*chunk, *total-written)]
+		before := time.Now()
+		n, err := port.Write(part)
+		took := time.Since(before)
+		written += n
+		fmt.Printf("%9s  write(2) %5d bytes in %9s, %6d in all\n", time.Since(start).Round(time.Millisecond), n, took.Round(time.Millisecond), written)
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
