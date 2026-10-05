@@ -14,12 +14,10 @@ import (
 
 	"github.com/skuhus/device-agent/internal/config"
 	"github.com/skuhus/device-agent/internal/core"
-	serialdev "github.com/skuhus/device-agent/internal/device/serial"
 	"github.com/skuhus/device-agent/internal/logging"
 	"github.com/skuhus/device-agent/internal/transport/mqtt"
 	buildinfo "github.com/skuhus/device-agent/internal/version"
 	"github.com/skuhus/device-agent/internal/wire"
-	goserial "go.bug.st/serial"
 )
 
 func runRun(args []string, stdout, stderr io.Writer) error {
@@ -177,25 +175,7 @@ func runAgent(ctx context.Context, cfg *config.Config, warnings []config.Warning
 		if err != nil {
 			return err
 		}
-		parity, stopBits, err := lineFormat(deviceCfg)
-		if err != nil {
-			return err
-		}
-		reader, err := serialdev.New(serialdev.Options{
-			ID:               deviceCfg.ID,
-			Path:             deviceCfg.Path,
-			Baud:             deviceCfg.Baud,
-			DataBits:         deviceCfg.DataBits,
-			Parity:           parity,
-			StopBits:         stopBits,
-			Terminator:       deviceCfg.SeparatorBytes(),
-			MaxFrameBytes:    deviceCfg.MaxFrameBytes,
-			InterCharTimeout: deviceCfg.InterCharTimeout.Duration(),
-			LogPayloads:      cfg.Logging.LogPayloads,
-			Logger:           log,
-			TxChunkBytes:     deviceCfg.TxChunkBytes,
-			Reopen:           deviceCfg.ReopenPolicy(),
-		})
+		reader, err := newSerialReader(deviceCfg, cfg.Logging.LogPayloads, log)
 		if err != nil {
 			return err
 		}
@@ -288,21 +268,6 @@ func runAgent(ctx context.Context, cfg *config.Config, warnings []config.Warning
 		return err
 	}
 	return running.Run(ctx)
-}
-
-// lineFormat maps a device's parity and stop bits to the serial library's
-// values. Validation accepts only mapped names, so a miss here is a bug, and
-// it fails rather than opening the port with the zero value, 8N1.
-func lineFormat(deviceCfg config.Device) (goserial.Parity, goserial.StopBits, error) {
-	parity, ok := serialdev.ParityByName[string(deviceCfg.Parity)]
-	if !ok {
-		return 0, 0, fmt.Errorf("device %s: parity %q has no serial library value", deviceCfg.ID, deviceCfg.Parity)
-	}
-	stopBits, ok := serialdev.StopBitsByName[string(deviceCfg.StopBits)]
-	if !ok {
-		return 0, 0, fmt.Errorf("device %s: stop_bits %q has no serial library value", deviceCfg.ID, deviceCfg.StopBits)
-	}
-	return parity, stopBits, nil
 }
 
 // newTxIntake returns the channel that carries each tx from paho's goroutine

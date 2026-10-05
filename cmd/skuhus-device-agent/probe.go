@@ -17,7 +17,6 @@ import (
 
 	"github.com/skuhus/device-agent/internal/config"
 	"github.com/skuhus/device-agent/internal/device"
-	serialdev "github.com/skuhus/device-agent/internal/device/serial"
 	"github.com/skuhus/device-agent/internal/logging"
 	buildinfo "github.com/skuhus/device-agent/internal/version"
 	"github.com/skuhus/device-agent/internal/wire"
@@ -136,25 +135,7 @@ func runProbe(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	lineParity, lineStopBits, err := lineFormat(dev)
-	if err != nil {
-		return err
-	}
-	sd, err := serialdev.New(serialdev.Options{
-		ID:               dev.ID,
-		Path:             dev.Path,
-		Baud:             dev.Baud,
-		DataBits:         dev.DataBits,
-		Parity:           lineParity,
-		StopBits:         lineStopBits,
-		Terminator:       dev.SeparatorBytes(),
-		MaxFrameBytes:    dev.MaxFrameBytes,
-		InterCharTimeout: dev.InterCharTimeout.Duration(),
-		LogPayloads:      *logPayloads,
-		Logger:           log,
-		TxChunkBytes:     dev.TxChunkBytes,
-		Reopen:           dev.ReopenPolicy(),
-	})
+	sd, err := newSerialReader(dev, *logPayloads, log)
 	if err != nil {
 		return err
 	}
@@ -292,14 +273,6 @@ func listDevices(w io.Writer) error {
 		}
 	}
 	return nil
-}
-
-func hostname() string {
-	h, err := os.Hostname()
-	if err != nil {
-		return "unknown"
-	}
-	return h
 }
 
 func errString(err error) string {
