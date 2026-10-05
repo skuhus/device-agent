@@ -34,7 +34,8 @@ func (core *Core) report(line *pipeline, event device.Event) {
 	}
 	core.log.Debug("port event", eventAttrs(event)...)
 	if dropped, full := line.events.push(statusItem{event: &event}); full {
-		core.logQueueFull(dropped)
+		core.log.Warn("device event dropped: queue full, the most recent are kept",
+			append(dropped.attrs(), "queue_size", core.opts.EventBufferSize)...)
 	}
 }
 
@@ -233,12 +234,6 @@ func (core *Core) publishOffline() {
 		return
 	}
 	core.log.Info("offline message published", "topic", core.opts.AgentStatus, "reason", string(wire.OfflineShutdown))
-}
-
-// logQueueFull records an event dropped from a full queue.
-func (core *Core) logQueueFull(dropped statusItem) {
-	core.log.Warn("device event dropped: queue full, the most recent are kept",
-		append(dropped.attrs(), "queue_size", core.opts.EventBufferSize)...)
 }
 
 // statusItem is one message for a device's status topic: a port event, or a
