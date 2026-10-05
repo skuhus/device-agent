@@ -1041,6 +1041,27 @@ autopaho asks for a wait before that attempt as well (autopaho/backoff.go,
 Backoff). The agent used to answer with its full first delay there, and took
 1.06 s to connect at every start.
 
+`[Decided]` After a lost connection, the first attempt waits
+`reconnect_interval`, as an attempt after a failed one does; only the first
+attempt at start goes at once. Source: maintainer, 2026-10-06 (#38 Q1a). Not
+built: #38. Until it is, the first attempt after a lost connection goes at
+once, as above.
+
+Without that wait, a broker that drops each connection as it comes up makes
+the agent spin. Measured on 2026-10-06 against RabbitMQ 4.3.5, with a topic the
+station's user may not read: 482 connections in 5 s, and 208 KB of log a second
+(#38). With the wait, it is one connection per interval. The cost is a
+connection dropped while the broker is still up: it comes back after the
+interval, 1 s by default, instead of at once. The backoff does not change this:
+it grows the wait between failed attempts, and each of these connections
+succeeds.
+
+`[Decided]` The agent subscribes to every configured topic on every
+connection, whether or not the broker refused it before. A refused topic is
+fixed in the broker's permissions or in the configuration; until then, against
+a broker that closes the connection over it, as RabbitMQ 4.3.5 does, the agent
+stays off the broker. Source: maintainer, 2026-10-06 (#38 Q2).
+
 With the backoff off, every wait is the interval exactly, with no jitter. With
 it on, the wait doubles from the interval up to `max`, and each wait is spread
 by `jitter`, a fraction either way, so that stations that lost the broker
