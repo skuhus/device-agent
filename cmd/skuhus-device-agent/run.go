@@ -22,10 +22,6 @@ import (
 	goserial "go.bug.st/serial"
 )
 
-// txIntake is how many tx can wait between paho and the core. The core takes
-// each at once, so it matters only when senders flood a station.
-const txIntake = 256
-
 func runRun(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -234,22 +230,7 @@ func runAgent(ctx context.Context, cfg *config.Config, warnings []config.Warning
 	// out at once. OnUp must not block, and one pending signal says all a
 	// second would.
 	connected := make(chan struct{}, 1)
-	// txIn carries each tx from paho's goroutine to the core. paho delivers
-	// one message after another and must not wait, or every acknowledgement
-	// behind it waits too, so a tx that finds the channel full is recorded as
-	// dropped. Its sender gets no result and treats it as not written.
-	txIn := make(chan core.TxMessage, txIntake)
-	onMessage := func(message mqtt.Message) {
-		select {
-		case txIn <- core.TxMessage{Topic: message.Topic, Payload: message.Payload, Expiry: message.Expiry,
-			HasExpiry: message.HasExpiry, Received: message.Received}:
-		default:
-			ref, _, _ := wire.ReadTx(message.Payload)
-			logging.Record(log, slog.LevelError, "tx dropped: the agent's intake is full",
-				append([]any{"topic", message.Topic, "tx_id", ref.ID, "sender", ref.Sender, "intake", txIntake},
-					logging.Payload(message.Payload)...)...)
-		}
-	}
+	txIn, onMessage := newTxIntake(cfg.Delivery.TxIntakeSize, log)
 	client, err := mqtt.Dial(connCtx, mqtt.Options{
 		URL:            cfg.Broker.URL,
 		ClientID:       cfg.Identity.Instance,
@@ -320,4 +301,27 @@ func lineFormat(deviceCfg config.Device) (goserial.Parity, goserial.StopBits, er
 		return 0, 0, fmt.Errorf("device %s: stop_bits %q has no serial library value", deviceCfg.ID, deviceCfg.StopBits)
 	}
 	return parity, stopBits, nil
+}
+
+// newTxIntake returns the channel that carries each tx from paho's goroutine
+// to the core, holding at most size, and the function paho hands each message
+// to. paho delivers one message after another and must not wait, or every
+// acknowledgement behind it waits too, so a tx that finds the intake full is
+// recorded as dropped, with its data. Its sender gets no result and treats it
+// as not written.
+func newTxIntake(size int, log *slog.Logger) (chan core.TxMessage, func(mqtt.Message)) {
+	intake := make(chan core.TxMessage, size)
+	log.Debug("tx intake ready", "tx_intake_size", size)
+	onMessage := func(message mqtt.Message) {
+		select {
+		case intake <- core.TxMessage{Topic: message.Topic, Payload: message.Payload, Expiry: message.Expiry,
+			HasExpiry: message.HasExpiry, Received: message.Received}:
+		default:
+			ref, _, _ := wire.ReadTx(message.Payload)
+			logging.Record(log, slog.LevelError, "tx dropped: the agent's intake is full",
+				append([]any{"topic", message.Topic, "tx_id", ref.ID, "sender", ref.Sender, "tx_intake_size", size},
+					logging.Payload(message.Payload)...)...)
+		}
+	}
+	return intake, onMessage
 }

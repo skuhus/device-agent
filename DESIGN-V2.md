@@ -338,6 +338,13 @@ session, as v1's does. Nothing is resubmitted after a reconnect. A tx published
 while the agent is disconnected is lost, and the sender learns it from the
 missing result. Source: maintainer, 2026-09-29 (#23 Q19a).
 
+A tx that arrives while the agent's intake is full is lost the same way: it is
+recorded in the log at ERROR with its data, and gets no result. paho hands
+messages over one after another and must not wait, or every acknowledgement
+behind the tx waits too (cmd/skuhus-device-agent/run.go, onMessage). The intake
+is `delivery.tx_intake_size`, 256 by default; the core takes each tx at once,
+so it fills only when senders flood a station.
+
 `[Deferred]` Keeping tx through reconnects: #20. Source: maintainer, 2026-09-29 (#23 Q19a). It needs a
 second connection for tx, with its own client id and a session kept across
 reconnects and restarts. Session settings belong to a connection, not to a

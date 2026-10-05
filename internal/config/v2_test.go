@@ -494,3 +494,31 @@ func TestDrainTimeout(t *testing.T) {
 		t.Errorf("error = %v, want %q", err, want)
 	}
 }
+
+// delivery.tx_intake_size comes from the file or the environment, and one
+// below 1 is refused: no tx could reach the core.
+func TestTxIntakeSize(t *testing.T) {
+	set := strings.Replace(validConfig, "  buffer_size: 64\n", "  buffer_size: 64\n  tx_intake_size: 32\n", 1)
+	if set == validConfig {
+		t.Fatal("validConfig no longer sets buffer_size; this test needs to add to delivery")
+	}
+	cfg, _, err := load(t, newFixture(t, set).path, noEnv(), Overrides{})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.Delivery.TxIntakeSize; got != 32 {
+		t.Errorf("tx_intake_size from the file = %d, want 32", got)
+	}
+	cfg, _, err = load(t, newFixture(t, set).path, []string{EnvPrefix + "DELIVERY_TX_INTAKE_SIZE=8"}, Overrides{})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.Delivery.TxIntakeSize; got != 8 {
+		t.Errorf("tx_intake_size from the environment = %d, want 8", got)
+	}
+	zero := strings.Replace(validConfig, "  buffer_size: 64\n", "  buffer_size: 64\n  tx_intake_size: 0\n", 1)
+	_, _, err = load(t, newFixture(t, zero).path, noEnv(), Overrides{})
+	if want := "delivery.tx_intake_size must be at least 1, got 0"; err == nil || !strings.Contains(err.Error(), want) {
+		t.Errorf("error = %v, want %q", err, want)
+	}
+}

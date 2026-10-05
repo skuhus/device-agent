@@ -169,6 +169,7 @@ devices:
 		{"publish_timeout", cfg.Delivery.PublishTimeout.Duration(), DefaultPublishTimeout},
 		{"buffer_size", cfg.Delivery.BufferSize, DefaultBufferSize},
 		{"drain_timeout", cfg.Delivery.DrainTimeout.Duration(), DefaultDrainTimeout},
+		{"tx_intake_size", cfg.Delivery.TxIntakeSize, DefaultTxIntakeSize},
 		{"keepalive_interval", cfg.Status.KeepaliveInterval.Duration(), DefaultKeepaliveInterval},
 		{"missed_keepalives", cfg.Status.MissedKeepalives, DefaultMissedKeepalives},
 		{"event_buffer_size", cfg.Status.EventBufferSize, DefaultEventBufferSize},

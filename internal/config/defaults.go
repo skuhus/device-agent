@@ -47,6 +47,9 @@ const (
 	// DefaultDrainTimeout is the drain's bound since v1, where it was a
 	// constant (DESIGN-V2.md, "The shutdown drain is bounded").
 	DefaultDrainTimeout = 5 * time.Second
+	// DefaultTxIntakeSize is the intake's size since T14, where it was a
+	// constant.
+	DefaultTxIntakeSize = 256
 
 	// DefaultKeepaliveInterval is v1's heartbeat interval, and three missed
 	// keepalives, 45 seconds, is when a consumer treats the agent as gone
@@ -93,6 +96,7 @@ func Defaults() Config {
 			PublishTimeout: Duration(DefaultPublishTimeout),
 			BufferSize:     DefaultBufferSize,
 			DrainTimeout:   Duration(DefaultDrainTimeout),
+			TxIntakeSize:   DefaultTxIntakeSize,
 		},
 		Status: Status{
 			KeepaliveInterval: Duration(DefaultKeepaliveInterval),

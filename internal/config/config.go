@@ -204,6 +204,11 @@ type Delivery struct {
 	// long, and then what is buffered waits for the broker at most this long
 	// (DESIGN-V2.md, "The shutdown drain is bounded").
 	DrainTimeout Duration `yaml:"drain_timeout"`
+	// TxIntakeSize is how many tx can wait between the broker connection and
+	// the agent's core. The core takes each at once, so it fills only when
+	// senders flood a station; a tx that finds it full is dropped, logged, and
+	// gets no result.
+	TxIntakeSize int `yaml:"tx_intake_size"`
 }
 
 // Status configures the agent's keepalive and device events (DESIGN-V2.md,

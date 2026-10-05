@@ -355,6 +355,9 @@ func validateDelivery(delivery Delivery, devices []Device) []error {
 	if delivery.BufferSize < 1 {
 		problems = append(problems, fmt.Errorf("delivery.buffer_size must be at least 1, got %d", delivery.BufferSize))
 	}
+	if delivery.TxIntakeSize < 1 {
+		problems = append(problems, fmt.Errorf("delivery.tx_intake_size must be at least 1, got %d", delivery.TxIntakeSize))
+	}
 	return problems
 }
 

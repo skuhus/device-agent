@@ -12,6 +12,7 @@ import (
 
 	"github.com/skuhus/device-agent/internal/config"
 	"github.com/skuhus/device-agent/internal/logging/logtest"
+	"github.com/skuhus/device-agent/internal/transport/mqtt"
 )
 
 func TestRunRejectsPositionalArguments(t *testing.T) {
@@ -111,11 +112,11 @@ logging:
 	}
 }
 
-// The waits the configuration sets are the ones the agent keeps: a device's
-// reopen_interval with its backoff off, the broker's reconnect_interval, and
-// the shutdown's drain_timeout. Each differs from its default, so a wait
-// taken from anywhere else shows.
-func TestRunUsesTheConfiguredWaits(t *testing.T) {
+// The waits and sizes the configuration sets are the ones the agent keeps: a
+// device's reopen_interval with its backoff off, the broker's
+// reconnect_interval, the shutdown's drain_timeout and the tx intake's size.
+// Each differs from its default, so a value taken from anywhere else shows.
+func TestRunUsesTheConfiguredSettings(t *testing.T) {
 	dir := t.TempDir()
 	configFile := filepath.Join(dir, "agent.yaml")
 	body := fmt.Sprintf(`identity: { project: acme, site: vasby, station: pack-03 }
@@ -131,6 +132,7 @@ devices:
     reopen_backoff: { enabled: false }
 delivery:
   drain_timeout: 300ms
+  tx_intake_size: 9
 logging:
   level: debug
   stdout: true
@@ -152,6 +154,9 @@ logging:
 		t.Fatalf("runAgent: %v", err)
 	}
 
+	if intake := stdout.WithMessage(t, "tx intake ready"); len(intake) != 1 || intake[0]["tx_intake_size"] != float64(9) {
+		t.Errorf("tx intake records = %v, want one with the configured size 9", intake)
+	}
 	reopens := stdout.WithMessage(t, "device unavailable, reopening after backoff")
 	if len(reopens) < 3 {
 		t.Fatalf("%d reopen lines in a second, want one every 70ms", len(reopens))
@@ -233,4 +238,35 @@ logging:
 		t.Errorf("records = %v, want one ERROR carrying %q", records, runErr.Error())
 	}
 	logtest.CheckText(t, stdout.String())
+}
+
+// The intake holds as many tx as it is sized for. The next one is dropped,
+// not waited for, and recorded at ERROR with its id, sender and data, because
+// its sender will get no result.
+func TestTxIntakeDropsWhatDoesNotFit(t *testing.T) {
+	logger, log := logtest.New(t, "debug")
+	intake, onMessage := newTxIntake(1, logger)
+	first := []byte(`{"schema":2,"id":"0192a3b4-c5d6-7e8f-9a0b-1c2d3e4f5a6b","sender":"label-service","raw_b64":"QQ=="}`)
+	second := []byte(`{"schema":2,"id":"7e6d5c4b-3a29-4817-9f6e-5d4c3b2a1f0e","sender":"label-service","raw_b64":"Qg=="}`)
+	onMessage(mqtt.Message{Topic: "skuhus/acme/vasby/pack-03/printer-1/tx", Payload: first})
+
+	returned := make(chan struct{})
+	go func() {
+		onMessage(mqtt.Message{Topic: "skuhus/acme/vasby/pack-03/printer-1/tx", Payload: second})
+		close(returned)
+	}()
+	select {
+	case <-returned:
+	case <-time.After(3 * time.Second):
+		t.Fatal("a tx that did not fit waited for room; paho would stall behind it")
+	}
+
+	if len(intake) != 1 || !bytes.Equal((<-intake).Payload, first) {
+		t.Errorf("the intake does not hold the first tx alone")
+	}
+	dropped := log.WithMessage(t, "tx dropped: the agent's intake is full")
+	if len(dropped) != 1 || dropped[0]["level"] != "ERROR" || dropped[0]["tx_id"] != "7e6d5c4b-3a29-4817-9f6e-5d4c3b2a1f0e" ||
+		dropped[0]["sender"] != "label-service" || dropped[0]["tx_intake_size"] != float64(1) || dropped[0]["data_hex"] == nil {
+		t.Errorf("dropped records = %v, want one ERROR naming the second tx, with its data", dropped)
+	}
 }

@@ -162,6 +162,11 @@ delivery:
   # then what is buffered waits for the broker at most this long again; what
   # is left is recorded in the log as dropped, with its data.
   drain_timeout: 5s
+  # How many tx can wait between the broker connection and the agent, which
+  # takes each at once, so it fills only when senders flood a station. A tx
+  # that finds it full is dropped, recorded in the log with its data, and gets
+  # no result, which its sender treats as not written.
+  tx_intake_size: 256
 
 status:
   # The agent publishes a keepalive with every device's state and counters on
