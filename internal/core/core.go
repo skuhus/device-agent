@@ -62,6 +62,12 @@ type Device struct {
 	BroadcastGroups []wire.TxRoute
 }
 
+// txRoutes are the topics that reach the device's tx: its own first, then its
+// broadcast groups'.
+func (dev Device) txRoutes() []wire.TxRoute {
+	return append([]wire.TxRoute{dev.Topics.TxRoute()}, dev.BroadcastGroups...)
+}
+
 // Options configures the core. Configuration rules are the configuration
 // package's to enforce; New refuses only what would make Run fail or hang.
 type Options struct {
@@ -206,7 +212,7 @@ func (core *Core) Run(ctx context.Context) error {
 	for _, dev := range core.opts.Devices {
 		line := &pipeline{
 			device:   dev,
-			txRoutes: append([]wire.TxRoute{dev.Topics.TxRoute()}, dev.BroadcastGroups...),
+			txRoutes: dev.txRoutes(),
 			frames:   make(chan device.Frame, core.opts.BufferSize),
 			status:   newStatusQueue(core.opts.EventBufferSize),
 			tx:       newWaitingQueue[*txJob](),
@@ -255,13 +261,13 @@ func (core *Core) Run(ctx context.Context) error {
 		go func(line *pipeline) {
 			defer readers.Done()
 			reader := line.device.Reader
-			groupTopics := make([]string, 0, len(line.device.BroadcastGroups))
-			for _, route := range line.device.BroadcastGroups {
-				groupTopics = append(groupTopics, route.Topic)
+			txTopics := make([]string, 0, len(line.txRoutes))
+			for _, route := range line.txRoutes {
+				txTopics = append(txTopics, route.Topic)
 			}
 			core.log.Info("device starting", "device_id", reader.ID(), "device_kind", reader.Kind(), "device_path", reader.Path(),
-				"rx_topic", line.device.Topics.Rx(), "status_topic", line.device.Topics.Status(), "tx_topic", line.device.Topics.Tx(),
-				"broadcast_group_topics", groupTopics, "message_expiry", line.device.Wire.Expiry.String(),
+				"rx_topic", line.device.Topics.Rx(), "status_topic", line.device.Topics.Status(), "tx_topics", txTopics,
+				"message_expiry", line.device.Wire.Expiry.String(),
 				"tx_open_attempts", line.device.TxOpenAttempts, "tx_open_interval", line.device.TxOpenInterval.String(),
 				"tx_remembered_ids", line.device.TxRememberedIDs)
 			report := func(event device.Event) { core.report(line, event) }

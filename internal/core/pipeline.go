@@ -12,8 +12,8 @@ import (
 type pipeline struct {
 	device Device
 	frames chan device.Frame
-	// txRoutes are the topics that reach the device's tx: its own first, then
-	// its broadcast groups'.
+	// txRoutes are the topics that reach the device's tx, as Device.txRoutes
+	// lists them.
 	txRoutes []wire.TxRoute
 	status   *statusQueue
 	// tx holds the device's tx in the order they arrived, for its one writer.

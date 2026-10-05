@@ -191,7 +191,7 @@ func (core *Core) admitTx(byTopic map[string]*txTarget, message TxMessage) {
 func (core *Core) admitTxTo(line *pipeline, message TxMessage) {
 	now := core.opts.Now()
 	dev := line.device.Wire
-	topic := []any{"topic", message.Topic}
+	topicAttrs := []any{"topic", message.Topic}
 	ref, data, problem := wire.ReadTx(message.Payload)
 	if problem != nil {
 		var result wire.TxResult
@@ -200,7 +200,7 @@ func (core *Core) admitTxTo(line *pipeline, message TxMessage) {
 		} else {
 			result = core.opts.Builder.TxInvalidMessage(dev, line.isOpen(), ref, problem.Text, now)
 		}
-		core.recordTxResult(line, result, now, slices.Concat(topic, []any{"error", problem.Text}, logging.Payload(message.Payload)))
+		core.recordTxResult(line, result, now, slices.Concat(topicAttrs, []any{"error", problem.Text}, logging.Payload(message.Payload)))
 		return
 	}
 
@@ -209,14 +209,14 @@ func (core *Core) admitTxTo(line *pipeline, message TxMessage) {
 		line.txMu.Unlock()
 		stage, since, written := earlier.standing()
 		result := core.opts.Builder.TxInProgress(dev, line.isOpen(), ref, stage, since, written, now)
-		core.recordTxResult(line, result, now, topic)
+		core.recordTxResult(line, result, now, topicAttrs)
 		return
 	}
 	if writtenAt, known := line.written.lookup(ref.ID); known {
 		line.txMu.Unlock()
 		result := core.opts.Builder.TxAlreadyWritten(dev, line.isOpen(), ref, writtenAt, now)
 		core.recordTxResult(line, result, now,
-			slices.Concat(topic, []any{"written_at", writtenAt.UTC().Format(wire.TimeFormat)}, logging.Payload(data)))
+			slices.Concat(topicAttrs, []any{"written_at", writtenAt.UTC().Format(wire.TimeFormat)}, logging.Payload(data)))
 		return
 	}
 	core.intakeMu.Lock()
@@ -224,7 +224,7 @@ func (core *Core) admitTxTo(line *pipeline, message TxMessage) {
 		core.intakeMu.Unlock()
 		line.txMu.Unlock()
 		core.recordTxResult(line, core.opts.Builder.TxAgentStopping(dev, line.isOpen(), ref, 0, now), now,
-			slices.Concat(topic, []any{"bytes_written", 0}, logging.Payload(data)))
+			slices.Concat(topicAttrs, []any{"bytes_written", 0}, logging.Payload(data)))
 		return
 	}
 	job := &txJob{ref: ref, data: data, received: message.Received, stage: wire.TxQueued, since: now}
@@ -241,7 +241,7 @@ func (core *Core) admitTxTo(line *pipeline, message TxMessage) {
 	// accepted is queued before the writer can see the job, so that it goes
 	// out before the job's written or failed.
 	core.recordTxResult(line, core.opts.Builder.TxAccepted(dev, line.isOpen(), ref, now), now,
-		slices.Concat(topic, []any{"bytes", len(data), "message_expiry", expiry}, core.payloadIfLogged(data)))
+		slices.Concat(topicAttrs, []any{"bytes", len(data), "message_expiry", expiry}, core.payloadIfLogged(data)))
 	line.tx.push(job)
 	core.intakeMu.Unlock()
 }

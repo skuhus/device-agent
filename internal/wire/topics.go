@@ -48,7 +48,7 @@ type TxRoute struct {
 // skuhus/<project>/<site>/<station>, and the topics and filters under it,
 // with the project's and the site's prefixes for broadcast groups.
 type StationTopics struct {
-	project, site, base string
+	projectPrefix, sitePrefix, stationPrefix string
 }
 
 // AgentTopics are the topics of one agent instance at a station.
@@ -79,7 +79,7 @@ func NewStationTopics(project, site, station string) (StationTopics, error) {
 	}
 	projectPrefix := "skuhus/" + project
 	sitePrefix := projectPrefix + "/" + site
-	return StationTopics{project: projectPrefix, site: sitePrefix, base: sitePrefix + "/" + station}, nil
+	return StationTopics{projectPrefix: projectPrefix, sitePrefix: sitePrefix, stationPrefix: sitePrefix + "/" + station}, nil
 }
 
 // GroupTx returns the route of a broadcast group's tx topic: under the
@@ -92,11 +92,11 @@ func (station StationTopics) GroupTx(scope TxScope, group string) (TxRoute, erro
 	var prefix string
 	switch scope {
 	case ScopeProject:
-		prefix = station.project
+		prefix = station.projectPrefix
 	case ScopeSite:
-		prefix = station.site
+		prefix = station.sitePrefix
 	case ScopeStation:
-		prefix = station.base
+		prefix = station.stationPrefix
 	default:
 		return TxRoute{}, fmt.Errorf("broadcast group %q has scope %q; expected project, site or station", group, scope)
 	}
@@ -109,7 +109,7 @@ func (station StationTopics) Agent(instance string) (AgentTopics, error) {
 	if err := checkSegment("instance", instance); err != nil {
 		return AgentTopics{}, err
 	}
-	return AgentTopics{status: station.base + "/" + AgentLevel + "/" + instance + "/status"}, nil
+	return AgentTopics{status: station.stationPrefix + "/" + AgentLevel + "/" + instance + "/status"}, nil
 }
 
 // Device returns the topics of one device. It rejects an id that breaks the
@@ -121,22 +121,22 @@ func (station StationTopics) Device(id string) (DeviceTopics, error) {
 	if id == AgentLevel {
 		return DeviceTopics{}, fmt.Errorf("device id %q is reserved for the agent's own topics", id)
 	}
-	prefix := station.base + "/" + id
+	prefix := station.stationPrefix + "/" + id
 	return DeviceTopics{rx: prefix + "/rx", tx: prefix + "/tx", status: prefix + "/status"}, nil
 }
 
 // EveryDeviceRx is the filter a consumer subscribes to for every device's
 // readings at the station.
-func (station StationTopics) EveryDeviceRx() string { return station.base + "/+/rx" }
+func (station StationTopics) EveryDeviceRx() string { return station.stationPrefix + "/+/rx" }
 
 // EveryDeviceStatus is the filter for every device's events and tx results. It
 // does not match the agents' status topics, which are one level deeper.
-func (station StationTopics) EveryDeviceStatus() string { return station.base + "/+/status" }
+func (station StationTopics) EveryDeviceStatus() string { return station.stationPrefix + "/+/status" }
 
 // EveryAgentStatus is the filter for every agent instance's keepalives and
 // offline messages at the station.
 func (station StationTopics) EveryAgentStatus() string {
-	return station.base + "/" + AgentLevel + "/+/status"
+	return station.stationPrefix + "/" + AgentLevel + "/+/status"
 }
 
 // Status is where the agent publishes its keepalives and offline message, and

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"math"
 	"net/url"
 	"os"
@@ -343,11 +344,7 @@ func (answers *subscribeAnswers) record(connection uint64, filter string, code b
 func (answers *subscribeAnswers) snapshot() map[string]byte {
 	answers.mu.Lock()
 	defer answers.mu.Unlock()
-	copied := make(map[string]byte, len(answers.byFilter))
-	for filter, code := range answers.byFilter {
-		copied[filter] = code
-	}
-	return copied
+	return maps.Clone(answers.byFilter)
 }
 
 // SubscribeAnswers is the broker's answer to each topic filter the current

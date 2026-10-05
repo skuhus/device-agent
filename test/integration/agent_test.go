@@ -646,19 +646,19 @@ func (relay *relay) accept() {
 			broker.Close()
 			return
 		}
-		packets := &session{}
+		captured := &session{}
 		relay.conns = append(relay.conns, client, broker)
-		relay.sessions = append(relay.sessions, packets)
+		relay.sessions = append(relay.sessions, captured)
 		relay.mu.Unlock()
 		// Either side closing closes both, so that the broker sees an agent
 		// killed by SIGKILL drop without a DISCONNECT, as it would directly.
 		go func() {
-			_, _ = io.Copy(broker, io.TeeReader(client, &packets.toBroker))
+			_, _ = io.Copy(broker, io.TeeReader(client, &captured.toBroker))
 			client.Close()
 			broker.Close()
 		}()
 		go func() {
-			_, _ = io.Copy(client, io.TeeReader(broker, &packets.toAgent))
+			_, _ = io.Copy(client, io.TeeReader(broker, &captured.toAgent))
 			client.Close()
 			broker.Close()
 		}()
@@ -771,26 +771,26 @@ type packetLog struct {
 	packets [][]byte
 }
 
-func (log *packetLog) Write(data []byte) (int, error) {
-	log.mu.Lock()
-	defer log.mu.Unlock()
-	log.pending = append(log.pending, data...)
-	for len(log.pending) >= 2 {
-		remaining, size, complete := readVarint(log.pending[1:])
-		if !complete || len(log.pending) < 1+size+remaining {
+func (stream *packetLog) Write(data []byte) (int, error) {
+	stream.mu.Lock()
+	defer stream.mu.Unlock()
+	stream.pending = append(stream.pending, data...)
+	for len(stream.pending) >= 2 {
+		remaining, size, complete := readVarint(stream.pending[1:])
+		if !complete || len(stream.pending) < 1+size+remaining {
 			break
 		}
 		total := 1 + size + remaining
-		log.packets = append(log.packets, bytes.Clone(log.pending[:total]))
-		log.pending = log.pending[total:]
+		stream.packets = append(stream.packets, bytes.Clone(stream.pending[:total]))
+		stream.pending = stream.pending[total:]
 	}
 	return len(data), nil
 }
 
-func (log *packetLog) all() [][]byte {
-	log.mu.Lock()
-	defer log.mu.Unlock()
-	return append([][]byte(nil), log.packets...)
+func (stream *packetLog) all() [][]byte {
+	stream.mu.Lock()
+	defer stream.mu.Unlock()
+	return append([][]byte(nil), stream.packets...)
 }
 
 // readVarint reads an MQTT variable byte integer, and says whether data held
