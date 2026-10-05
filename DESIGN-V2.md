@@ -526,9 +526,8 @@ message. `reason` is one of `oversize`, `inter_char_timeout`, `resync` and
 
 `[Decided]` `port_open_failed` is published on every attempt to open the port,
 which keeps the rule simple. Source: maintainer, 2026-09-29 (#11 Q8). A scale
-unplugged overnight, retried every 30 s at most (v1's backoff limit,
-internal/device/serial/serial.go, DefaultReopen), publishes about 1,440 of them
-in 12 hours.
+unplugged overnight, retried every 30 s at most (v1's backoff limit, the
+default `reopen_backoff.max`), publishes about 1,440 of them in 12 hours.
 
 A device's events are published in the order they happened, with `agent_ts`
 the time they happened.
@@ -906,10 +905,19 @@ every removed key is ("Loading is strict in both directions").
 status topic, and counts the failed opens. Source: maintainer, 2026-09-29.
 
 v1 already keeps running and retries with backoff, because a device unplugged at
-startup is an expected condition (internal/device/serial/serial.go:84). A
+startup is an expected condition (internal/device/serial/serial.go, New). A
 process that exited instead could not publish the status or metrics meant to
 report the problem, and a service manager would restart it in a loop until the
 device appeared.
+
+Each device's wait before it is opened again is `reopen_interval`, 100 ms by
+default, and `reopen_backoff`, shaped as the broker's `reconnect_backoff`
+("Reconnecting to the broker"), makes it grow. Unlike the broker's, the reopen
+backoff is on by default, from 100 ms doubling to 30 s with 0.3 jitter, v1's
+values: every failed attempt is a `port_open_failed` event (#11 Q8), and a fixed
+100 ms would publish ten a second for a device left unplugged. They are keys,
+not constants, because the maintainer asked that tuning values be settable
+(#30).
 
 ## Deferred beyond #4
 
@@ -1076,10 +1084,10 @@ v1 against an injected failing port, that produced 87 reopens a second,
 indefinitely.
 
 The backoff resets only when a session lasted at least the backoff's ceiling,
-30 s (internal/device/serial/serial.go, DefaultReopen and Run). A device that
-has been up for half a minute counts as healthy and reconnects promptly; one
-that flaps backs off to the ceiling. The same measurement produced 7 reopens
-per second and climbing.
+`reopen_backoff.max`, 30 s by default (internal/device/serial/serial.go, Run).
+A device that has been up for half a minute counts as healthy and reconnects
+promptly; one that flaps backs off to the ceiling. The same measurement
+produced 7 reopens per second and climbing.
 
 The threshold is the ceiling rather than a value of its own, so that the
 reopen has one set of values (#30).

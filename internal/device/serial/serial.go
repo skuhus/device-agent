@@ -54,10 +54,6 @@ func invert[V comparable](byName map[string]V) map[V]string {
 	return names
 }
 
-// DefaultReopen is how a device is reopened after it fails: from 100 ms,
-// doubling to 30 s, v1's limits.
-var DefaultReopen = backoff.Policy{Interval: 100 * time.Millisecond, Grow: true, Max: 30 * time.Second, Jitter: 0.3}
-
 const (
 	minReadChunk = 64
 	maxReadChunk = 4096

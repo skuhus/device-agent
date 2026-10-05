@@ -256,6 +256,9 @@ func validateDevices(devices []Device) ([]error, []Warning) {
 		if deviceCfg.TxOpenInterval <= 0 {
 			problems = append(problems, fmt.Errorf("%s.tx_open_interval must be positive, got %s", where, deviceCfg.TxOpenInterval))
 		}
+		if err := deviceCfg.ReopenPolicy().Validate(); err != nil {
+			problems = append(problems, fmt.Errorf("%s.reopen_interval and %s.reopen_backoff: %w", where, where, err))
+		}
 		problems = append(problems, validateDeviceType(where, deviceCfg.DeviceType)...)
 	}
 	return problems, warnings

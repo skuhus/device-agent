@@ -20,15 +20,24 @@ const (
 	// for a closed port: about 3 s (PLAN-V2.md, T14).
 	DefaultTxOpenAttempts = 3
 	DefaultTxOpenInterval = 1 * time.Second
+	// DefaultReopenInterval and the reopen backoff's defaults are v1's: from
+	// 100 ms, doubling to 30 s. The backoff is on, because each failed attempt
+	// is a port_open_failed event, and a device unplugged overnight would
+	// otherwise publish ten a second (#11 Q8).
+	DefaultReopenInterval       = 100 * time.Millisecond
+	DefaultReopenBackoffEnabled = true
+	DefaultReopenBackoffMax     = 30 * time.Second
+	DefaultReopenBackoffJitter  = 0.3
 
 	DefaultKeepalive = 30 * time.Second
 	// DefaultReconnectInterval is how often the agent tries the broker while it
 	// cannot be reached, with the backoff off, which is its default (#13 Q3).
 	DefaultReconnectInterval = 1 * time.Second
-	// DefaultBackoffMax and DefaultBackoffJitter apply once the backoff is
-	// enabled. They are the specification's connect_backoff values.
-	DefaultBackoffMax    = 60 * time.Second
-	DefaultBackoffJitter = 0.3
+	// DefaultReconnectBackoffMax and DefaultReconnectBackoffJitter apply once
+	// the backoff is enabled. They are the specification's connect_backoff
+	// values.
+	DefaultReconnectBackoffMax    = 60 * time.Second
+	DefaultReconnectBackoffJitter = 0.3
 
 	DefaultPublishTimeout = 2 * time.Second
 	DefaultBufferSize     = 64
@@ -68,9 +77,9 @@ func Defaults() Config {
 		Broker: Broker{
 			Keepalive:         Duration(DefaultKeepalive),
 			ReconnectInterval: Duration(DefaultReconnectInterval),
-			ReconnectBackoff: ReconnectBackoff{
-				Max:    Duration(DefaultBackoffMax),
-				Jitter: DefaultBackoffJitter,
+			ReconnectBackoff: Backoff{
+				Max:    Duration(DefaultReconnectBackoffMax),
+				Jitter: DefaultReconnectBackoffJitter,
 			},
 		},
 		Delivery: Delivery{
@@ -111,6 +120,12 @@ func DefaultDevice() Device {
 		MessageExpiry:    Duration(DefaultMessageExpiry),
 		TxOpenAttempts:   DefaultTxOpenAttempts,
 		TxOpenInterval:   Duration(DefaultTxOpenInterval),
+		ReopenInterval:   Duration(DefaultReopenInterval),
+		ReopenBackoff: Backoff{
+			Enabled: DefaultReopenBackoffEnabled,
+			Max:     Duration(DefaultReopenBackoffMax),
+			Jitter:  DefaultReopenBackoffJitter,
+		},
 	}
 }
 

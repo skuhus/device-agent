@@ -261,8 +261,9 @@ skuhus-device-agent run --config /etc/skuhus-device-agent/config.yaml
 
 Opens the configured devices, connects to the broker, publishes what each device
 reads, and writes the tx each is sent, until stopped. A device that is unplugged
-and a broker that is down are both expected conditions: the agent keeps running,
-and reopens the device with jittered backoff. It tries the broker at once and
+and a broker that is down are both expected conditions: the agent keeps running.
+It reopens the device after `reopen_interval`, 100 ms, and `reopen_backoff`
+makes that wait grow, up to 30 s by default. It tries the broker at once and
 then every second, `broker.reconnect_interval`; `broker.reconnect_backoff`
 makes that wait grow instead. Each failed attempt to open a device is a
 `port_open_failed` event with its error class, and is counted in the keepalive.

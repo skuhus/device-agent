@@ -72,23 +72,17 @@ func runProbe(args []string, stdout, stderr io.Writer) error {
 	// The identity is filled from the config below when --device names one, so
 	// that --json prints the message run would publish rather than a lookalike.
 	identity := wire.Agent{InstanceID: "probe", AgentVersion: buildinfo.Version()}
-	// probe publishes nothing, so the message expiry only has to satisfy
-	// validation.
-	dev := config.Device{
-		ID:               "probe",
-		Kind:             config.KindSerial,
-		Path:             *path,
-		Baud:             *baud,
-		DataBits:         *dataBits,
-		Parity:           config.Parity(*parity),
-		StopBits:         config.StopBits(*stopBits),
-		MaxFrameBytes:    *maxFrame,
-		InterCharTimeout: config.Duration(*interChar),
-		MessageExpiry:    config.Duration(config.DefaultMessageExpiry),
-		// probe writes nothing; these only have to satisfy validation.
-		TxOpenAttempts: config.DefaultTxOpenAttempts,
-		TxOpenInterval: config.Duration(config.DefaultTxOpenInterval),
-	}
+	// Without --device, the flags set what they name and every other key
+	// keeps the configuration's default, as an entry that leaves it out does.
+	dev := config.DefaultDevice()
+	dev.ID = "probe"
+	dev.Path = *path
+	dev.Baud = *baud
+	dev.DataBits = *dataBits
+	dev.Parity = config.Parity(*parity)
+	dev.StopBits = config.StopBits(*stopBits)
+	dev.MaxFrameBytes = *maxFrame
+	dev.InterCharTimeout = config.Duration(*interChar)
 
 	if *deviceID != "" {
 		cfg, _, err := config.Load(config.Options{Path: *cfgPath, SkipValidate: true})
@@ -158,7 +152,7 @@ func runProbe(args []string, stdout, stderr io.Writer) error {
 		InterCharTimeout: dev.InterCharTimeout.Duration(),
 		LogPayloads:      *logPayloads,
 		Logger:           log,
-		Reopen:           serialdev.DefaultReopen,
+		Reopen:           dev.ReopenPolicy(),
 	})
 	if err != nil {
 		return err

@@ -65,8 +65,9 @@ type Broker struct {
 	Keepalive       Duration `yaml:"keepalive"`
 	// ReconnectInterval is the wait between attempts to connect, while the
 	// broker cannot be reached (#13 Q3).
-	ReconnectInterval Duration         `yaml:"reconnect_interval"`
-	ReconnectBackoff  ReconnectBackoff `yaml:"reconnect_backoff"`
+	ReconnectInterval Duration `yaml:"reconnect_interval"`
+	// ReconnectBackoff is off by default (#13 Q3).
+	ReconnectBackoff Backoff `yaml:"reconnect_backoff"`
 }
 
 // RedactedURL is the broker URL with any credentials replaced by "xxxxx". The
@@ -83,23 +84,27 @@ func (broker Broker) RedactedURL() string {
 
 // ReconnectPolicy is the wait before each attempt to connect.
 func (broker Broker) ReconnectPolicy() backoff.Policy {
-	return backoff.Policy{
-		Interval: broker.ReconnectInterval.Duration(),
-		Grow:     broker.ReconnectBackoff.Enabled,
-		Max:      broker.ReconnectBackoff.Max.Duration(),
-		Jitter:   broker.ReconnectBackoff.Jitter,
-	}
+	return broker.ReconnectBackoff.policy(broker.ReconnectInterval)
 }
 
-// ReconnectBackoff makes the wait between attempts to connect grow. Enabled,
-// the wait doubles after each failed attempt, from the reconnect interval up to
-// Max, and each wait is spread by Jitter, a fraction of it either way. Off,
-// which is the default, every wait is the reconnect interval exactly, and Max
-// and Jitter are not used (#13 Q3).
-type ReconnectBackoff struct {
+// Backoff makes the wait between attempts grow: the broker's reconnect_backoff
+// and a device's reopen_backoff. Enabled, the wait doubles after each failed
+// attempt, from the interval beside it up to Max, and each wait is spread by
+// Jitter, a fraction of it either way. Off, every wait is the interval
+// exactly, and Max and Jitter are not used.
+type Backoff struct {
 	Enabled bool     `yaml:"enabled"`
 	Max     Duration `yaml:"max"`
 	Jitter  float64  `yaml:"jitter"`
+}
+
+func (settings Backoff) policy(interval Duration) backoff.Policy {
+	return backoff.Policy{
+		Interval: interval.Duration(),
+		Grow:     settings.Enabled,
+		Max:      settings.Max.Duration(),
+		Jitter:   settings.Jitter,
+	}
 }
 
 // Device is one physically attached device owned by this agent.
@@ -133,11 +138,22 @@ type Device struct {
 	// DeviceType is carried in every message about the device, for the
 	// services behind the broker, and never interpreted by the agent.
 	DeviceType string `yaml:"device_type"`
+	// ReopenInterval is the wait before opening the port again after it could
+	// not be opened or failed. ReopenBackoff, on by default, makes the wait
+	// grow; a session that lasted its Max counts as working, and the wait
+	// starts over.
+	ReopenInterval Duration `yaml:"reopen_interval"`
+	ReopenBackoff  Backoff  `yaml:"reopen_backoff"`
 	// TxOpenAttempts is how many times a tx that finds the port closed asks
 	// for it to be opened, TxOpenInterval apart, before it fails. Once
 	// writing has started nothing is retried (DESIGN-V2.md, "Writing: tx").
 	TxOpenAttempts int      `yaml:"tx_open_attempts"`
 	TxOpenInterval Duration `yaml:"tx_open_interval"`
+}
+
+// ReopenPolicy is the wait before each attempt to open the port again.
+func (deviceCfg Device) ReopenPolicy() backoff.Policy {
+	return deviceCfg.ReopenBackoff.policy(deviceCfg.ReopenInterval)
 }
 
 // Parity names a serial parity setting.

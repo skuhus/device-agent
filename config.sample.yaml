@@ -123,6 +123,16 @@ devices:
     # does not interpret it.
     # device_type: honeywell-1470g
 
+    # When the port cannot be opened, or fails, the agent opens it again after
+    # reopen_interval. With reopen_backoff enabled, as it is by default, the
+    # wait doubles after each failed attempt, up to max, and each wait is
+    # spread by jitter, a fraction either way; once the port has stayed open
+    # for max, the wait starts over from reopen_interval. Off, every wait is
+    # reopen_interval. Each failed attempt is a port_open_failed event, so a
+    # short fixed interval publishes many of them for a device left unplugged.
+    reopen_interval: 100ms
+    reopen_backoff: { enabled: true, max: 30s, jitter: 0.3 }
+
     # A tx that finds this device's port closed asks for it to be opened, up
     # to tx_open_attempts times, tx_open_interval apart, and then fails with
     # the reason the port did not open. Once writing has started nothing is

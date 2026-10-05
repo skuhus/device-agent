@@ -111,6 +111,81 @@ logging:
 	}
 }
 
+// The waits the configuration sets are the ones the agent keeps: a device's
+// reopen_interval with its backoff off, and the broker's reconnect_interval.
+// Both differ from their defaults, so a wait taken from anywhere else shows.
+func TestRunUsesTheConfiguredWaits(t *testing.T) {
+	dir := t.TempDir()
+	configFile := filepath.Join(dir, "agent.yaml")
+	body := fmt.Sprintf(`identity: { project: acme, site: vasby, station: pack-03 }
+broker:
+  url: tcp://127.0.0.1:1
+  insecure: true
+  reconnect_interval: 130ms
+devices:
+  - id: scanner-main
+    path: %s
+    separator: "\r\n"
+    reopen_interval: 70ms
+    reopen_backoff: { enabled: false }
+logging:
+  level: debug
+  stdout: true
+`, filepath.Join(dir, "no-such-tty"))
+	if err := os.WriteFile(configFile, []byte(body), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	t.Setenv("SH_DEV_AGENT_MQTT_USERNAME", "station-pack-03")
+	t.Setenv("SH_DEV_AGENT_MQTT_PASSWORD", "pack-03-dev")
+	cfg, warnings, err := config.Load(config.Options{Path: configFile})
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	stdout := &logtest.Log{}
+	if err := runAgent(ctx, cfg, warnings, stdout); err != nil {
+		t.Fatalf("runAgent: %v", err)
+	}
+
+	reopens := stdout.WithMessage(t, "device unavailable, reopening after backoff")
+	if len(reopens) < 3 {
+		t.Fatalf("%d reopen lines in a second, want one every 70ms", len(reopens))
+	}
+	for _, record := range reopens {
+		if record["backoff"] != "70ms" {
+			t.Errorf("reopen backoff = %v, want 70ms, the configured interval", record["backoff"])
+		}
+	}
+	// Counted until the shutdown starts, because the attempts go on through
+	// the drain after it. At the default 1 s there would be one or two.
+	stopping := stdout.WithMessage(t, "shutting down")
+	if len(stopping) != 1 {
+		t.Fatalf("%d shutting down lines, want 1", len(stopping))
+	}
+	stoppedAt := recordTime(t, stopping[0])
+	attempts := 0
+	for _, record := range stdout.WithMessage(t, "broker connection attempt failed") {
+		if recordTime(t, record).Before(stoppedAt) {
+			attempts++
+		}
+	}
+	if attempts < 4 {
+		t.Errorf("%d broker attempts in the second before the shutdown, want one every 130ms", attempts)
+	}
+}
+
+func recordTime(t *testing.T, record map[string]any) time.Time {
+	t.Helper()
+	text, _ := record["time"].(string)
+	at, err := time.Parse(time.RFC3339Nano, text)
+	if err != nil {
+		t.Fatalf("record time %v: %v", record["time"], err)
+	}
+	return at
+}
+
 // When the agent stops on an error after its log exists, the error is in the
 // log, not only on stderr: an operator who reads the log file must find why
 // the agent stopped.

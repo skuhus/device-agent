@@ -316,7 +316,7 @@ func TestReconnectEverySecondUnlessConfigured(t *testing.T) {
 	}
 	backoff := cfg.Broker.ReconnectBackoff
 	if cfg.Broker.ReconnectInterval.Duration() != 5*time.Second || !backoff.Enabled ||
-		backoff.Max.Duration() != 2*time.Minute || backoff.Jitter != DefaultBackoffJitter {
+		backoff.Max.Duration() != 2*time.Minute || backoff.Jitter != DefaultReconnectBackoffJitter {
 		t.Errorf("reconnect_interval %s, reconnect_backoff %+v; want 5s, enabled, max 2m, the default jitter",
 			cfg.Broker.ReconnectInterval, backoff)
 	}
@@ -401,6 +401,40 @@ func TestTxOpenSettings(t *testing.T) {
 		_, _, err := load(t, newFixture(t, body).path, noEnv(), Overrides{})
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%q: error = %v, want %q", strings.TrimSpace(settings), err, want)
+		}
+	}
+}
+
+// A device is reopened from 100 ms, doubling to 30 s, unless its entry says
+// otherwise; turning the backoff off keeps every wait at the interval.
+func TestReopenSettings(t *testing.T) {
+	set := strings.Replace(validConfig, "    message_expiry: 30s\n",
+		"    message_expiry: 30s\n    reopen_interval: 2s\n    reopen_backoff: { enabled: false }\n", 1)
+	if set == validConfig {
+		t.Fatal("validConfig no longer sets message_expiry; this test needs to add to a device")
+	}
+	cfg, _, err := load(t, newFixture(t, set).path, noEnv(), Overrides{})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	policy := cfg.Devices[0].ReopenPolicy()
+	if policy.Interval != 2*time.Second || policy.Grow || policy.Max != DefaultReopenBackoffMax || policy.Jitter != DefaultReopenBackoffJitter {
+		t.Errorf("reopen policy %+v; want 2s, not growing, the default max and jitter", policy)
+	}
+
+	cases := []struct{ settings, want string }{
+		{"    reopen_interval: 0s\n",
+			"devices.scanner-main.reopen_interval and devices.scanner-main.reopen_backoff: the interval must be positive, got 0s"},
+		{"    reopen_interval: 1m\n",
+			"devices.scanner-main.reopen_interval and devices.scanner-main.reopen_backoff: max (30s) must be at least the interval (1m0s)"},
+		{"    reopen_backoff: { enabled: true, jitter: -0.1 }\n",
+			"devices.scanner-main.reopen_interval and devices.scanner-main.reopen_backoff: jitter must be between 0 and 1, got -0.1"},
+	}
+	for _, tc := range cases {
+		body := strings.Replace(validConfig, "    message_expiry: 30s\n", "    message_expiry: 30s\n"+tc.settings, 1)
+		_, _, err := load(t, newFixture(t, body).path, noEnv(), Overrides{})
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%q: error = %v, want %q", strings.TrimSpace(tc.settings), err, tc.want)
 		}
 	}
 }

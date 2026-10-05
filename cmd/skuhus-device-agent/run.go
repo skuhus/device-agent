@@ -197,7 +197,7 @@ func runAgent(ctx context.Context, cfg *config.Config, warnings []config.Warning
 			InterCharTimeout: deviceCfg.InterCharTimeout.Duration(),
 			LogPayloads:      cfg.Logging.LogPayloads,
 			Logger:           log,
-			Reopen:           serialdev.DefaultReopen,
+			Reopen:           deviceCfg.ReopenPolicy(),
 		})
 		if err != nil {
 			return err

@@ -80,19 +80,15 @@ func runValidate(args []string, stdout, stderr io.Writer) error {
 	fmt.Fprintf(stdout, "  station        %s/%s/%s\n", cfg.Identity.Project, cfg.Identity.Site, cfg.Identity.Station)
 	fmt.Fprintf(stdout, "  instance       %s (MQTT client id)\n", cfg.Identity.Instance)
 	fmt.Fprintf(stdout, "  agent status   %s\n", agentTopics.Status())
-	backoff := "off"
-	if cfg.Broker.ReconnectBackoff.Enabled {
-		backoff = fmt.Sprintf("max=%s jitter=%v", cfg.Broker.ReconnectBackoff.Max, cfg.Broker.ReconnectBackoff.Jitter)
-	}
 	fmt.Fprintf(stdout, "  broker         %s reconnect_interval=%s reconnect_backoff=%s\n",
-		cfg.Broker.RedactedURL(), cfg.Broker.ReconnectInterval, backoff)
+		cfg.Broker.RedactedURL(), cfg.Broker.ReconnectInterval, describeBackoff(cfg.Broker.ReconnectBackoff))
 	fmt.Fprintf(stdout, "  devices        %d\n", len(cfg.Devices))
 	for _, deviceCfg := range cfg.Devices {
-		fmt.Fprintf(stdout, "    %-16s %s kind=%s baud=%d format=%d/%s/%s separator=%q max_frame=%d inter_char=%s message_expiry=%s device_type=%q tx_open_attempts=%d tx_open_interval=%s\n",
+		fmt.Fprintf(stdout, "    %-16s %s kind=%s baud=%d format=%d/%s/%s separator=%q max_frame=%d inter_char=%s message_expiry=%s device_type=%q tx_open_attempts=%d tx_open_interval=%s reopen_interval=%s reopen_backoff=%s\n",
 			deviceCfg.ID, deviceCfg.Path, deviceCfg.Kind, deviceCfg.Baud,
 			deviceCfg.DataBits, deviceCfg.Parity, deviceCfg.StopBits, deviceCfg.Separator,
 			deviceCfg.MaxFrameBytes, deviceCfg.InterCharTimeout, deviceCfg.MessageExpiry, deviceCfg.DeviceType,
-			deviceCfg.TxOpenAttempts, deviceCfg.TxOpenInterval)
+			deviceCfg.TxOpenAttempts, deviceCfg.TxOpenInterval, deviceCfg.ReopenInterval, describeBackoff(deviceCfg.ReopenBackoff))
 		topics, err := stationTopics.Device(deviceCfg.ID)
 		if err != nil {
 			return err
@@ -110,4 +106,13 @@ func runValidate(args []string, stdout, stderr io.Writer) error {
 		fmt.Fprintf(stdout, "  warnings       %d (listed on stderr)\n", len(warnings))
 	}
 	return nil
+}
+
+// describeBackoff is a backoff as validate prints it: "off", or its ceiling
+// and jitter, which apply only when it is on.
+func describeBackoff(settings config.Backoff) string {
+	if !settings.Enabled {
+		return "off"
+	}
+	return fmt.Sprintf("max=%s jitter=%v", settings.Max, settings.Jitter)
 }

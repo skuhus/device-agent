@@ -156,11 +156,15 @@ devices:
 		{"device_type", d.DeviceType, ""},
 		{"tx_open_attempts", d.TxOpenAttempts, DefaultTxOpenAttempts},
 		{"tx_open_interval", d.TxOpenInterval.Duration(), DefaultTxOpenInterval},
+		{"reopen_interval", d.ReopenInterval.Duration(), DefaultReopenInterval},
+		{"reopen_backoff.enabled", d.ReopenBackoff.Enabled, true},
+		{"reopen_backoff.max", d.ReopenBackoff.Max.Duration(), DefaultReopenBackoffMax},
+		{"reopen_backoff.jitter", d.ReopenBackoff.Jitter, DefaultReopenBackoffJitter},
 		{"keepalive", cfg.Broker.Keepalive.Duration(), DefaultKeepalive},
 		{"reconnect_interval", cfg.Broker.ReconnectInterval.Duration(), DefaultReconnectInterval},
 		{"reconnect_backoff.enabled", cfg.Broker.ReconnectBackoff.Enabled, false},
-		{"reconnect_backoff.max", cfg.Broker.ReconnectBackoff.Max.Duration(), DefaultBackoffMax},
-		{"reconnect_backoff.jitter", cfg.Broker.ReconnectBackoff.Jitter, DefaultBackoffJitter},
+		{"reconnect_backoff.max", cfg.Broker.ReconnectBackoff.Max.Duration(), DefaultReconnectBackoffMax},
+		{"reconnect_backoff.jitter", cfg.Broker.ReconnectBackoff.Jitter, DefaultReconnectBackoffJitter},
 		{"publish_timeout", cfg.Delivery.PublishTimeout.Duration(), DefaultPublishTimeout},
 		{"buffer_size", cfg.Delivery.BufferSize, DefaultBufferSize},
 		{"keepalive_interval", cfg.Status.KeepaliveInterval.Duration(), DefaultKeepaliveInterval},
@@ -791,11 +795,7 @@ func TestLoadEnvironmentErrorsAreDeterministic(t *testing.T) {
 
 // validDevice is a device entry every rule accepts, with the given path.
 func validDevice(path string) Device {
-	return Device{
-		ID: "d", Kind: KindSerial, Path: path, Baud: 9600,
-		DataBits: 8, Parity: ParityNone, StopBits: StopBitsOne,
-		Separator: "\r", MaxFrameBytes: 4096, InterCharTimeout: Duration(200 * time.Millisecond),
-		MessageExpiry:  Duration(30 * time.Second),
-		TxOpenAttempts: DefaultTxOpenAttempts, TxOpenInterval: Duration(DefaultTxOpenInterval),
-	}
+	deviceCfg := DefaultDevice()
+	deviceCfg.ID, deviceCfg.Path, deviceCfg.Separator = "d", path, "\r"
+	return deviceCfg
 }
