@@ -108,11 +108,18 @@ func (line *pipeline) countPublishFailure() {
 	line.counters.PublishFailures++
 }
 
-// keepaliveState is the device as the keepalive reports it now.
-func (line *pipeline) keepaliveState() wire.DeviceState {
+// keepaliveState is the device as the keepalive reports it now, with the
+// broker's answer to each topic that reaches its tx, looked up under the topic
+// as it was subscribed to.
+func (line *pipeline) keepaliveState(answers map[string]byte) wire.DeviceState {
+	routes := make([]wire.TxRouteState, 0, len(line.txRoutes))
+	for _, route := range line.txRoutes {
+		code, answered := answers[route.Topic]
+		routes = append(routes, wire.TxRouteState{Route: route, Answer: wire.SubscribeAnswer{Code: code, Answered: answered}})
+	}
 	line.mu.Lock()
 	defer line.mu.Unlock()
 	counters := line.counters
 	counters.BufferDepth = len(line.frames)
-	return wire.DeviceState{Device: line.device.Wire, Open: line.open, Counters: counters}
+	return wire.DeviceState{Device: line.device.Wire, Open: line.open, Counters: counters, TxRoutes: routes}
 }

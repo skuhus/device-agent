@@ -193,12 +193,14 @@ func (core *Core) sendKeepalives(stop <-chan struct{}, pipelines []*pipeline) {
 	}
 }
 
-// publishKeepalive sends one keepalive with every device's state. A failure is
-// logged and not retried: the next one is an interval away.
+// publishKeepalive sends one keepalive with every device's state, and every
+// topic that reaches each device's tx with the broker's answer to it. A
+// failure is logged and not retried: the next one is an interval away.
 func (core *Core) publishKeepalive(pipelines []*pipeline, trigger string) {
+	answers := core.opts.Transport.SubscribeAnswers()
 	states := make([]wire.DeviceState, 0, len(pipelines))
 	for _, line := range pipelines {
-		states = append(states, line.keepaliveState())
+		states = append(states, line.keepaliveState(answers))
 	}
 	message := core.opts.Builder.Keepalive(core.opts.Started, core.opts.Now(), core.opts.KeepaliveInterval,
 		core.opts.MissedKeepalives, states)

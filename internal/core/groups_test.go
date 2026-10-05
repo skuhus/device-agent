@@ -21,6 +21,7 @@ type groupRun struct {
 	printers  map[string]*fakePrinter
 	devices   map[string]Device
 	txIn      chan TxMessage
+	connected chan struct{}
 	log       *logtest.Log
 }
 
@@ -35,8 +36,15 @@ func groupRoute(t *testing.T, scope wire.TxScope, group string) wire.TxRoute {
 
 func startGroupRun(t *testing.T) *groupRun {
 	t.Helper()
-	run := &groupRun{t: t, transport: &fakeTransport{}, printers: map[string]*fakePrinter{}, devices: map[string]Device{},
-		txIn: make(chan TxMessage, 16)}
+	return startGroupRunAnswered(t, nil)
+}
+
+// startGroupRunAnswered starts the run with answers as the broker's answers to
+// the subscriptions.
+func startGroupRunAnswered(t *testing.T, answers map[string]byte) *groupRun {
+	t.Helper()
+	run := &groupRun{t: t, transport: &fakeTransport{answers: answers}, printers: map[string]*fakePrinter{}, devices: map[string]Device{},
+		txIn: make(chan TxMessage, 16), connected: make(chan struct{}, 1)}
 	siteScales, stationFront := groupRoute(t, wire.ScopeSite, "scales"), groupRoute(t, wire.ScopeStation, "front")
 	var devices []Device
 	for _, setup := range []struct {
@@ -55,7 +63,7 @@ func startGroupRun(t *testing.T) *groupRun {
 	}
 	opts := testOptions(t, run.transport, devices...)
 	logger, log := logtest.New(t, "debug")
-	opts.Logger, opts.TxIn, run.log = logger, run.txIn, log
+	opts.Logger, opts.TxIn, opts.Connected, run.log = logger, run.txIn, run.connected, log
 	running := newCore(t, opts)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -168,6 +176,45 @@ func TestGroupTxResendIsAnsweredByEachDevice(t *testing.T) {
 		}
 		if writes, _ := run.printers[id].snapshot(); len(writes) != 1 {
 			t.Errorf("%s was written %d times, want once", id, len(writes))
+		}
+	}
+}
+
+// The keepalive lists, for each device, every topic that reaches its tx, its
+// own first, each with the broker's answer under the topic as subscribed: a
+// granted QoS, a refusal, or null where the broker has not answered.
+func TestKeepaliveListsEveryTxTopicWithItsAnswer(t *testing.T) {
+	ownA, _ := station.Device("scales-a")
+	ownB, _ := station.Device("scales-b")
+	site, front := groupRoute(t, wire.ScopeSite, "scales"), groupRoute(t, wire.ScopeStation, "front")
+	run := startGroupRunAnswered(t, map[string]byte{ownA.Tx(): 1, ownB.Tx(): 0x87, site.Topic: 1})
+	run.connected <- struct{}{}
+	waitUntil(t, "a keepalive", func() bool { return len(run.transport.keepalives()) > 0 })
+
+	answer := func(code int) *int { return &code }
+	group := func(name string) *string { return &name }
+	printerOwn, _ := station.Device("printer-1")
+	want := map[string][]wire.TxTopic{
+		"scales-a": {
+			{Topic: ownA.Tx(), Scope: wire.ScopeDevice, Suback: answer(1)},
+			{Topic: site.Topic, Scope: wire.ScopeSite, Group: group("scales"), Suback: answer(1)},
+			{Topic: front.Topic, Scope: wire.ScopeStation, Group: group("front")},
+		},
+		"scales-b": {
+			{Topic: ownB.Tx(), Scope: wire.ScopeDevice, Suback: answer(0x87)},
+			{Topic: site.Topic, Scope: wire.ScopeSite, Group: group("scales"), Suback: answer(1)},
+		},
+		"printer-1": {{Topic: printerOwn.Tx(), Scope: wire.ScopeDevice}},
+	}
+	devices := run.transport.keepalives()[0].Devices
+	if len(devices) != len(want) {
+		t.Fatalf("%d devices in the keepalive, want %d", len(devices), len(want))
+	}
+	for _, device := range devices {
+		got, _ := json.Marshal(device.TxTopics)
+		expected, _ := json.Marshal(want[device.DeviceID])
+		if string(got) != string(expected) {
+			t.Errorf("%s tx_topics = %s\nwant %s", device.DeviceID, got, expected)
 		}
 	}
 }

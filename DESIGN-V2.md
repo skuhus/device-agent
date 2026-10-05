@@ -819,6 +819,14 @@ rather than a number of its own. Source: maintainer, 2026-09-29 (#11 Q7).
       "device_type": "symbol-05e0-1701",
       "device_open": true,
       "message_expiry_s": 30,
+      "tx_topics": [
+        {
+          "topic": "skuhus/acme/vasby/pack-03/scanner-1/tx",
+          "scope": "device",
+          "group": null,
+          "suback": 1
+        }
+      ],
       "rx_frames": 1042,
       "rx_bytes": 15656,
       "discards": {
@@ -846,6 +854,20 @@ rather than a number of its own. Source: maintainer, 2026-09-29 (#11 Q7).
       "device_type": "zebra-zt410",
       "device_open": false,
       "message_expiry_s": 30,
+      "tx_topics": [
+        {
+          "topic": "skuhus/acme/vasby/pack-03/printer-1/tx",
+          "scope": "device",
+          "group": null,
+          "suback": 1
+        },
+        {
+          "topic": "skuhus/acme/vasby/group/printers/tx",
+          "scope": "site",
+          "group": "printers",
+          "suback": 1
+        }
+      ],
       "rx_frames": 0,
       "rx_bytes": 0,
       "discards": {
@@ -880,7 +902,18 @@ rather than a number of its own. Source: maintainer, 2026-09-29 (#11 Q7).
 | devices | array | no | One entry per configured device, in configuration order; `[]` with none. |
 
 Each entry carries `device_id`, `device_type`, `device_open` and `message_expiry_s` as a
-device event does, and the device's counters since the process started, the
+device event does. `tx_topics` lists every topic that reaches the device's tx,
+its own first, then its broadcast groups' in the order project, site, station
+("Broadcast groups", #35 Q3, Q3a, Q3b):
+
+| Field | Type | Null | Meaning |
+|---|---|---|---|
+| topic | string | no | The topic filter as it went into the SUBSCRIBE packet. |
+| scope | string | no | `device` for the device's own topic; `project`, `site` or `station` for a broadcast group's. |
+| group | string | yes | The broadcast group's name; null for the device's own topic. |
+| suback | integer | yes | The broker's SUBACK reason code for the topic on the current connection: 0 to 2 grant that QoS, 128 and above refuse it. Null until the broker has answered on this connection. |
+
+The entry also carries the device's counters since the process started, the
 list in "Status channel" (#23 Q9):
 
 | Counter | Counts |
@@ -898,12 +931,11 @@ consumer can difference two keepalives without handling a missing key. An
 unmatched separator ("Reading: rx") shows as `discards.inter_char_timeout` and
 `rx_bytes` rising while `rx_frames` stays flat.
 
-Each entry is to list the device's broadcast groups as well, and every tx topic
-that reaches the device ("Broadcast groups"; not built, #35).
-
 Besides every interval, a keepalive goes out as soon as the broker connection
 comes up. The first one does not wait an interval, and a consumer that saw a
-will learns within a moment that the agent is back.
+will learns within a moment that the agent is back. It goes once the broker has
+answered the agent's subscriptions, or subscribing has failed, so that its
+`tx_topics` carry the answers.
 
 ### Agent offline
 

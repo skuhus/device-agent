@@ -35,6 +35,10 @@ type Transport interface {
 	PublishKeepalive(ctx context.Context, topic string, payload []byte, expiry time.Duration) error
 	PublishOffline(ctx context.Context, topic string, payload []byte) error
 	Close(ctx context.Context) error
+	// SubscribeAnswers is the broker's SUBACK reason code for each topic
+	// filter subscribed to on the current connection, keyed by the filter as
+	// it went into the SUBSCRIBE packet. A filter not answered is absent.
+	SubscribeAnswers() map[string]byte
 }
 
 // Device is one configured device as the core runs it.

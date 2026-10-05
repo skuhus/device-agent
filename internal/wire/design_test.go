@@ -38,6 +38,11 @@ func builderWithID(id string) *Builder {
 // examples builds each message the section shows, keyed by the name after
 // "```json" on the example's opening fence.
 func examples() map[string]any {
+	exampleStation, _ := NewStationTopics(exampleOf.Project, exampleOf.Site, exampleOf.Station)
+	scannerTopics, _ := exampleStation.Device(scanner.ID)
+	printerTopics, _ := exampleStation.Device(printer.ID)
+	printers, _ := exampleStation.GroupTx(ScopeSite, "printers")
+	granted := SubscribeAnswer{Code: 1, Answered: true}
 	return map[string]any{
 		"rx": builderWithID("5b7b4f6e-2f0a-4c1e-9d3a-8f6e1c2b7a90").
 			Rx(scanner, 1042, []byte("7310425012345"), exampleAt),
@@ -61,11 +66,11 @@ func examples() map[string]any {
 					RxFrames: 1042, RxBytes: 15656,
 					Discards:    DiscardCounts{InterCharTimeout: 2},
 					BufferDepth: 0,
-				}},
+				}, TxRoutes: []TxRouteState{{Route: scannerTopics.TxRoute(), Answer: granted}}},
 				{Device: printer, Open: false, Counters: DeviceCounters{
 					FailedOpens: OpenFailureCounts{Busy: 3},
 					TxFailed:    1,
-				}},
+				}, TxRoutes: []TxRouteState{{Route: printerTopics.TxRoute(), Answer: granted}, {Route: printers, Answer: granted}}},
 			}),
 		"offline": builderWithID("1a2b3c4d-5e6f-4a0b-9c8d-7e6f5a4b3c2d").
 			Offline(OfflineWill, exampleAt),
