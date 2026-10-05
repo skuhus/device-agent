@@ -1,6 +1,7 @@
 package serial
 
 import (
+	"bytes"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -225,5 +226,51 @@ func TestClassify(t *testing.T) {
 				t.Errorf("classify(%v) = %q, want %q", tc.err, got, tc.want)
 			}
 		})
+	}
+}
+
+// streamingPort has data waiting, and each read takes as much of it as the
+// buffer holds, as a port with a backlog does.
+type streamingPort struct {
+	blockingPort
+	mu      sync.Mutex
+	pending []byte
+}
+
+func (port *streamingPort) Read(buffer []byte) (int, error) {
+	port.mu.Lock()
+	defer port.mu.Unlock()
+	if len(port.pending) == 0 {
+		time.Sleep(10 * time.Millisecond)
+		return 0, nil
+	}
+	read := copy(buffer, port.pending)
+	port.pending = port.pending[read:]
+	return read, nil
+}
+
+// One read holds a whole frame with its separator, whatever max_frame_bytes
+// is, so a frame of the largest size that arrives at once is read in one call.
+func TestOneReadHoldsAWholeFrame(t *testing.T) {
+	const maxFrame = 5000
+	opts := serialOpts("scanner-1", "/dev/fake", "\r\n")
+	opts.MaxFrameBytes = maxFrame
+	var logged *logtest.Log
+	opts.Logger, logged = logtest.New(t, "debug")
+	port := &streamingPort{blockingPort: blockingPort{hold: time.Hour}, pending: bytes.Repeat([]byte("7"), 3*maxFrame)}
+	opts.Open = func(string, *goserial.Mode) (goserial.Port, error) { return port, nil }
+	runDevice(t, opts, 1)
+
+	var reads []map[string]any
+	deadline := time.Now().Add(3 * time.Second)
+	for len(reads) == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+		reads = logged.WithMessage(t, "device read")
+	}
+	if len(reads) == 0 {
+		t.Fatal("no read was logged")
+	}
+	if want := float64(maxFrame + len("\r\n")); reads[0]["bytes"] != want {
+		t.Errorf("the first read took %v bytes, want %v, a whole frame and its separator", reads[0]["bytes"], want)
 	}
 }

@@ -1036,6 +1036,11 @@ frame over size, so a payload of the maximum length whose separator has only
 partly arrived is not rejected one read early
 (internal/device/serial/framer.go).
 
+The read buffer is sized from it: one read takes up to `max_frame_bytes` and
+the separator, so that a frame which arrives at once is read in one call
+(internal/device/serial/serial.go, New). It had fixed bounds of 64 and 4096
+bytes until #30.
+
 ### Any discard resynchronises to the next terminator
 
 Resuming mid-frame after a discard emits the tail of a broken frame as if it

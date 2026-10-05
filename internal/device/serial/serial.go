@@ -54,11 +54,6 @@ func invert[V comparable](byName map[string]V) map[V]string {
 	return names
 }
 
-const (
-	minReadChunk = 64
-	maxReadChunk = 4096
-)
-
 // OpenFunc opens a serial port. It is a field on Options so tests can inject
 // failures that no PTY can reproduce, such as EIO on a removed USB device.
 type OpenFunc func(path string, mode *goserial.Mode) (goserial.Port, error)
@@ -99,11 +94,13 @@ type Options struct {
 
 // Device is a serial-attached device.
 type Device struct {
-	opts  Options
-	mode  *goserial.Mode
-	chunk int
-	log   *slog.Logger
-	open  OpenFunc
+	opts Options
+	mode *goserial.Mode
+	// readBufferBytes holds a whole frame with its separator, so that a frame
+	// that arrives at once is read in one call.
+	readBufferBytes int
+	log             *slog.Logger
+	open            OpenFunc
 
 	// retry cuts the reopen backoff short, for a tx waiting for the port.
 	retry chan struct{}
@@ -161,10 +158,10 @@ func New(opts Options) (*Device, error) {
 			// outright on any port without modem control. The lines are raised
 			// after open instead, where failing to do so is not fatal.
 		},
-		chunk: min(max(opts.MaxFrameBytes, minReadChunk), maxReadChunk),
-		log:   opts.Logger,
-		open:  opts.Open,
-		retry: make(chan struct{}, 1),
+		readBufferBytes: opts.MaxFrameBytes + len(opts.Terminator),
+		log:             opts.Logger,
+		open:            opts.Open,
+		retry:           make(chan struct{}, 1),
 	}
 	if dev.log == nil {
 		dev.log = slog.New(slog.DiscardHandler)
@@ -202,7 +199,7 @@ func (dev *Device) Run(ctx context.Context, sink chan<- device.Frame, report fun
 		"baud", dev.opts.Baud, "data_bits", dev.mode.DataBits, "parity", parityNames[dev.mode.Parity],
 		"stop_bits", stopBitsNames[dev.mode.StopBits], "terminator_hex", hex.EncodeToString(dev.opts.Terminator),
 		"max_frame_bytes", dev.opts.MaxFrameBytes, "inter_char_timeout", dev.opts.InterCharTimeout.String(),
-		"read_chunk", dev.chunk, "tx_chunk_bytes", dev.opts.TxChunkBytes,
+		"read_buffer_bytes", dev.readBufferBytes, "tx_chunk_bytes", dev.opts.TxChunkBytes,
 		"reopen_interval", policy.Interval.String(), "reopen_backoff", policy.Grow,
 		"reopen_backoff_max", policy.Max.String(), "reopen_backoff_jitter", policy.Jitter)
 	retry := 0
@@ -259,7 +256,7 @@ func (dev *Device) session(ctx context.Context, sink chan<- device.Frame, report
 	dev.logModemStatus(port)
 	dev.log.Info("device open", "baud", dev.opts.Baud,
 		"data_bits", dev.mode.DataBits, "parity", parityNames[dev.mode.Parity], "stop_bits", stopBitsNames[dev.mode.StopBits],
-		"read_chunk", dev.chunk,
+		"read_buffer_bytes", dev.readBufferBytes,
 		"inter_char_timeout", dev.opts.InterCharTimeout.String(),
 		"max_frame_bytes", dev.opts.MaxFrameBytes,
 		"terminator_hex", hex.EncodeToString(dev.opts.Terminator))
@@ -308,7 +305,7 @@ func (dev *Device) session(ctx context.Context, sink chan<- device.Frame, report
 		return false, ferr
 	}
 
-	buf := make([]byte, dev.chunk)
+	buf := make([]byte, dev.readBufferBytes)
 	for {
 		// Checked here as well as on the sink send. Otherwise the only way out
 		// of this loop is a read error, which makes shutdown depend on the port
