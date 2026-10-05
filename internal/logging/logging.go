@@ -62,7 +62,7 @@ type Options struct {
 func New(opts Options) (*slog.Logger, error) {
 	level, err := ParseLevel(opts.Level)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("logging: %w", err)
 	}
 	var destinations fanout
 	if opts.File != nil {
@@ -119,19 +119,21 @@ func Payload(data []byte) []any {
 	return attrs
 }
 
-// ParseLevel maps a configuration string to a slog level.
-func ParseLevel(s string) (slog.Level, error) {
-	switch strings.ToLower(strings.TrimSpace(s)) {
+// ParseLevel maps logging.level, debug, info, warn or error in any case, to a
+// slog level. It is the one list of levels: the configuration validates with
+// it.
+func ParseLevel(level string) (slog.Level, error) {
+	switch strings.ToLower(strings.TrimSpace(level)) {
 	case "debug":
 		return slog.LevelDebug, nil
-	case "info", "":
+	case "info":
 		return slog.LevelInfo, nil
-	case "warn", "warning":
+	case "warn":
 		return slog.LevelWarn, nil
 	case "error":
 		return slog.LevelError, nil
 	}
-	return 0, fmt.Errorf("logging: unknown level %q, expected debug, info, warn or error", s)
+	return 0, fmt.Errorf("unknown level %q, expected debug, info, warn or error", level)
 }
 
 // flushing writes each record through the JSON handler, and then flushes the

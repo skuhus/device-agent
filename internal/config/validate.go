@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/skuhus/device-agent/internal/logging"
 )
 
 // Warning is a non-fatal configuration problem. Warnings do not stop the agent;
@@ -406,21 +408,19 @@ func validateStatus(status Status) []error {
 	return problems
 }
 
-func validateLogging(logging Logging) []error {
+func validateLogging(logSettings Logging) []error {
 	var problems []error
-	switch strings.ToLower(logging.Level) {
-	case "debug", "info", "warn", "error":
-	default:
-		problems = append(problems, fmt.Errorf("logging.level %q is unknown; expected debug, info, warn or error", logging.Level))
+	if _, err := logging.ParseLevel(logSettings.Level); err != nil {
+		problems = append(problems, fmt.Errorf("logging.level: %w", err))
 	}
 	// No file is a valid choice, and so is no destination at all: where the
 	// agent logs, if anywhere, is the operator's business (#23 Q11a).
 	switch {
-	case logging.File == "":
-	case !filepath.IsAbs(logging.File):
-		problems = append(problems, fmt.Errorf("logging.file %q must be absolute", logging.File))
+	case logSettings.File == "":
+	case !filepath.IsAbs(logSettings.File):
+		problems = append(problems, fmt.Errorf("logging.file %q must be absolute", logSettings.File))
 	default:
-		dir := filepath.Dir(logging.File)
+		dir := filepath.Dir(logSettings.File)
 		info, err := os.Stat(dir)
 		if err != nil {
 			problems = append(problems, fmt.Errorf("logging.file directory %s: %w", dir, err))
@@ -428,11 +428,11 @@ func validateLogging(logging Logging) []error {
 			problems = append(problems, fmt.Errorf("logging.file directory %s is not a directory", dir))
 		}
 	}
-	if logging.MaxSizeMB < 1 {
-		problems = append(problems, fmt.Errorf("logging.max_size_mb must be at least 1, got %d", logging.MaxSizeMB))
+	if logSettings.MaxSizeMB < 1 {
+		problems = append(problems, fmt.Errorf("logging.max_size_mb must be at least 1, got %d", logSettings.MaxSizeMB))
 	}
-	if logging.Keep < 0 {
-		problems = append(problems, fmt.Errorf("logging.keep must not be negative, got %d", logging.Keep))
+	if logSettings.Keep < 0 {
+		problems = append(problems, fmt.Errorf("logging.keep must not be negative, got %d", logSettings.Keep))
 	}
 	return problems
 }

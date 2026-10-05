@@ -225,7 +225,7 @@ func TestLoggingRejections(t *testing.T) {
 		change func(*Logging)
 		want   string
 	}{
-		{func(l *Logging) { l.Level = "verbose" }, `logging.level "verbose" is unknown; expected debug, info, warn or error`},
+		{func(l *Logging) { l.Level = "verbose" }, `logging.level: unknown level "verbose", expected debug, info, warn or error`},
 		{func(l *Logging) { l.File = "agent.log" }, `logging.file "agent.log" must be absolute`},
 		{func(l *Logging) { l.File = "/nonexistent-directory-for-tests/agent.log" }, `logging.file directory /nonexistent-directory-for-tests: `},
 		{func(l *Logging) { l.MaxSizeMB = 0 }, `logging.max_size_mb must be at least 1, got 0`},

@@ -266,7 +266,6 @@ func TestParseLevel(t *testing.T) {
 	cases := map[string]slog.Level{
 		"debug": slog.LevelDebug,
 		"info":  slog.LevelInfo,
-		"":      slog.LevelInfo,
 		"WARN":  slog.LevelWarn,
 		" warn": slog.LevelWarn,
 		"error": slog.LevelError,
@@ -281,7 +280,11 @@ func TestParseLevel(t *testing.T) {
 			t.Errorf("ParseLevel(%q) = %v, want %v", in, got, want)
 		}
 	}
-	if _, err := ParseLevel("trace"); err == nil {
-		t.Error("ParseLevel(trace) should fail")
+	// No default for an empty level and no second name for one: each
+	// would be a value nobody wrote.
+	for _, level := range []string{"trace", "", "warning"} {
+		if _, err := ParseLevel(level); err == nil {
+			t.Errorf("ParseLevel(%q) should fail", level)
+		}
 	}
 }
