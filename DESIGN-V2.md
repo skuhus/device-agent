@@ -542,8 +542,9 @@ keepalive, under the same name.
 
 `[Decided]` `port_open_failed` is published on every attempt to open the port,
 which keeps the rule simple. Source: maintainer, 2026-09-29 (#11 Q8). A scale
-unplugged overnight, retried every 30 s at most (v1's backoff limit, the
-default `reopen_backoff.max`), publishes about 1,440 of them in 12 hours.
+unplugged overnight, retried every 30 s at most (v1's backoff limit,
+internal/device/serial/serial.go:27, and the default `reopen_backoff.max`),
+publishes about 1,440 of them in 12 hours.
 
 A device's events are published in the order they happened, with `agent_ts`
 the time they happened.
