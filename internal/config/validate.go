@@ -13,6 +13,7 @@ import (
 	"unicode"
 
 	"github.com/skuhus/device-agent/internal/logging"
+	"github.com/skuhus/device-agent/internal/wire"
 )
 
 // Warning is a non-fatal configuration problem. Warnings do not stop the agent;
@@ -92,7 +93,7 @@ func validateIdentity(identity Identity) []error {
 			problems = append(problems, fmt.Errorf("%s %q must match [a-z0-9-]+; it is used verbatim as an MQTT topic segment", field.name, field.value))
 		}
 	}
-	if identity.Station == reservedStationID {
+	if identity.Station == wire.GroupLevel {
 		problems = append(problems, fmt.Errorf(
 			"identity.station %q is reserved: the site's broadcast group topics, skuhus/<project>/<site>/group/<group>/tx, would be this station's device tx topics",
 			identity.Station))
@@ -220,7 +221,7 @@ func validateDevices(devices []Device) ([]error, []Warning) {
 			problems = append(problems, fmt.Errorf("%s.id is required", where))
 		case !topicSegment.MatchString(deviceCfg.ID):
 			problems = append(problems, fmt.Errorf("%s.id %q must match [a-z0-9-]+; it is a level of the device's topics", where, deviceCfg.ID))
-		case deviceCfg.ID == reservedDeviceID:
+		case deviceCfg.ID == wire.AgentLevel:
 			problems = append(problems, fmt.Errorf("%s.id %q is reserved for the agent's own topics", where, deviceCfg.ID))
 		default:
 			if prev, dup := seen[deviceCfg.ID]; dup {
@@ -308,30 +309,15 @@ func validateDevices(devices []Device) ([]error, []Warning) {
 	return problems, warnings
 }
 
-// reservedDeviceID is the topic level of the agent's own status, which no
-// device may take (DESIGN-V2.md, "Topics").
-const reservedDeviceID = "agent"
-
-// reservedStationID is the topic level of a site's broadcast group topics,
-// which no station may take (DESIGN-V2.md, "Broadcast groups").
-const reservedStationID = "group"
-
 // validateBroadcastGroups requires each group to be named as a topic level,
 // since its name is one in the group's tx topic, and to be listed once in its
 // scope.
 func validateBroadcastGroups(where string, groups BroadcastGroups) []error {
 	var problems []error
-	for _, scope := range []struct {
-		name   string
-		groups []string
-	}{
-		{"project", groups.Project},
-		{"site", groups.Site},
-		{"station", groups.Station},
-	} {
-		field := where + ".broadcast_groups." + scope.name
-		seen := make(map[string]int, len(scope.groups))
-		for index, group := range scope.groups {
+	for _, scoped := range groups.ByScope() {
+		field := where + ".broadcast_groups." + string(scoped.Scope)
+		seen := make(map[string]int, len(scoped.Groups))
+		for index, group := range scoped.Groups {
 			if !topicSegment.MatchString(group) {
 				problems = append(problems, fmt.Errorf("%s[%d] %q must match [a-z0-9-]+; it is a level of the group's tx topic", field, index, group))
 				continue

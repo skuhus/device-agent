@@ -1,9 +1,12 @@
 package config
 
 import (
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/skuhus/device-agent/internal/wire"
 )
 
 const groupsConfig = `
@@ -48,11 +51,30 @@ func TestBroadcastGroupsKeyIsStrict(t *testing.T) {
 // A station called "group" would have the site's broadcast group topics as its
 // device tx topics.
 func TestStationGroupIsReserved(t *testing.T) {
-	problems := validateIdentity(Identity{Project: "acme", Site: "vasby", Station: reservedStationID})
+	problems := validateIdentity(Identity{Project: "acme", Site: "vasby", Station: wire.GroupLevel})
 	if len(problems) != 1 || !strings.Contains(problems[0].Error(), `identity.station "group" is reserved`) {
 		t.Errorf("problems = %v, want the station refused as reserved", problems)
 	}
 	if problems := validateIdentity(Identity{Project: "group", Site: "group", Station: "pack-03"}); len(problems) != 0 {
 		t.Errorf("project and site group: problems = %v, want them accepted; only the station is reserved", problems)
+	}
+}
+
+// ByScope names each scope as its key under broadcast_groups, which is how
+// validation names a group's field, and carries that key's groups, in the
+// keys' order.
+func TestByScopeFollowsTheKeys(t *testing.T) {
+	groups := BroadcastGroups{Project: []string{"p"}, Site: []string{"s"}, Station: []string{"t"}}
+	scoped := groups.ByScope()
+	fields := reflect.TypeOf(groups)
+	if len(scoped) != fields.NumField() {
+		t.Fatalf("ByScope lists %d scopes; broadcast_groups has %d keys", len(scoped), fields.NumField())
+	}
+	for index, entry := range scoped {
+		key := fields.Field(index).Tag.Get("yaml")
+		want := reflect.ValueOf(groups).Field(index).Interface().([]string)
+		if string(entry.Scope) != key || !slices.Equal(entry.Groups, want) {
+			t.Errorf("scope %d = %s %v, want %s %v", index, entry.Scope, entry.Groups, key, want)
+		}
 	}
 }

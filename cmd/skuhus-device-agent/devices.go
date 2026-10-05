@@ -35,21 +35,14 @@ func newSerialReader(deviceCfg config.Device, logPayloads bool, log *slog.Logger
 	})
 }
 
-// broadcastGroupRoutes builds the tx topics of a device's broadcast groups,
-// the project's first, then the site's and the station's, as run subscribes to
-// them and validate shows them.
+// broadcastGroupRoutes builds the tx topics of a device's broadcast groups, in
+// the configuration's order of scopes, as run subscribes to them and validate
+// shows them.
 func broadcastGroupRoutes(station wire.StationTopics, groups config.BroadcastGroups) ([]wire.TxRoute, error) {
 	var routes []wire.TxRoute
-	for _, scoped := range []struct {
-		scope  wire.TxScope
-		groups []string
-	}{
-		{wire.ScopeProject, groups.Project},
-		{wire.ScopeSite, groups.Site},
-		{wire.ScopeStation, groups.Station},
-	} {
-		for _, group := range scoped.groups {
-			route, err := station.GroupTx(scoped.scope, group)
+	for _, scoped := range groups.ByScope() {
+		for _, group := range scoped.Groups {
+			route, err := station.GroupTx(scoped.Scope, group)
 			if err != nil {
 				return nil, err
 			}
