@@ -43,7 +43,7 @@ logging:
 func validate(t *testing.T, args ...string) (stdout, stderr string, err error) {
 	t.Helper()
 	var out, errOut bytes.Buffer
-	err = runValidate(args, &out, &errOut)
+	err = validateCommand(args, &out, &errOut)
 	return out.String(), errOut.String(), err
 }
 
@@ -51,7 +51,7 @@ func TestRunValidateAcceptsGoodConfig(t *testing.T) {
 	path := writeConfig(t, goodConfig)
 	stdout, stderr, err := validate(t, "--config", path)
 	if err != nil {
-		t.Fatalf("runValidate: %v", err)
+		t.Fatalf("validateCommand: %v", err)
 	}
 	if !strings.Contains(stdout, "configuration is valid") {
 		t.Errorf("stdout does not confirm validity:\n%s", stdout)
@@ -114,7 +114,7 @@ func TestRunValidateFlagsOverrideFile(t *testing.T) {
 	path := writeConfig(t, goodConfig)
 	stdout, _, err := validate(t, "--config", path, "--station", "pack-99", "--site", "malmo")
 	if err != nil {
-		t.Fatalf("runValidate: %v", err)
+		t.Fatalf("validateCommand: %v", err)
 	}
 	if !strings.Contains(stdout, "acme/malmo/pack-99") {
 		t.Errorf("flags did not reach the loaded config:\n%s", stdout)

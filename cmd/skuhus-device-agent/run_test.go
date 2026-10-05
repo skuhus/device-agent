@@ -17,7 +17,7 @@ import (
 
 func TestRunRejectsPositionalArguments(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	err := runRun([]string{"scanner-main"}, &stdout, &stderr)
+	err := runCommand([]string{"scanner-main"}, &stdout, &stderr)
 	if err == nil {
 		t.Fatal("expected an error")
 	}
@@ -28,7 +28,7 @@ func TestRunRejectsPositionalArguments(t *testing.T) {
 
 func TestRunHelpMentionsCredentialHandling(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	if err := runRun([]string{"-h"}, &stdout, &stderr); err == nil {
+	if err := runCommand([]string{"-h"}, &stdout, &stderr); err == nil {
 		t.Fatal("expected flag.ErrHelp")
 	}
 	help := stderr.String()

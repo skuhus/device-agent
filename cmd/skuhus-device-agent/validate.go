@@ -12,7 +12,7 @@ import (
 	"github.com/skuhus/device-agent/internal/wire"
 )
 
-func runValidate(args []string, stdout, stderr io.Writer) error {
+func validateCommand(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("validate", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() {

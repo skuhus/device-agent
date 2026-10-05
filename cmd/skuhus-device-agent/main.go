@@ -56,11 +56,11 @@ func main() {
 	var err error
 	switch os.Args[1] {
 	case "run":
-		err = runRun(os.Args[2:], os.Stdout, os.Stderr)
+		err = runCommand(os.Args[2:], os.Stdout, os.Stderr)
 	case "validate":
-		err = runValidate(os.Args[2:], os.Stdout, os.Stderr)
+		err = validateCommand(os.Args[2:], os.Stdout, os.Stderr)
 	case "probe":
-		err = runProbe(os.Args[2:], os.Stdout, os.Stderr)
+		err = probeCommand(os.Args[2:], os.Stdout, os.Stderr)
 	case "version", "--version", "-version":
 		fmt.Println(buildinfo.String())
 		return

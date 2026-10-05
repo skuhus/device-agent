@@ -199,7 +199,7 @@ func (core *Core) Run(ctx context.Context) error {
 		line := &pipeline{
 			device:   dev,
 			frames:   make(chan device.Frame, core.opts.BufferSize),
-			events:   newStatusQueue(core.opts.EventBufferSize),
+			status:   newStatusQueue(core.opts.EventBufferSize),
 			tx:       newWaitingQueue[*txJob](),
 			opened:   make(chan struct{}, 1),
 			txActive: map[string]*txJob{},
@@ -227,7 +227,7 @@ func (core *Core) Run(ctx context.Context) error {
 	intake.Add(1)
 	go func() {
 		defer intake.Done()
-		core.takeTxs(stopIntake, byTxTopic)
+		core.receiveTxs(stopIntake, byTxTopic)
 	}()
 	for _, line := range pipelines {
 		writers.Add(1)
@@ -254,11 +254,11 @@ func (core *Core) Run(ctx context.Context) error {
 		publishers.Add(2)
 		go func(line *pipeline) {
 			defer publishers.Done()
-			core.publish(line)
+			core.publishFrames(line)
 		}(line)
 		go func(line *pipeline) {
 			defer publishers.Done()
-			core.publishEvents(line, drained)
+			core.publishStatusMessages(line, drained)
 		}(line)
 	}
 
@@ -266,11 +266,11 @@ func (core *Core) Run(ctx context.Context) error {
 	keepalives.Add(1)
 	go func() {
 		defer keepalives.Done()
-		core.keepalive(stopKeepalive, pipelines)
+		core.sendKeepalives(stopKeepalive, pipelines)
 	}()
 
 	<-ctx.Done()
-	core.log.Info("shutting down", "buffered", buffered(pipelines), "drain_timeout", core.opts.DrainTimeout.String())
+	core.log.Info("shutting down", "buffered", bufferedFrames(pipelines), "drain_timeout", core.opts.DrainTimeout.String())
 	core.intakeMu.Lock()
 	core.stopping.Store(true)
 	core.intakeMu.Unlock()
@@ -295,7 +295,7 @@ func (core *Core) Run(ctx context.Context) error {
 	defer stopDrain.Stop()
 	for _, line := range pipelines {
 		close(line.frames)
-		line.events.close()
+		line.status.close()
 	}
 	publishers.Wait()
 
@@ -321,7 +321,7 @@ func (core *Core) pastDrainDeadline() bool {
 	return deadline > 0 && core.opts.Now().UnixMilli() > deadline
 }
 
-func buffered(pipelines []*pipeline) int {
+func bufferedFrames(pipelines []*pipeline) int {
 	total := 0
 	for _, line := range pipelines {
 		total += len(line.frames)

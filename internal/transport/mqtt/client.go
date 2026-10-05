@@ -214,7 +214,7 @@ func clientConfig(opts Options, brokerURL *url.URL, tlsCfg *tls.Config, log *slo
 	if opts.OnMessage != nil {
 		cfg.OnPublishReceived = []func(paho.PublishReceived) (bool, error){
 			func(received paho.PublishReceived) (bool, error) {
-				opts.OnMessage(messageOf(received.Packet, time.Now()))
+				opts.OnMessage(messageFromPublish(received.Packet, time.Now()))
 				return true, nil
 			},
 		}
@@ -277,8 +277,8 @@ func subscribe(cm subscriber, topics []string, timeout time.Duration, log *slog.
 	}
 }
 
-// messageOf takes what the agent needs from a received publish.
-func messageOf(packet *paho.Publish, received time.Time) Message {
+// messageFromPublish takes what the agent needs from a received publish.
+func messageFromPublish(packet *paho.Publish, received time.Time) Message {
 	message := Message{Topic: packet.Topic, Payload: packet.Payload, Received: received}
 	if packet.Properties != nil && packet.Properties.MessageExpiry != nil {
 		message.HasExpiry = true

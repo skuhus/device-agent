@@ -25,7 +25,7 @@ import (
 	goserial "go.bug.st/serial"
 )
 
-func runProbe(args []string, stdout, stderr io.Writer) error {
+func probeCommand(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("probe", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() {
@@ -172,7 +172,7 @@ func runProbe(args []string, stdout, stderr io.Writer) error {
 			return nil
 		case frame := <-frames:
 			seq++
-			if err := printRx(stdout, builder.Rx(wireDevice, seq, frame.Raw, frame.At), frame.Raw, *asJSON); err != nil {
+			if err := printReading(stdout, builder.Rx(wireDevice, seq, frame.Raw, frame.At), frame.Raw, *asJSON); err != nil {
 				return err
 			}
 		}
@@ -243,7 +243,7 @@ func (presence *presenceLog) set(present bool, event device.Event) {
 	presence.log.Warn("device absent", "error_class", string(event.ErrorClass), "error", event.ErrorText())
 }
 
-func printRx(w io.Writer, rx wire.Rx, raw []byte, asJSON bool) error {
+func printReading(w io.Writer, rx wire.Rx, raw []byte, asJSON bool) error {
 	if asJSON {
 		enc := json.NewEncoder(w)
 		enc.SetEscapeHTML(false)

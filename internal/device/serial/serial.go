@@ -110,9 +110,9 @@ type Device struct {
 
 	// retry cuts the reopen backoff short, for a tx waiting for the port.
 	retry chan struct{}
-	// mu guards current, the port while a session holds it open.
-	mu      sync.Mutex
-	current *sharedPort
+	// mu guards inSession, the port while a session holds it open.
+	mu        sync.Mutex
+	inSession *sharedPort
 }
 
 var (
@@ -270,7 +270,7 @@ func (dev *Device) session(ctx context.Context, sink chan<- device.Frame, report
 	// acts on: reported first, the tx's write could find no port and spend an
 	// attempt.
 	shared := &sharedPort{port: port, chunkBytes: dev.opts.TxChunkBytes}
-	dev.setCurrent(shared)
+	dev.setPortInSession(shared)
 	report(dev.event(device.PortOpened, nil))
 
 	// Read blocks in select(2) and does not observe ctx. Closing the port is
@@ -282,7 +282,7 @@ func (dev *Device) session(ctx context.Context, sink chan<- device.Frame, report
 	go func() {
 		defer close(closed)
 		<-sessCtx.Done()
-		dev.setCurrent(nil)
+		dev.setPortInSession(nil)
 		if cerr := shared.close(); cerr != nil {
 			dev.log.Debug("device close returned an error", "error", cerr.Error())
 		}
@@ -363,7 +363,7 @@ func (dev *Device) session(ctx context.Context, sink chan<- device.Frame, report
 // ctx's error when ctx ends between chunks; any other failure comes back as a
 // *device.PortError with its class.
 func (dev *Device) Write(ctx context.Context, data []byte, progress func(written int)) (int, error) {
-	shared := dev.getCurrent()
+	shared := dev.portInSession()
 	if shared == nil {
 		return 0, device.ErrNotOpen
 	}
@@ -383,16 +383,19 @@ func (dev *Device) RetryOpen() {
 	}
 }
 
-func (dev *Device) setCurrent(shared *sharedPort) {
+// setPortInSession records the port a session holds open, or nil when the
+// session ends, for writes to go through.
+func (dev *Device) setPortInSession(shared *sharedPort) {
 	dev.mu.Lock()
 	defer dev.mu.Unlock()
-	dev.current = shared
+	dev.inSession = shared
 }
 
-func (dev *Device) getCurrent() *sharedPort {
+// portInSession is the port a session holds open, or nil.
+func (dev *Device) portInSession() *sharedPort {
 	dev.mu.Lock()
 	defer dev.mu.Unlock()
-	return dev.current
+	return dev.inSession
 }
 
 // sharedPort is a port the reader holds open and a writer writes through. The

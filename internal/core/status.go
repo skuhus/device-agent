@@ -33,32 +33,32 @@ func (core *Core) report(line *pipeline, event device.Event) {
 		return
 	}
 	core.log.Debug("port event", eventAttrs(event)...)
-	if dropped, full := line.events.push(statusItem{event: &event}); full {
+	if dropped, full := line.status.push(statusItem{event: &event}); full {
 		core.log.Warn("device event dropped: queue full, the most recent are kept",
 			append(dropped.attrs(), "queue_size", core.opts.EventBufferSize)...)
 	}
 }
 
-// publishEvents sends one device's events, in the order they happened, until
-// its queue is closed and empty. It waits for the broker connection before it
-// takes each event, so that events that happen while the connection is down
-// wait in the queue, which keeps the most recent (#13 Q1). drained ends the
-// wait at shutdown.
-func (core *Core) publishEvents(line *pipeline, drained context.Context) {
-	for line.events.wait() {
+// publishStatusMessages sends one device's status messages, its port events
+// and tx results, in the order they were queued, until the queue is closed
+// and empty. It waits for the broker connection before it takes each one, so
+// that what happens while the connection is down waits in the queue, which
+// keeps the most recent events (#13 Q1). drained ends the wait at shutdown.
+func (core *Core) publishStatusMessages(line *pipeline, drained context.Context) {
+	for line.status.wait() {
 		if err := core.opts.Transport.AwaitConnection(drained); err != nil {
 			reason := "the broker connection was still down when the shutdown drain ended"
 			if drained.Err() == nil {
 				// Only the drain should end the wait; anything else means the
 				// connection manager is gone, and no event can be published.
-				core.log.Error("waiting for the broker connection failed; device events are no longer published",
+				core.log.Error("waiting for the broker connection failed; device events and tx results are no longer published",
 					"device_id", line.device.Wire.ID, "error", err.Error())
 				reason = "waiting for the broker connection failed: " + err.Error()
 			}
-			core.dropEvents(line, reason)
+			core.dropStatusMessages(line, reason)
 			return
 		}
-		item, ok := line.events.pop()
+		item, ok := line.status.pop()
 		switch {
 		case !ok:
 		case item.tx != nil:
@@ -107,11 +107,11 @@ func (core *Core) publishEvent(line *pipeline, event device.Event) {
 	core.log.Info("device event published", append(attrs, "message_expiry_left", remaining.String())...)
 }
 
-// dropEvents empties a device's queue, logging each event with why it was not
-// published.
-func (core *Core) dropEvents(line *pipeline, reason string) {
+// dropStatusMessages empties a device's status queue, logging each event or
+// tx result with why it was not published.
+func (core *Core) dropStatusMessages(line *pipeline, reason string) {
 	for {
-		item, ok := line.events.pop()
+		item, ok := line.status.pop()
 		if !ok {
 			return
 		}
@@ -149,7 +149,7 @@ func (core *Core) buildEvent(line *pipeline, event device.Event) (wire.Event, bo
 func (core *Core) publishTxResult(line *pipeline, item *txResultItem) {
 	result := item.result
 	age := core.opts.Now().Sub(item.at)
-	attrs := []any{"id", result.ID, "device_id", result.DeviceID, "tx_id", deref(result.TxID),
+	attrs := []any{"id", result.ID, "device_id", result.DeviceID, "tx_id", stringOrEmpty(result.TxID),
 		"state", string(result.State), "code", string(result.Code), "age", age.String()}
 	if core.pastDrainDeadline() {
 		core.log.Warn("tx result dropped", append(attrs, "reason", "shutdown drain deadline passed")...)
@@ -176,9 +176,9 @@ func (core *Core) publishTxResult(line *pipeline, item *txResultItem) {
 	core.log.Info("tx result published", append(attrs, "message_expiry_left", remaining.String())...)
 }
 
-// keepalive publishes the agent's keepalive every interval, and at once each
+// sendKeepalives publishes the agent's keepalive every interval, and at once each
 // time the connection comes up, until stop is closed.
-func (core *Core) keepalive(stop <-chan struct{}, pipelines []*pipeline) {
+func (core *Core) sendKeepalives(stop <-chan struct{}, pipelines []*pipeline) {
 	ticker := time.NewTicker(core.opts.KeepaliveInterval)
 	defer ticker.Stop()
 	for {
@@ -198,7 +198,7 @@ func (core *Core) keepalive(stop <-chan struct{}, pipelines []*pipeline) {
 func (core *Core) publishKeepalive(pipelines []*pipeline, trigger string) {
 	states := make([]wire.DeviceState, 0, len(pipelines))
 	for _, line := range pipelines {
-		states = append(states, line.state())
+		states = append(states, line.keepaliveState())
 	}
 	message := core.opts.Builder.Keepalive(core.opts.Started, core.opts.Now(), core.opts.KeepaliveInterval,
 		core.opts.MissedKeepalives, states)
@@ -254,7 +254,7 @@ type txResultItem struct {
 func (item statusItem) attrs() []any {
 	if item.tx != nil {
 		result := item.tx.result
-		return []any{"device_id", result.DeviceID, "tx_id", deref(result.TxID), "state", string(result.State),
+		return []any{"device_id", result.DeviceID, "tx_id", stringOrEmpty(result.TxID), "state", string(result.State),
 			"code", string(result.Code), "at", item.tx.at.UTC().Format(wire.TimeFormat)}
 	}
 	return eventAttrs(*item.event)

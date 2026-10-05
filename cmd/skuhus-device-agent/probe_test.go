@@ -14,7 +14,7 @@ import (
 func probe(t *testing.T, args ...string) (stdout, stderr string, err error) {
 	t.Helper()
 	var out, errOut bytes.Buffer
-	err = runProbe(args, &out, &errOut)
+	err = probeCommand(args, &out, &errOut)
 	return out.String(), errOut.String(), err
 }
 

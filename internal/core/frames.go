@@ -19,14 +19,14 @@ const (
 	outcomeDropped = "dropped"
 )
 
-// publish drains one device's frames until its channel is closed. It is the
+// publishFrames drains one device's frames until its channel is closed. It is the
 // device's only publisher, so its sequence numbers are in reading order.
 //
 // During the shutdown drain each frame still gets its full publish timeout,
 // but the drain as a whole stops at the deadline Run sets. Without it, a full
 // buffer against an unresponsive broker would hold the process open for
 // buffer_size times publish_timeout.
-func (core *Core) publish(line *pipeline) {
+func (core *Core) publishFrames(line *pipeline) {
 	var dropped int
 	for frame := range line.frames {
 		line.seq++

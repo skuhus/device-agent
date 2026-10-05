@@ -20,7 +20,7 @@ import (
 	"github.com/skuhus/device-agent/internal/wire"
 )
 
-func runRun(args []string, stdout, stderr io.Writer) error {
+func runCommand(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() {

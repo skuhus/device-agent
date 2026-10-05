@@ -110,22 +110,22 @@ func (ids *writtenIDs) lookup(id string) (time.Time, bool) {
 	return at, known
 }
 
-// takeTxs gives each tx to its device until stop is closed, and then takes
+// receiveTxs gives each tx to its device until stop is closed, and then takes
 // what is already waiting. While the agent stops, each still gets a result:
 // agent_stopping.
-func (core *Core) takeTxs(stop <-chan struct{}, byTopic map[string]*pipeline) {
+func (core *Core) receiveTxs(stop <-chan struct{}, byTopic map[string]*pipeline) {
 	if core.opts.TxIn == nil {
 		return
 	}
 	for {
 		select {
 		case message := <-core.opts.TxIn:
-			core.intake(byTopic, message)
+			core.admitTx(byTopic, message)
 		case <-stop:
 			for {
 				select {
 				case message := <-core.opts.TxIn:
-					core.intake(byTopic, message)
+					core.admitTx(byTopic, message)
 				default:
 					return
 				}
@@ -154,10 +154,10 @@ func (core *Core) recordUntaken() {
 	}
 }
 
-// intake reads one tx, and either fails it, rejects it because a tx with its
+// admitTx reads one tx, and either fails it, rejects it because a tx with its
 // id is still in hand, or queues it for the device's writer. Each gets its
 // result at once; a queued one gets accepted, and later written or failed.
-func (core *Core) intake(byTopic map[string]*pipeline, message TxMessage) {
+func (core *Core) admitTx(byTopic map[string]*pipeline, message TxMessage) {
 	line, ok := byTopic[message.Topic]
 	if !ok {
 		core.log.Error("tx on a topic that is no device's; not written", "topic", message.Topic, "bytes", len(message.Payload))
@@ -173,7 +173,7 @@ func (core *Core) intake(byTopic map[string]*pipeline, message TxMessage) {
 		} else {
 			result = core.opts.Builder.TxInvalidMessage(dev, line.isOpen(), ref, problem.Text, now)
 		}
-		core.txResult(line, result, now, append([]any{"error", problem.Text}, logging.Payload(message.Payload)...))
+		core.recordTxResult(line, result, now, append([]any{"error", problem.Text}, logging.Payload(message.Payload)...))
 		return
 	}
 
@@ -182,20 +182,20 @@ func (core *Core) intake(byTopic map[string]*pipeline, message TxMessage) {
 		line.txMu.Unlock()
 		stage, since, written := earlier.standing()
 		result := core.opts.Builder.TxInProgress(dev, line.isOpen(), ref, stage, since, written, now)
-		core.txResult(line, result, now, nil)
+		core.recordTxResult(line, result, now, nil)
 		return
 	}
 	if writtenAt, known := line.written.lookup(ref.ID); known {
 		line.txMu.Unlock()
 		result := core.opts.Builder.TxAlreadyWritten(dev, line.isOpen(), ref, writtenAt, now)
-		core.txResult(line, result, now, append([]any{"written_at", writtenAt.UTC().Format(wire.TimeFormat)}, logging.Payload(data)...))
+		core.recordTxResult(line, result, now, append([]any{"written_at", writtenAt.UTC().Format(wire.TimeFormat)}, logging.Payload(data)...))
 		return
 	}
 	core.intakeMu.Lock()
 	if core.stopping.Load() {
 		core.intakeMu.Unlock()
 		line.txMu.Unlock()
-		core.txResult(line, core.opts.Builder.TxAgentStopping(dev, line.isOpen(), ref, 0, now), now,
+		core.recordTxResult(line, core.opts.Builder.TxAgentStopping(dev, line.isOpen(), ref, 0, now), now,
 			append([]any{"bytes_written", 0}, logging.Payload(data)...))
 		return
 	}
@@ -212,8 +212,8 @@ func (core *Core) intake(byTopic map[string]*pipeline, message TxMessage) {
 	}
 	// accepted is queued before the writer can see the job, so that it goes
 	// out before the job's written or failed.
-	core.txResult(line, core.opts.Builder.TxAccepted(dev, line.isOpen(), ref, now), now,
-		append([]any{"bytes", len(data), "message_expiry", expiry}, core.payloadIf(data)...))
+	core.recordTxResult(line, core.opts.Builder.TxAccepted(dev, line.isOpen(), ref, now), now,
+		append([]any{"bytes", len(data), "message_expiry", expiry}, core.payloadIfLogged(data)...))
 	line.tx.push(job)
 	core.intakeMu.Unlock()
 }
@@ -249,17 +249,17 @@ func (core *Core) writeTx(line *pipeline, job *txJob) (time.Time, bool) {
 	for {
 		now := core.opts.Now()
 		if core.stopping.Load() {
-			core.txResult(line, core.opts.Builder.TxAgentStopping(dev, line.isOpen(), job.ref, 0, now), now,
+			core.recordTxResult(line, core.opts.Builder.TxAgentStopping(dev, line.isOpen(), job.ref, 0, now), now,
 				append([]any{"bytes_written", 0, "open_attempts", attempts}, logging.Payload(job.data)...))
 			return time.Time{}, false
 		}
 		if job.expired(now) {
-			core.txResult(line, core.opts.Builder.TxExpired(dev, line.isOpen(), job.ref, attempts, now), now,
+			core.recordTxResult(line, core.opts.Builder.TxExpired(dev, line.isOpen(), job.ref, attempts, now), now,
 				append([]any{"open_attempts", attempts}, logging.Payload(job.data)...))
 			return time.Time{}, false
 		}
 		if !writable {
-			core.txResult(line, core.opts.Builder.TxPortUnavailable(dev, line.isOpen(), job.ref, wire.ErrorUnknown,
+			core.recordTxResult(line, core.opts.Builder.TxPortUnavailable(dev, line.isOpen(), job.ref, wire.ErrorUnknown,
 				"this device cannot be written", attempts, now), now, logging.Payload(job.data))
 			return time.Time{}, false
 		}
@@ -268,16 +268,16 @@ func (core *Core) writeTx(line *pipeline, job *txJob) (time.Time, bool) {
 		written, err := writer.Write(core.writeCtx, job.data, job.progress)
 		now = core.opts.Now()
 		if err == nil {
-			core.txResult(line, core.opts.Builder.TxWritten(dev, line.isOpen(), job.ref, written, attempts, now), now,
+			core.recordTxResult(line, core.opts.Builder.TxWritten(dev, line.isOpen(), job.ref, written, attempts, now), now,
 				append([]any{"bytes_written", written, "open_attempts", attempts, "took", now.Sub(started).String()},
-					core.payloadIf(job.data)...))
+					core.payloadIfLogged(job.data)...))
 			return now, true
 		}
 		if errors.Is(err, device.ErrNotOpen) && written == 0 {
 			job.setStage(wire.TxQueued, now)
 			if attempts >= line.device.TxOpenAttempts {
 				class, failure := line.lastFailure()
-				core.txResult(line, core.opts.Builder.TxPortUnavailable(dev, line.isOpen(), job.ref, class, failure, attempts, now),
+				core.recordTxResult(line, core.opts.Builder.TxPortUnavailable(dev, line.isOpen(), job.ref, class, failure, attempts, now),
 					now, append([]any{"open_attempts", attempts}, logging.Payload(job.data)...))
 				return time.Time{}, false
 			}
@@ -286,17 +286,17 @@ func (core *Core) writeTx(line *pipeline, job *txJob) (time.Time, bool) {
 			continue
 		}
 		if core.writeCtx.Err() != nil && errors.Is(err, core.writeCtx.Err()) {
-			core.txResult(line, core.opts.Builder.TxAgentStopping(dev, line.isOpen(), job.ref, written, now), now,
+			core.recordTxResult(line, core.opts.Builder.TxAgentStopping(dev, line.isOpen(), job.ref, written, now), now,
 				append([]any{"bytes_written", written, "open_attempts", attempts}, logging.Payload(job.data)...))
 			return time.Time{}, false
 		}
-		class, failure := classOf(err)
+		class, failure := writeFailureClass(err)
 		if errors.Is(err, device.ErrNotOpen) {
 			// The reader closed the port under the write: it was lost, and
 			// the loss's class is the reason.
 			class, failure = line.lastFailure()
 		}
-		core.txResult(line, core.opts.Builder.TxWriteFailed(dev, line.isOpen(), job.ref, class, failure, written, attempts, now),
+		core.recordTxResult(line, core.opts.Builder.TxWriteFailed(dev, line.isOpen(), job.ref, class, failure, written, attempts, now),
 			now, append([]any{"bytes_written", written, "open_attempts", attempts}, logging.Payload(job.data)...))
 		return time.Time{}, false
 	}
@@ -324,10 +324,10 @@ func (core *Core) awaitPort(line *pipeline, writer device.Writer, job *txJob) {
 	}
 }
 
-// txResult counts a result, records it in the log, and queues it for the
+// recordTxResult counts a result, records it in the log, and queues it for the
 // device's status topic, where it waits for the connection as the device's
 // events do.
-func (core *Core) txResult(line *pipeline, result wire.TxResult, at time.Time, extra []any) {
+func (core *Core) recordTxResult(line *pipeline, result wire.TxResult, at time.Time, extra []any) {
 	outcome, level, message := txOutcomeAccepted, slog.LevelInfo, "tx accepted"
 	switch {
 	case result.Code == wire.TxCodeAlreadyWritten:
@@ -342,23 +342,24 @@ func (core *Core) txResult(line *pipeline, result wire.TxResult, at time.Time, e
 	case result.State == wire.TxRejected:
 		outcome, level, message = txOutcomeRejected, slog.LevelWarn, "tx rejected"
 	}
-	attrs := []any{"tx_id", deref(result.TxID), "sender", deref(result.Sender), "device_id", result.DeviceID,
+	attrs := []any{"tx_id", stringOrEmpty(result.TxID), "sender", stringOrEmpty(result.Sender), "device_id", result.DeviceID,
 		"code", string(result.Code), "text", result.Text, "outcome", outcome}
 	logging.Record(core.log, level, message, append(attrs, extra...)...)
-	line.events.push(statusItem{tx: &txResultItem{result: result, at: at}})
+	line.status.push(statusItem{tx: &txResultItem{result: result, at: at}})
 }
 
-// payloadIf is a tx's data for a log record that carries it only with
+// payloadIfLogged is a tx's data for a log record that carries it only with
 // log_payloads: an accepted or a written tx. A failed one always carries it.
-func (core *Core) payloadIf(data []byte) []any {
+func (core *Core) payloadIfLogged(data []byte) []any {
 	if !core.opts.LogPayloads {
 		return nil
 	}
 	return logging.Payload(data)
 }
 
-// classOf is a write error's class, as the reader classes the same failure.
-func classOf(err error) (wire.ErrorClass, string) {
+// writeFailureClass is a write error's class and message, the class as the
+// reader gives the same failure.
+func writeFailureClass(err error) (wire.ErrorClass, string) {
 	var portErr *device.PortError
 	if errors.As(err, &portErr) {
 		return portErr.Class, err.Error()
@@ -366,7 +367,7 @@ func classOf(err error) (wire.ErrorClass, string) {
 	return wire.ErrorUnknown, err.Error()
 }
 
-func deref(value *string) string {
+func stringOrEmpty(value *string) string {
 	if value == nil {
 		return ""
 	}

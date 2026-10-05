@@ -612,8 +612,8 @@ func (builder *Builder) txResult(device Device, deviceOpen bool, tx TxRef, code 
 		deviceHeader:   deviceHeaderOf(device),
 		DeviceOpen:     deviceOpen,
 		MessageExpiryS: messageExpirySeconds(device.Expiry),
-		TxID:           nullable(tx.ID),
-		Sender:         nullable(tx.Sender),
+		TxID:           nilIfEmpty(tx.ID),
+		Sender:         nilIfEmpty(tx.Sender),
 		State:          txCodeStates[code],
 		Code:           code,
 		Text:           text,
@@ -677,10 +677,10 @@ func (builder *Builder) header(kind string, at time.Time) header {
 }
 
 func deviceHeaderOf(device Device) deviceHeader {
-	return deviceHeader{DeviceID: device.ID, DeviceType: nullable(device.Type)}
+	return deviceHeader{DeviceID: device.ID, DeviceType: nilIfEmpty(device.Type)}
 }
 
-func nullable(value string) *string {
+func nilIfEmpty(value string) *string {
 	if value == "" {
 		return nil
 	}

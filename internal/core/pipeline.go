@@ -12,7 +12,7 @@ import (
 type pipeline struct {
 	device Device
 	frames chan device.Frame
-	events *statusQueue
+	status *statusQueue
 	// tx holds the device's tx in the order they arrived, for its one writer.
 	// It is not bounded: every tx carries a message expiry, and one that
 	// waited past it is failed rather than written.
@@ -105,8 +105,8 @@ func (line *pipeline) countPublishFailure() {
 	line.counters.PublishFailures++
 }
 
-// state is the device as the keepalive reports it now.
-func (line *pipeline) state() wire.DeviceState {
+// keepaliveState is the device as the keepalive reports it now.
+func (line *pipeline) keepaliveState() wire.DeviceState {
 	line.mu.Lock()
 	defer line.mu.Unlock()
 	counters := line.counters

@@ -261,12 +261,12 @@ func TestConnectionLinesReportEachTransition(t *testing.T) {
 func TestMessagesCarryTheirExpiry(t *testing.T) {
 	received := time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
 	seconds := uint32(27)
-	with := messageOf(&paho.Publish{Topic: "skuhus/acme/vasby/pack-03/printer-1/tx", Payload: []byte("{}"),
+	with := messageFromPublish(&paho.Publish{Topic: "skuhus/acme/vasby/pack-03/printer-1/tx", Payload: []byte("{}"),
 		Properties: &paho.PublishProperties{MessageExpiry: &seconds}}, received)
 	if !with.HasExpiry || with.Expiry != 27*time.Second || with.Received != received || with.Topic != "skuhus/acme/vasby/pack-03/printer-1/tx" {
 		t.Errorf("message = %+v, want a 27 s expiry from %s", with, received)
 	}
-	without := messageOf(&paho.Publish{Topic: "t", Payload: []byte("{}")}, received)
+	without := messageFromPublish(&paho.Publish{Topic: "t", Payload: []byte("{}")}, received)
 	if without.HasExpiry || without.Expiry != 0 {
 		t.Errorf("message without an expiry = %+v", without)
 	}
