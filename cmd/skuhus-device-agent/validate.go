@@ -4,6 +4,9 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"reflect"
+	"strconv"
+	"strings"
 
 	"github.com/skuhus/device-agent/internal/config"
 	"github.com/skuhus/device-agent/internal/wire"
@@ -76,45 +79,61 @@ func runValidate(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
+	// Each section is printed under the names the file uses, every key, so
+	// that what validate shows can be compared with the file key by key.
+	broker := cfg.Broker
+	broker.URL = broker.RedactedURL()
 	fmt.Fprintf(stdout, "configuration is valid\n")
-	fmt.Fprintf(stdout, "  station        %s/%s/%s\n", cfg.Identity.Project, cfg.Identity.Site, cfg.Identity.Station)
-	fmt.Fprintf(stdout, "  instance       %s (MQTT client id)\n", cfg.Identity.Instance)
+	fmt.Fprintf(stdout, "  identity       %s\n", describeSettings(cfg.Identity))
 	fmt.Fprintf(stdout, "  agent status   %s\n", agentTopics.Status())
-	fmt.Fprintf(stdout, "  broker         %s keepalive=%s connect_timeout=%s reconnect_interval=%s reconnect_backoff=%s\n",
-		cfg.Broker.RedactedURL(), cfg.Broker.Keepalive, cfg.Broker.ConnectTimeout,
-		cfg.Broker.ReconnectInterval, describeBackoff(cfg.Broker.ReconnectBackoff))
+	fmt.Fprintf(stdout, "  broker         %s\n", describeSettings(broker))
 	fmt.Fprintf(stdout, "  devices        %d\n", len(cfg.Devices))
 	for _, deviceCfg := range cfg.Devices {
-		fmt.Fprintf(stdout, "    %-16s %s kind=%s baud=%d format=%d/%s/%s separator=%q max_frame=%d inter_char=%s message_expiry=%s device_type=%q tx_open_attempts=%d tx_open_interval=%s tx_chunk_bytes=%d tx_remembered_ids=%d reopen_interval=%s reopen_backoff=%s\n",
-			deviceCfg.ID, deviceCfg.Path, deviceCfg.Kind, deviceCfg.Baud,
-			deviceCfg.DataBits, deviceCfg.Parity, deviceCfg.StopBits, deviceCfg.Separator,
-			deviceCfg.MaxFrameBytes, deviceCfg.InterCharTimeout, deviceCfg.MessageExpiry, deviceCfg.DeviceType,
-			deviceCfg.TxOpenAttempts, deviceCfg.TxOpenInterval, deviceCfg.TxChunkBytes, deviceCfg.TxRememberedIDs,
-			deviceCfg.ReopenInterval, describeBackoff(deviceCfg.ReopenBackoff))
+		fmt.Fprintf(stdout, "    %s\n", describeSettings(deviceCfg))
 		topics, err := stationTopics.Device(deviceCfg.ID)
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(stdout, "    %-16s rx %s status %s tx %s\n", "", topics.Rx(), topics.Status(), topics.Tx())
+		fmt.Fprintf(stdout, "      topics rx %s status %s tx %s\n", topics.Rx(), topics.Status(), topics.Tx())
 	}
-	fmt.Fprintf(stdout, "  delivery       publish_timeout=%s buffer_size=%d drain_timeout=%s tx_intake_size=%d\n",
-		cfg.Delivery.PublishTimeout, cfg.Delivery.BufferSize, cfg.Delivery.DrainTimeout, cfg.Delivery.TxIntakeSize)
-	fmt.Fprintf(stdout, "  status         keepalive_interval=%s missed_keepalives=%d event_buffer_size=%d\n",
-		cfg.Status.KeepaliveInterval, cfg.Status.MissedKeepalives, cfg.Status.EventBufferSize)
-	fmt.Fprintf(stdout, "  logging        level=%s log_payloads=%t file=%q max=%dMB keep=%d stdout=%t\n",
-		cfg.Logging.Level, cfg.Logging.LogPayloads, cfg.Logging.File,
-		cfg.Logging.MaxSizeMB, cfg.Logging.Keep, cfg.Logging.Stdout)
+	fmt.Fprintf(stdout, "  delivery       %s\n", describeSettings(cfg.Delivery))
+	fmt.Fprintf(stdout, "  status         %s\n", describeSettings(cfg.Status))
+	fmt.Fprintf(stdout, "  logging        %s\n", describeSettings(cfg.Logging))
 	if len(warnings) > 0 {
 		fmt.Fprintf(stdout, "  warnings       %d (listed on stderr)\n", len(warnings))
 	}
 	return nil
 }
 
-// describeBackoff is a backoff as validate prints it: "off", or its ceiling
-// and jitter, which apply only when it is on.
-func describeBackoff(settings config.Backoff) string {
-	if !settings.Enabled {
-		return "off"
+// describeSettings is a section of the configuration, or a device entry, as
+// key=value for every key it has, named by its yaml tag. A nested mapping is
+// written as the file would write it, {enabled: true, max: 30s}.
+func describeSettings(section any) string {
+	return strings.Join(settingPairs(reflect.ValueOf(section), "="), " ")
+}
+
+func settingPairs(section reflect.Value, separator string) []string {
+	pairs := make([]string, 0, section.NumField())
+	for index := 0; index < section.NumField(); index++ {
+		name, _, _ := strings.Cut(section.Type().Field(index).Tag.Get("yaml"), ",")
+		if name == "" || name == "-" {
+			continue
+		}
+		pairs = append(pairs, name+separator+settingValue(section.Field(index)))
 	}
-	return fmt.Sprintf("max=%s jitter=%v", settings.Max, settings.Jitter)
+	return pairs
+}
+
+func settingValue(value reflect.Value) string {
+	if duration, isDuration := value.Interface().(config.Duration); isDuration {
+		return duration.Duration().String()
+	}
+	switch value.Kind() {
+	case reflect.String:
+		return strconv.Quote(value.String())
+	case reflect.Struct:
+		return "{" + strings.Join(settingPairs(value, ": "), ", ") + "}"
+	default:
+		return fmt.Sprint(value.Interface())
+	}
 }
