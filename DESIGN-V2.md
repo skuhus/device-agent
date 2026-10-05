@@ -66,6 +66,11 @@ so the merge of T13's pull request releases 2.0.0.
 2026-10-04 ("we need both rx and tx in the release now"). This replaces the
 decision of 2026-09-29 that 2.0.0 releases reading and 2.1.0 writing.
 
+`[Decided]` A release's notes start with a link to README.md, "Upgrading", at
+the release's tag, above the notes GitHub generates; that section says what a
+station and a consumer change for each release. Source: maintainer, 2026-10-05
+(#18 Q1). For 2.0.0 it lists what changed from 0.3.0.
+
 ## Naming
 
 `[Decided]` The repository is skuhus/device-agent, renamed on 2026-09-29. The Go

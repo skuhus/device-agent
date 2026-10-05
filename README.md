@@ -345,6 +345,47 @@ Every problem is reported in one pass, so a misconfigured station is fixed
 without a restart per typo. Warnings are printed on stderr and do not affect the
 exit code.
 
+## Upgrading
+
+What a station or a consumer has to change for a release is listed here, and
+each release's notes link to this section.
+
+### From 0.3.0 to 2.0.0
+
+0.3.0 was skuhus-device-serial-scanner, and 2.0.0 does not run its setup
+unchanged.
+
+On a station:
+- The binary is `skuhus-device-agent`, its configuration
+  `/etc/skuhus-device-agent/config.yaml` (`/usr/local/etc/skuhus-device-agent/`
+  on macOS), its log directory `/var/log/skuhus-device-agent`, and its image
+  `ghcr.io/skuhus/skuhus-device-agent`, running as `skuhus-device-agent`, uid
+  65532 as before. 0.3.0 used `skuhus-device-serial-scanner` for each.
+- Environment variables start with `SH_DEV_AGENT_` instead of
+  `SH_DEV_SER_SCANNER_`. A variable with the old prefix is refused, with the
+  name that replaces it.
+- The configuration file changed. Start from `config.sample.yaml`; `validate`
+  names each key 0.3.0 had and 2.0.0 does not, with what replaces it:
+
+| 0.3.0 | 2.0.0 |
+|---|---|
+| `devices[].terminator` | `devices[].separator` |
+| `devices[].assert_config` | none: the agent does not configure devices |
+| `delivery.scan_ttl` | `devices[].message_expiry`, per device |
+| `broker.connect_backoff` | `broker.reconnect_interval`, and `broker.reconnect_backoff` to make the wait grow |
+| `logging.audit_file`, `audit_max_size_mb`, `audit_keep` | `logging.file`, `max_size_mb`, `keep`: one log for everything |
+
+For the services that consume the messages:
+- 0.3.0 published on `skuhus/<project>/<site>/<station>/scan`, `/status` and
+  `/heartbeat`. 2.0.0 publishes on each device's own topics and on the agent's
+  status topic, as "Topics and messages" lists: a reading is `rx`, on
+  `<device>/rx`.
+- Messages are `schema` 2, where 0.3.0's were 1, and nothing is retained: 0.3.0
+  retained its status and its will. A consumer learns that an agent is there
+  from its keepalives, and that it is gone after `gone_after_s` without one.
+- 2.0.0 writes to devices: a sender publishes a tx on `<device>/tx` ("Writing
+  to a device").
+
 ## Container
 
 ```
