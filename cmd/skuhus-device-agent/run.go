@@ -96,44 +96,12 @@ func runRun(args []string, stdout, stderr io.Writer) error {
 func runAgent(ctx context.Context, cfg *config.Config, warnings []config.Warning, stdout io.Writer) (err error) {
 	started := time.Now()
 
-	// The log file is opened first and closed last, so that it holds every
-	// record, the last one included. Its failure to close can only be reported
-	// on stderr.
-	var file *logging.File
-	if cfg.Logging.File != "" {
-		opened, err := logging.OpenFile(cfg.Logging.File, cfg.Logging.MaxSizeMB, cfg.Logging.Keep)
-		if err != nil {
-			return err
-		}
-		file = opened
-		defer func() {
-			if err := file.Close(); err != nil {
-				fmt.Fprintf(os.Stderr, "log file close failed: %v\n", err)
-			}
-		}()
-	}
-	logOpts := logging.Options{
-		Level:        cfg.Logging.Level,
-		Project:      cfg.Identity.Project,
-		Site:         cfg.Identity.Site,
-		Station:      cfg.Identity.Station,
-		Host:         hostname(),
-		Instance:     cfg.Identity.Instance,
-		AgentVersion: buildinfo.Version(),
-	}
-	// Assigned only when set: a nil *logging.File in the interface would not
-	// compare equal to nil, and the log would write to it.
-	if file != nil {
-		logOpts.File = file
-	}
-	if cfg.Logging.Stdout {
-		logOpts.Out = stdout
-	}
-	log, err := logging.New(logOpts)
+	log, closeLog, err := openLog(cfg, stdout)
 	if err != nil {
 		return err
 	}
-	// Registered after the file's close, so it runs before it.
+	defer closeLog()
+	// Registered after closeLog, so it runs before it.
 	defer func() {
 		if err != nil {
 			log.Error("agent stopped on an error", "error", err.Error())
@@ -168,26 +136,9 @@ func runAgent(ctx context.Context, cfg *config.Config, warnings []config.Warning
 		AgentVersion: buildinfo.Version(),
 	}, nil)
 
-	devices := make([]core.Device, 0, len(cfg.Devices))
-	txTopics := make([]string, 0, len(cfg.Devices))
-	for _, deviceCfg := range cfg.Devices {
-		topics, err := station.Device(deviceCfg.ID)
-		if err != nil {
-			return err
-		}
-		reader, err := newSerialReader(deviceCfg, cfg.Logging.LogPayloads, log)
-		if err != nil {
-			return err
-		}
-		devices = append(devices, core.Device{
-			Reader:          reader,
-			Wire:            wire.Device{ID: deviceCfg.ID, Type: deviceCfg.DeviceType, Expiry: deviceCfg.MessageExpiry.Duration()},
-			Topics:          topics,
-			TxOpenAttempts:  deviceCfg.TxOpenAttempts,
-			TxOpenInterval:  deviceCfg.TxOpenInterval.Duration(),
-			TxRememberedIDs: deviceCfg.TxRememberedIDs,
-		})
-		txTopics = append(txTopics, topics.Tx())
+	devices, txTopics, err := buildDevices(cfg, station, log)
+	if err != nil {
+		return err
 	}
 	log.Info("topics", "agent_status", agentTopics.Status(), "every_device_rx", station.EveryDeviceRx(),
 		"every_device_status", station.EveryDeviceStatus(),
@@ -268,6 +219,74 @@ func runAgent(ctx context.Context, cfg *config.Config, warnings []config.Warning
 		return err
 	}
 	return running.Run(ctx)
+}
+
+// openLog opens the one log: the file, when one is configured, and stdout,
+// when it is on. The file is opened first and closed last, by closeLog, so
+// that it holds every record, the last one included; its failure to close can
+// only be reported on stderr.
+func openLog(cfg *config.Config, stdout io.Writer) (log *slog.Logger, closeLog func(), err error) {
+	logOpts := logging.Options{
+		Level:        cfg.Logging.Level,
+		Project:      cfg.Identity.Project,
+		Site:         cfg.Identity.Site,
+		Station:      cfg.Identity.Station,
+		Host:         hostname(),
+		Instance:     cfg.Identity.Instance,
+		AgentVersion: buildinfo.Version(),
+	}
+	closeLog = func() {}
+	if cfg.Logging.File != "" {
+		file, err := logging.OpenFile(cfg.Logging.File, cfg.Logging.MaxSizeMB, cfg.Logging.Keep)
+		if err != nil {
+			return nil, nil, err
+		}
+		// Assigned only when set: a nil *logging.File in the interface would
+		// not compare equal to nil, and the log would write to it.
+		logOpts.File = file
+		closeLog = func() {
+			if err := file.Close(); err != nil {
+				fmt.Fprintf(os.Stderr, "log file close failed: %v\n", err)
+			}
+		}
+	}
+	if cfg.Logging.Stdout {
+		logOpts.Out = stdout
+	}
+	log, err = logging.New(logOpts)
+	if err != nil {
+		closeLog()
+		return nil, nil, err
+	}
+	return log, closeLog, nil
+}
+
+// buildDevices builds each configured device as the core runs it, with its
+// reader and topics, and lists the devices' tx topics, which the connection
+// subscribes to.
+func buildDevices(cfg *config.Config, station wire.StationTopics, log *slog.Logger) ([]core.Device, []string, error) {
+	devices := make([]core.Device, 0, len(cfg.Devices))
+	txTopics := make([]string, 0, len(cfg.Devices))
+	for _, deviceCfg := range cfg.Devices {
+		topics, err := station.Device(deviceCfg.ID)
+		if err != nil {
+			return nil, nil, err
+		}
+		reader, err := newSerialReader(deviceCfg, cfg.Logging.LogPayloads, log)
+		if err != nil {
+			return nil, nil, err
+		}
+		devices = append(devices, core.Device{
+			Reader:          reader,
+			Wire:            wire.Device{ID: deviceCfg.ID, Type: deviceCfg.DeviceType, Expiry: deviceCfg.MessageExpiry.Duration()},
+			Topics:          topics,
+			TxOpenAttempts:  deviceCfg.TxOpenAttempts,
+			TxOpenInterval:  deviceCfg.TxOpenInterval.Duration(),
+			TxRememberedIDs: deviceCfg.TxRememberedIDs,
+		})
+		txTopics = append(txTopics, topics.Tx())
+	}
+	return devices, txTopics, nil
 }
 
 // newTxIntake returns the channel that carries each tx from paho's goroutine
