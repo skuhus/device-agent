@@ -313,14 +313,20 @@ func (fake *fakeSubscriber) Subscribe(ctx context.Context, packet *paho.Subscrib
 	return fake.answer, fake.err
 }
 
+// errSubscriptionRefused is what paho returns, with the SUBACK, when the broker
+// refused one of several topics (paho/client.go, Subscribe, in paho.golang
+// v0.23.0).
+var errSubscriptionRefused = errors.New("at least one requested subscription failed")
+
 // Every tx topic is asked for at QoS 1 within the connect timeout. What the
 // broker grants is INFO; a refused topic, or no answer at all, is an ERROR,
 // because no tx arrives on it. Each answer is returned under the topic as it
-// went into the packet, refusals included.
+// went into the packet, refusals included. A refusal comes as paho gives it:
+// the SUBACK with an error.
 func TestSubscribeAsksForEachTopicAndLogsTheAnswer(t *testing.T) {
 	topics := []string{"skuhus/acme/vasby/pack-03/printer-1/tx", "skuhus/acme/vasby/group/printers/tx"}
 	logger, log := logtest.New(t, "debug")
-	broker := &fakeSubscriber{answer: &paho.Suback{Reasons: []byte{1, 0x87}}}
+	broker := &fakeSubscriber{answer: &paho.Suback{Reasons: []byte{1, 0x87}}, err: errSubscriptionRefused}
 	answered := subscribe(broker, topics, 7*time.Second, logger)
 	if want := map[string]byte{topics[0]: 1, topics[1]: 0x87}; !maps.Equal(answered, want) {
 		t.Errorf("answers = %v, want %v", answered, want)
@@ -344,6 +350,9 @@ func TestSubscribeAsksForEachTopicAndLogsTheAnswer(t *testing.T) {
 	refused := log.WithMessage(t, "subscription refused; no tx will arrive on this topic")
 	if len(refused) != 1 || refused[0]["topic"] != topics[1] || refused[0]["reason"] != "0x87" || refused[0]["level"] != "ERROR" {
 		t.Errorf("refused records = %v, want one ERROR for %s with reason 0x87", refused, topics[1])
+	}
+	if failed := log.WithMessage(t, "subscribing failed; no tx will arrive until the next connection"); len(failed) != 0 {
+		t.Errorf("a SUBACK with a refusal was logged as a failure to subscribe: %v", failed)
 	}
 
 	failingLogger, failingLog := logtest.New(t, "debug")

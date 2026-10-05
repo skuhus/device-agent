@@ -271,6 +271,11 @@ func connectionUp(manager subscriber, opts Options, answers *subscribeAnswers, c
 // topic is an ERROR: no tx arrives on it, the usual cause, the station's topic
 // permission, is the operator's to fix, and RabbitMQ 4.3.5 then closes the
 // connection (DESIGN-V2.md, "Broadcast groups").
+//
+// paho returns the SUBACK together with an error when the broker refused any
+// topic (paho/client.go, Subscribe, in paho.golang v0.23.0), so an error with
+// a SUBACK is an answer, and only an error without one is a failure to
+// subscribe.
 func subscribe(manager subscriber, topics []string, timeout time.Duration, log *slog.Logger) map[string]byte {
 	subscriptions := make([]paho.SubscribeOptions, 0, len(topics))
 	for _, topic := range topics {
@@ -279,7 +284,7 @@ func subscribe(manager subscriber, topics []string, timeout time.Duration, log *
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	suback, err := manager.Subscribe(ctx, &paho.Subscribe{Subscriptions: subscriptions})
-	if err != nil {
+	if err != nil && suback == nil {
 		log.Error("subscribing failed; no tx will arrive until the next connection", "topics", topics,
 			"timeout", timeout.String(), "error", err.Error())
 		return nil
