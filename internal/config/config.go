@@ -38,6 +38,9 @@ type Config struct {
 	Delivery Delivery `yaml:"delivery"`
 	Status   Status   `yaml:"status"`
 	Logging  Logging  `yaml:"logging"`
+
+	// File is the configuration file Load read. It is not a key.
+	File string `yaml:"-"`
 }
 
 // Identity is the station identity. It comes from configuration only; the

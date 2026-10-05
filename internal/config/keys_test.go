@@ -146,6 +146,8 @@ func TestSampleConfigShowsTheDefaults(t *testing.T) {
 	expected.Identity = cfg.Identity
 	expected.Broker.URL, expected.Broker.CredentialsFile = cfg.Broker.URL, cfg.Broker.CredentialsFile
 	expected.Logging.File = cfg.Logging.File
+	// File is where the configuration came from, not a key.
+	expected.File = cfg.File
 	for _, deviceCfg := range cfg.Devices {
 		device := DefaultDevice()
 		device.ID, device.Path, device.Separator, device.DeviceType = deviceCfg.ID, deviceCfg.Path, deviceCfg.Separator, deviceCfg.DeviceType
