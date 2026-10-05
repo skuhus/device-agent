@@ -1,4 +1,4 @@
-module github.com/skuhus/device-serial-scanner
+module github.com/skuhus/device-agent
 
 go 1.25.0
 

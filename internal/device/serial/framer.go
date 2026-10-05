@@ -4,33 +4,19 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-)
 
-// DiscardReason says why a run of bytes was thrown away.
-type DiscardReason string
-
-const (
-	// DiscardOversize means max_frame_bytes was reached with no terminator.
-	DiscardOversize DiscardReason = "oversize"
-	// DiscardTimeout means the inter-character timeout expired with a partial
-	// frame buffered.
-	DiscardTimeout DiscardReason = "inter_char_timeout"
-	// DiscardResync means bytes were dropped while recovering to the next
-	// terminator after an earlier discard.
-	DiscardResync DiscardReason = "resync"
-	// DiscardEmpty means two terminators arrived back to back.
-	DiscardEmpty DiscardReason = "empty_frame"
+	"github.com/skuhus/device-agent/internal/wire"
 )
 
 // Discard reports bytes that did not become a frame.
 type Discard struct {
-	Reason DiscardReason
+	Reason wire.DiscardReason
 	Bytes  int
 	// Data holds the discarded bytes when the framer still had them, which is
 	// the case for oversize and timeout discards. Whether it reaches a log is
 	// the caller's decision, governed by logging.log_payloads. Without it a
-	// scanner sending the wrong terminator can only be diagnosed as a byte
-	// count, which does not say what the terminator actually is.
+	// scanner sending the wrong separator can only be diagnosed as a byte
+	// count, which does not say what the separator actually is.
 	Data []byte
 }
 
@@ -38,18 +24,18 @@ func (discard Discard) String() string {
 	return fmt.Sprintf("%s (%d bytes)", discard.Reason, discard.Bytes)
 }
 
-// Framer splits a byte stream into terminator-delimited frames.
+// Framer splits a byte stream into separator-delimited frames.
 //
 // It makes no assumption that one read equals one scan: a scan may arrive
 // across several reads, and several scans may arrive in one read.
 //
 // After any discard the framer resynchronises by dropping everything up to and
-// including the next terminator. The alternative - resuming mid-frame - emits
+// including the next separator. The alternative - resuming mid-frame - emits
 // the tail of a broken frame as if it were a short barcode, which is silent
 // corruption. Dropping the remainder is a visible loss the operator can act on.
 type Framer struct {
-	term     []byte
-	maxFrame int
+	separator []byte
+	maxFrame  int
 
 	buf      []byte
 	dropping bool
@@ -59,15 +45,15 @@ type Framer struct {
 // NewFramer builds a framer.
 //
 // maxFrame is the largest payload accepted, in bytes, not counting the
-// terminator.
-func NewFramer(term []byte, maxFrame int) (*Framer, error) {
-	if len(term) == 0 {
-		return nil, errors.New("terminator must not be empty")
+// separator.
+func NewFramer(separator []byte, maxFrame int) (*Framer, error) {
+	if len(separator) == 0 {
+		return nil, errors.New("separator must not be empty")
 	}
 	if maxFrame < 1 {
 		return nil, fmt.Errorf("max frame must be at least 1 byte, got %d", maxFrame)
 	}
-	return &Framer{term: bytes.Clone(term), maxFrame: maxFrame}, nil
+	return &Framer{separator: bytes.Clone(separator), maxFrame: maxFrame}, nil
 }
 
 // Append consumes src and returns the frames it completed together with any
@@ -79,42 +65,44 @@ func (framer *Framer) Append(src []byte) ([][]byte, []Discard) {
 	framer.buf = append(framer.buf, src...)
 
 	for {
-		i := bytes.Index(framer.buf, framer.term)
-		if i < 0 {
+		separatorAt := bytes.Index(framer.buf, framer.separator)
+		if separatorAt < 0 {
 			break
 		}
 		switch {
 		case framer.dropping:
-			framer.dropped += i + len(framer.term)
-			discards = append(discards, Discard{Reason: DiscardResync, Bytes: framer.dropped})
+			framer.dropped += separatorAt + len(framer.separator)
+			discards = append(discards, Discard{Reason: wire.DiscardResync, Bytes: framer.dropped})
 			framer.dropping, framer.dropped = false, 0
-		case i == 0:
-			discards = append(discards, Discard{Reason: DiscardEmpty, Bytes: len(framer.term)})
-		case i > framer.maxFrame:
-			// The terminator arrived in the same read that took the payload
+		case separatorAt == 0:
+			discards = append(discards, Discard{Reason: wire.DiscardEmptyFrame, Bytes: len(framer.separator)})
+		case separatorAt > framer.maxFrame:
+			// The separator arrived in the same read that took the payload
 			// past the limit. The frame is over size and is dropped here; no
-			// resynchronisation is needed because the terminator has been
-			// consumed and the next byte starts a fresh frame.
-			discards = append(discards, Discard{Reason: DiscardOversize, Bytes: i})
+			// resynchronisation is needed because the separator has been
+			// consumed and the next byte starts a fresh frame. A scanner sends
+			// a scan and its separator in one read, so this is where its
+			// oversize scans land, and the data goes with the discard.
+			discards = append(discards, Discard{Reason: wire.DiscardOversize, Bytes: separatorAt, Data: bytes.Clone(framer.buf[:separatorAt])})
 		default:
-			frames = append(frames, bytes.Clone(framer.buf[:i]))
+			frames = append(frames, bytes.Clone(framer.buf[:separatorAt]))
 		}
-		framer.consume(i + len(framer.term))
+		framer.consume(separatorAt + len(framer.separator))
 	}
 
 	if framer.dropping {
-		// Keep only enough trailing bytes to recognise a terminator split
+		// Keep only enough trailing bytes to recognise a separator split
 		// across two reads, so a device that never terminates cannot grow the
 		// buffer.
 		framer.dropped += framer.trimTo(framer.carry())
 	} else if len(framer.buf) > framer.maxFrame+framer.carry() {
 		// The tolerance of carry() bytes lets a maximum-size payload arrive
-		// with only part of its terminator without being called over size.
+		// with only part of its separator without being called over size.
 		pending := len(framer.buf)
 		data := bytes.Clone(framer.buf)
 		framer.dropping = true
 		framer.dropped = framer.trimTo(framer.carry())
-		discards = append(discards, Discard{Reason: DiscardOversize, Bytes: pending, Data: data})
+		discards = append(discards, Discard{Reason: wire.DiscardOversize, Bytes: pending, Data: data})
 	}
 
 	return frames, discards
@@ -133,7 +121,7 @@ func (framer *Framer) Timeout() (Discard, bool) {
 		if consumed == 0 {
 			return Discard{}, false
 		}
-		return Discard{Reason: DiscardResync, Bytes: consumed}, true
+		return Discard{Reason: wire.DiscardResync, Bytes: consumed}, true
 	}
 	if len(framer.buf) == 0 {
 		return Discard{}, false
@@ -142,13 +130,13 @@ func (framer *Framer) Timeout() (Discard, bool) {
 	data := bytes.Clone(framer.buf)
 	framer.buf = framer.buf[:0]
 	framer.dropping, framer.dropped = true, 0
-	return Discard{Reason: DiscardTimeout, Bytes: consumed, Data: data}, true
+	return Discard{Reason: wire.DiscardInterCharTimeout, Bytes: consumed, Data: data}, true
 }
 
 // Pending is the number of buffered bytes not yet part of a frame.
 func (framer *Framer) Pending() int { return len(framer.buf) }
 
-// Resyncing reports whether the framer is dropping bytes to the next terminator.
+// Resyncing reports whether the framer is dropping bytes to the next separator.
 func (framer *Framer) Resyncing() bool { return framer.dropping }
 
 // Reset clears all state, as after reopening the device.
@@ -158,8 +146,8 @@ func (framer *Framer) Reset() {
 }
 
 // carry is the number of trailing bytes that must be kept while dropping so a
-// terminator spanning two reads is still found.
-func (framer *Framer) carry() int { return len(framer.term) - 1 }
+// separator spanning two reads is still found.
+func (framer *Framer) carry() int { return len(framer.separator) - 1 }
 
 // trimTo drops all but the last keep bytes and reports how many it dropped.
 func (framer *Framer) trimTo(keep int) int {

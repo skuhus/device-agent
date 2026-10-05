@@ -1,41 +1,40 @@
-# skuhus-device-serial-scanner configuration.
+# skuhus-device-agent configuration.
 #
-# Install at /etc/skuhus-device-serial-scanner/config.yaml on Linux, or
-# /usr/local/etc/skuhus-device-serial-scanner/config.yaml on macOS.
+# Install at /etc/skuhus-device-agent/config.yaml on Linux, or
+# /usr/local/etc/skuhus-device-agent/config.yaml on macOS.
 #
-# Precedence is CLI flags, then SH_DEV_SER_SCANNER_* environment variables, then this
+# Precedence is CLI flags, then SH_DEV_AGENT_* environment variables, then this
 # file, then built-in defaults. Unknown keys are rejected: a typo that is
-# ignored leaves a station running settings nobody chose.
+# ignored leaves a station running settings nobody chose. A key an earlier
+# release used is rejected with what replaces it.
 #
 # Check a change before restarting the agent:
-#   skuhus-device-serial-scanner validate --config /etc/skuhus-device-serial-scanner/config.yaml
+#   skuhus-device-agent validate --config /etc/skuhus-device-agent/config.yaml
 
 identity:
   # The station identity. It comes from here and nowhere else; the hostname is
   # a logged attribute, not an identity. Each value must match [a-z0-9-]+
-  # because it is used verbatim as an MQTT topic segment.
+  # because it is used verbatim as an MQTT topic level.
   project: acme
   site: vasby
   station: pack-03
 
-  # Names this agent process: it is the MQTT client id, and the instance_id
-  # field in every payload. Defaults to the station id, which is what the
-  # specification fixes the client id to, and only needs setting when two
-  # agents share a station: a client id must be unique per broker connection,
-  # and two processes sharing one disconnect each other in a loop.
-  #
-  # Not a topic segment, so [A-Za-z0-9._-] up to 64 characters. The topic to
-  # reach this agent stays skuhus/<project>/<site>/<station>/... whatever this
-  # is set to.
-  # instance: pack-03
+  # Names this agent process: it is the MQTT client id, the instance_id field
+  # in every message, and a level of the agent's status topic,
+  # skuhus/<project>/<site>/<station>/agent/<instance>/status. Empty means
+  # the station id, and it only needs setting when two agents share a station:
+  # a client id must be unique per broker connection, and two processes
+  # sharing one disconnect each other in a loop. [a-z0-9-]+, up to 64
+  # characters.
+  instance: ""
 
 broker:
   # Plaintext is refused unless insecure is set below.
   url: tls://mq.internal:8883
 
   # Per-station credentials, never a shared fleet user. Mode 0600; a file any
-  # other user can read is rejected at startup. Set SH_DEV_SER_SCANNER_MQTT_USERNAME
-  # and SH_DEV_SER_SCANNER_MQTT_PASSWORD instead if credentials come from the
+  # other user can read is rejected at startup. Set SH_DEV_AGENT_MQTT_USERNAME
+  # and SH_DEV_AGENT_MQTT_PASSWORD instead if credentials come from the
   # environment; they override the file. There is no CLI flag for credentials:
   # ps would expose them.
   #
@@ -46,88 +45,178 @@ broker:
   #
   # The password is everything after the first "=", including any trailing
   # space, so that a password containing one still works.
-  credentials_file: /etc/skuhus-device-serial-scanner/credentials
+  credentials_file: /etc/skuhus-device-agent/credentials
 
-  # Pinned CA bundle for the broker certificate. Optional.
-  # ca_file: /etc/skuhus-device-serial-scanner/ca.pem
+  # A CA bundle to verify the broker's certificate against, such as
+  # /etc/skuhus-device-agent/ca.pem. Empty means the system's CA certificates.
+  ca_file: ""
 
   # Development only. Allows a plaintext URL and skips certificate
   # verification, and is logged at WARN on every reconnect.
-  # insecure: false
+  insecure: false
 
   keepalive: 30s
-  connect_backoff: { initial: 1s, max: 60s, jitter: 0.3 }
+
+  # Each attempt to connect, from dialling to the broker's answer, and the wait
+  # for the broker to answer the tx subscriptions, give up after this long.
+  connect_timeout: 10s
+
+  # While the broker cannot be reached, the agent tries it at once and then
+  # every reconnect_interval. Every reading made while the connection is down
+  # fails, so a short interval keeps that window short.
+  reconnect_interval: 1s
+  # Off by default. Enabled, the wait doubles after each failed attempt, from
+  # reconnect_interval up to max, and each wait is spread by jitter, a fraction
+  # either way, so that stations which lost the broker together do not retry
+  # in step. Off, max and jitter are not used.
+  reconnect_backoff: { enabled: false, max: 60s, jitter: 0.3 }
 
 devices:
+  # A level of this device's topics, skuhus/<project>/<site>/<station>/<id>/rx
+  # and /status, so [a-z0-9-]+. "agent" is reserved for the agent's own topics.
   - id: scanner-main
 
     # serial is USB-CDC (virtual COM) or real RS-232. hid is rejected: keyboard
     # mode needs scancode translation against an assumed keyboard layout, and a
     # Swedish-layout host with a US-configured scanner corrupts non-alphanumeric
-    # payloads silently. Configure the scanner into CDC mode instead.
+    # payloads silently. Configure the device into CDC mode instead.
     kind: serial
 
     # A stable path. /dev/ttyACM0 moves between reboots and replug order, so it
-    # is accepted but warned about. Run "skuhus-device-serial-scanner probe --list" to see the
-    # by-id and by-path names this host offers.
+    # is accepted but warned about. Run "skuhus-device-agent probe --list" to
+    # see the by-id and by-path names this host offers.
     path: /dev/serial/by-id/usb-Honeywell_1470g-if00
 
-    # Ignored by USB-CDC devices, required for real RS-232.
+    # The port's settings. USB-CDC devices ignore them; real RS-232 needs them
+    # to match the device. data_bits is 5 to 8; parity is none, odd, even, mark
+    # or space, and mark and space work on Linux only; stop_bits is 1 or 2.
     baud: 9600
+    data_bits: 8
+    parity: none
+    stop_bits: 1
 
-    # Write the terminator as a double-quoted scalar so escapes are decoded.
-    # 'terminator: \r' in single quotes is the two characters backslash and r,
+    # Write the separator as a double-quoted scalar so escapes are decoded.
+    # 'separator: \r' in single quotes is the two characters backslash and r,
     # and is rejected.
     #
-    # This must match the scanner exactly, and the value is per model, not a
+    # This must match the device exactly, and the value is per model, not a
     # fleet constant: the Symbol 05e0:1701 measured for this repo transmits
     # CRLF and needs "\r\n". Configuring CR against a CRLF device does not fail
     # loudly. It corrupts one payload and drops another, but only when scanning
     # faster than inter_char_timeout, so it looks fine at a desk. Check
     # docs/scanners/ for the model before deploying, and probe with
     # --log-payloads if the model is not documented there.
-    terminator: "\r"
+    separator: "\r"
 
-    # The largest payload accepted, excluding the terminator. A partial frame
+    # The largest payload accepted, excluding the separator. A partial frame
     # that grows past this is discarded rather than buffered.
     max_frame_bytes: 4096
 
     # A partial frame idle for longer than this is discarded. Set it above any
-    # gap that occurs inside a real scan burst; see DESIGN.md.
+    # gap that occurs inside a real burst; see DESIGN-V2.md, "Choosing
+    # inter_char_timeout".
     inter_char_timeout: 200ms
 
-    # Re-apply the expected scanner serial configuration on every open. No
-    # per-model profiles are implemented yet, so enabling this currently logs
-    # that it could not be honoured rather than doing nothing quietly.
-    assert_config: false
+    # How long the broker may hold a message about this device, a reading, an
+    # event or a tx result, before it discards it instead of delivering it
+    # late. A reading is perishable: one delivered ten minutes late lands in a
+    # pick that has ended. In whole seconds, because MQTT carries it so. Read
+    # DESIGN-V2.md, "Scans are perishable", before raising it.
+    message_expiry: 30s
 
-    # There is no symbology setting. The agent publishes the complete frame with
-    # only the terminator removed, so any code identifier the scanner prefixes
-    # stays in the payload for the upstream side to decode using its per-device
-    # definitions. See DESIGN.md, "The whole frame is the payload".
+    # Optional. Carried in every message about this device, so that the
+    # services behind the broker know which physical device it is. The agent
+    # does not interpret it. Empty is published as null.
+    device_type: honeywell-1470g
+
+    # When the port cannot be opened, or fails, the agent opens it again after
+    # reopen_interval. With reopen_backoff enabled, as it is by default, the
+    # wait doubles after each failed attempt, up to max, and each wait is
+    # spread by jitter, a fraction either way; once the port has stayed open
+    # for max, the wait starts over from reopen_interval. Off, every wait is
+    # reopen_interval. Each failed attempt is a port_open_failed event, so a
+    # short fixed interval publishes many of them for a device left unplugged.
+    reopen_interval: 100ms
+    reopen_backoff: { enabled: true, max: 30s, jitter: 0.3 }
+
+    # A tx that finds this device's port closed asks for it to be opened, up
+    # to tx_open_attempts times, tx_open_interval apart, and then fails with
+    # the reason the port did not open. Once writing has started nothing is
+    # retried: a retry could put a job on the wire twice, and a printer would
+    # print it twice.
+    tx_open_attempts: 3
+    tx_open_interval: 1s
+
+    # A tx is written this many bytes at a time. Closing the port, and a
+    # stopping agent, wait for the piece being written rather than the whole
+    # tx; at 9600 baud 1024 bytes is about a second on the line.
+    tx_chunk_bytes: 1024
+
+    # The agent remembers, in memory, the ids of this many tx it wrote to this
+    # device. A tx sent again with one of them is answered already_written and
+    # not written again, so a sender that heard nothing can resend safely. The
+    # oldest is forgotten first, and a restart forgets them all.
+    tx_remembered_ids: 1024
+
+    # There is no symbology setting. The agent publishes the complete frame
+    # with only the separator removed, so any code identifier the scanner
+    # prefixes stays in the payload for the upstream side to decode. See
+    # DESIGN-V2.md, "The whole frame is the payload".
 
 delivery:
-  # A scan is perishable: it has no meaning without the session bound to the
-  # station, and one replayed ten minutes later lands in a pick that has ended.
-  # Read DESIGN.md before raising any of these.
-  scan_ttl: 30s
+  # How long a message may wait for the broker's acknowledgement before it
+  # counts as failed. It may not exceed any device's message_expiry: the
+  # operator would be told a reading failed after the broker had already
+  # expired it. buffer_size is how many frames wait for the publisher before
+  # reading stops.
   publish_timeout: 2s
   buffer_size: 64
+  # When the agent stops, a tx being written goes on for at most this long, and
+  # then what is buffered waits for the broker at most this long again; what
+  # is left is recorded in the log as dropped, with its data.
+  drain_timeout: 5s
+  # How many tx can wait between the broker connection and the agent, which
+  # takes each at once, so it fills only when senders flood a station. A tx
+  # that finds it full is dropped, recorded in the log with its data, and gets
+  # no result, which its sender treats as not written.
+  tx_intake_size: 256
+
+status:
+  # The agent publishes a keepalive with every device's state and counters on
+  # skuhus/<project>/<site>/<station>/agent/<instance>/status. A consumer
+  # treats the agent as gone after missed_keepalives intervals without one,
+  # 45 seconds with these values; every keepalive carries that time, so
+  # consumers follow this setting. The interval is in whole seconds.
+  keepalive_interval: 15s
+  missed_keepalives: 3
+  # Each device's events (port opened, lost, bytes discarded) wait here while
+  # the broker connection is down, and go out once it is back. Only the most
+  # recent event_buffer_size are kept, and one older than the device's
+  # message_expiry by then is dropped, so a long outage does not end in a
+  # flood.
+  event_buffer_size: 64
 
 logging:
+  # debug, info, warn or error. Every reading's record of what became of it is
+  # written whatever this says.
   level: info
 
-  # Whether scan contents may reach the log at all. Default false keeps them out
-  # at every level: a scan is then logged as an event id, a device, a byte count
-  # and a validity flag, which traces delivery without recording barcodes. Set
-  # it, with the level at debug, when diagnosing a device that frames nothing.
+  # Whether the data read from a port goes on the log lines of published
+  # readings and of discarded bytes. Default false keeps it off them: a
+  # published reading is then logged as an id, a device, a byte count and a
+  # validity flag, which traces delivery without recording readings. A reading
+  # the broker did not take carries its data whatever this says. Set it when
+  # diagnosing a device that frames nothing.
   log_payloads: false
 
-  # The record of what this station published, and of what it failed to publish.
-  # A scan the broker did not take is written here in full, because nothing else
-  # holds it; a scan that was delivered is recorded by length only. Not a replay
-  # source.
-  # The directory must already exist; the agent will not create it.
-  audit_file: /var/log/skuhus-device-serial-scanner/audit.log
-  audit_max_size_mb: 64
-  audit_keep: 7
+  # One log for everything, which can go to a file, to stdout, to both, or to
+  # neither. A message the broker did not take is recorded with its data,
+  # because nothing else holds it.
+  #
+  # The file rotates at max_size_mb, keeping keep old files. Its directory must
+  # already exist; the agent will not create it. Leave file out to log to
+  # stdout only, where journald and docker logs collect it.
+  file: /var/log/skuhus-device-agent/agent.log
+  max_size_mb: 64
+  keep: 7
+  stdout: true

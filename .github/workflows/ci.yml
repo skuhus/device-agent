@@ -61,6 +61,26 @@ jobs:
       - name: coverage summary
         run: go tool cover -func=coverage.out | tail -1
 
+  # The agent's binary against the development broker and a pseudo-terminal
+  # device, end to end (PLAN-V2.md, T10). The broker is started after checkout
+  # rather than as a service container: service containers start before
+  # checkout, and the broker needs its plugin list and definitions from
+  # dev/rabbitmq/. Both targets run in Docker, as they do on a workstation.
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: start the development broker
+        run: make broker-up
+
+      - name: integration test
+        run: make test-integration
+
+      - name: broker log
+        if: failure()
+        run: make broker-logs
+
   # Cross-compiling on every pull request is cheap, and catches an arm-only
   # breakage before a tag rather than after one.
   build:
@@ -91,7 +111,7 @@ jobs:
         run: |
           go build -trimpath \
             -ldflags "-s -w -X main.commit=${GITHUB_SHA} -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            -o /dev/null ./cmd/skuhus-device-serial-scanner
+            -o /dev/null ./cmd/skuhus-device-agent
 
   image:
     runs-on: ubuntu-latest
@@ -107,19 +127,19 @@ jobs:
             --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --label org.opencontainers.image.version="$version" \
             --label org.opencontainers.image.revision="${GITHUB_SHA}" \
-            -t skuhus-device-serial-scanner:"$version" .
+            -t skuhus-device-agent:"$version" .
 
       # The label is applied at build time and the version is compiled in, so
       # this is what keeps the two from drifting apart.
       - name: the image reports the version in source
         run: |
           version="$(make version)"
-          reported="$(docker run --rm skuhus-device-serial-scanner:"$version" version)"
-          label="$(docker inspect skuhus-device-serial-scanner:"$version" --format '{{index .Config.Labels "org.opencontainers.image.version"}}')"
+          reported="$(docker run --rm skuhus-device-agent:"$version" version)"
+          label="$(docker inspect skuhus-device-agent:"$version" --format '{{index .Config.Labels "org.opencontainers.image.version"}}')"
           echo "label $label"
           [ "$label" = "$version" ] || { echo "the image label says $label, source says $version"; exit 1; }
           echo "$reported"
           case "$reported" in
-            "skuhus-device-serial-scanner $version "*) ;;
+            "skuhus-device-agent $version "*) ;;
             *) echo "the image reports something other than $version"; exit 1 ;;
           esac

@@ -5,13 +5,14 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 	"sync"
 	"syscall"
 	"testing"
 	"time"
 
+	"github.com/skuhus/device-agent/internal/logging/logtest"
+	"github.com/skuhus/device-agent/internal/wire"
 	goserial "go.bug.st/serial"
 )
 
@@ -26,30 +27,30 @@ type recordingPort struct {
 	rts bool
 }
 
-func (p *recordingPort) SetDTR(v bool) error {
-	if p.refuse {
+func (port *recordingPort) SetDTR(raised bool) error {
+	if port.refuse {
 		return goserial.PortError{}
 	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.dtr = v
+	port.mu.Lock()
+	defer port.mu.Unlock()
+	port.dtr = raised
 	return nil
 }
 
-func (p *recordingPort) SetRTS(v bool) error {
-	if p.refuse {
+func (port *recordingPort) SetRTS(raised bool) error {
+	if port.refuse {
 		return goserial.PortError{}
 	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.rts = v
+	port.mu.Lock()
+	defer port.mu.Unlock()
+	port.rts = raised
 	return nil
 }
 
-func (p *recordingPort) state() (dtr, rts bool) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.dtr, p.rts
+func (port *recordingPort) state() (dtr, rts bool) {
+	port.mu.Lock()
+	defer port.mu.Unlock()
+	return port.dtr, port.rts
 }
 
 // The modem lines must be raised deliberately. go.bug.st/serial documents a nil
@@ -103,13 +104,12 @@ func TestOpenSucceedsWhenModemLinesAreUnsupported(t *testing.T) {
 	present, onPresence := presenceChan()
 
 	opts := serialOpts("no-modem-control", "/dev/fake", "\r")
-	opts.OnPresence = onPresence
 	opts.Open = func(string, *goserial.Mode) (goserial.Port, error) { return port, nil }
-	runDevice(t, opts, 1)
+	runDeviceReporting(t, opts, 1, onPresence)
 
 	select {
-	case p := <-present:
-		if !p {
+	case isPresent := <-present:
+		if !isPresent {
 			t.Fatal("device reported absent; refusing DTR must not fail the open")
 		}
 	case <-time.After(3 * time.Second):
@@ -118,20 +118,19 @@ func TestOpenSucceedsWhenModemLinesAreUnsupported(t *testing.T) {
 }
 
 // captureLogs runs a device against a port and returns everything it logged.
-func captureLogs(t *testing.T, logPayloads bool, data string) string {
+func captureLogs(t *testing.T, logPayloads bool, data string) *logtest.Log {
 	t.Helper()
-	var buf syncBuffer
 	present, onPresence := presenceChan()
 
 	opts := serialOpts("payloads", "/dev/fake", "\r")
 	opts.LogPayloads = logPayloads
 	opts.InterCharTimeout = 20 * time.Millisecond
-	opts.OnPresence = onPresence
-	opts.Logger = slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	var logged *logtest.Log
+	opts.Logger, logged = logtest.New(t, "debug")
 	opts.Open = func(string, *goserial.Mode) (goserial.Port, error) {
 		return &scriptedPort{data: []byte(data)}, nil
 	}
-	runDevice(t, opts, 4)
+	runDeviceReporting(t, opts, 4, onPresence)
 
 	select {
 	case <-present:
@@ -139,26 +138,45 @@ func captureLogs(t *testing.T, logPayloads bool, data string) string {
 		t.Fatal("device never opened")
 	}
 	time.Sleep(300 * time.Millisecond)
-	return buf.String()
+	return logged
 }
 
-// Section 7: payload content reaches the log only when it is asked for. The
-// default must report the length and nothing else.
+// A discard is one WARN line with its reason and byte count. With log_payloads
+// the same line carries the discarded data, as hex and as text, which shows
+// what a misconfigured separator really is; without it the data is nowhere in
+// the log (#23 Q13).
 func TestLogPayloadsGatesContent(t *testing.T) {
 	const payload = "SKU-98765"
-	wrongTerminator := payload + "\n" // the device sends LF where CR is configured
-
-	off := captureLogs(t, false, wrongTerminator)
-	if strings.Contains(off, hex.EncodeToString([]byte(payload))) {
-		t.Errorf("payload content reached the log with log_payloads off:\n%s", off)
-	}
-	if !strings.Contains(off, "discarded partial frame") {
-		t.Errorf("the discard itself must still be reported:\n%s", off)
-	}
-
-	on := captureLogs(t, true, wrongTerminator)
-	if !strings.Contains(on, hex.EncodeToString([]byte(wrongTerminator))) {
-		t.Errorf("log_payloads on, but the discarded bytes are not in the log as hex:\n%s", on)
+	wrongSeparator := payload + "\n" // the device sends LF where CR is configured
+	asHex := hex.EncodeToString([]byte(wrongSeparator))
+	for _, testCase := range []struct {
+		payloads bool
+		want     map[string]any
+	}{
+		{false, map[string]any{}},
+		{true, map[string]any{"data_hex": asHex, "data_text": wrongSeparator}},
+	} {
+		logged := captureLogs(t, testCase.payloads, wrongSeparator)
+		discards := logged.WithMessage(t, "discarded partial frame")
+		if len(discards) != 1 {
+			t.Fatalf("log_payloads %v: %d discard lines, want 1:\n%s", testCase.payloads, len(discards), logged.String())
+		}
+		discard := discards[0]
+		if discard["level"] != "WARN" || discard["reason"] != "inter_char_timeout" || discard["bytes"] != float64(len(wrongSeparator)) {
+			t.Errorf("log_payloads %v: discard = %v, want WARN, inter_char_timeout, %d bytes", testCase.payloads, discard, len(wrongSeparator))
+		}
+		for _, key := range []string{"data_hex", "data_text"} {
+			if discard[key] != testCase.want[key] {
+				t.Errorf("log_payloads %v: %s = %v, want %v", testCase.payloads, key, discard[key], testCase.want[key])
+			}
+		}
+		lines := strings.Count(logged.String(), hex.EncodeToString([]byte(payload)))
+		if !testCase.payloads && lines != 0 {
+			t.Errorf("payload content reached the log with log_payloads off:\n%s", logged.String())
+		}
+		if testCase.payloads && lines != 1 {
+			t.Errorf("the discarded data is on %d lines, want only the discard's:\n%s", lines, logged.String())
+		}
 	}
 }
 
@@ -169,35 +187,16 @@ type scriptedPort struct {
 	data []byte
 }
 
-func (p *scriptedPort) Read(b []byte) (int, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if len(p.data) > 0 {
-		n := copy(b, p.data)
-		p.data = p.data[n:]
-		return n, nil
+func (port *scriptedPort) Read(buffer []byte) (int, error) {
+	port.mu.Lock()
+	defer port.mu.Unlock()
+	if len(port.data) > 0 {
+		copied := copy(buffer, port.data)
+		port.data = port.data[copied:]
+		return copied, nil
 	}
 	time.Sleep(10 * time.Millisecond)
 	return 0, nil
-}
-
-// syncBuffer is a bytes.Buffer that survives the logger writing from the device
-// goroutine while the test reads it.
-type syncBuffer struct {
-	mu  sync.Mutex
-	buf bytes.Buffer
-}
-
-func (b *syncBuffer) Write(p []byte) (int, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.Write(p)
-}
-
-func (b *syncBuffer) String() string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.String()
 }
 
 // classify is what an operator greps for when a station is not scanning, so the
@@ -209,9 +208,8 @@ func TestClassify(t *testing.T) {
 	tests := []struct {
 		name string
 		err  error
-		want string
+		want wire.ErrorClass
 	}{
-		{"nil", nil, "none"},
 		{"unplugged mid-read", syscall.EIO, "disconnected"},
 		{"node gone", syscall.ENODEV, "disconnected"},
 		{"never appeared", syscall.ENOENT, "absent"},
@@ -222,11 +220,37 @@ func TestClassify(t *testing.T) {
 		{"wrapped", fmt.Errorf("open /dev/scanner: %w", syscall.EACCES), "permission_denied"},
 		{"unrecognised", errors.New("something else"), "unknown"},
 	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := classify(tc.err); got != tc.want {
-				t.Errorf("classify(%v) = %q, want %q", tc.err, got, tc.want)
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := classify(testCase.err); got != testCase.want {
+				t.Errorf("classify(%v) = %q, want %q", testCase.err, got, testCase.want)
 			}
 		})
+	}
+}
+
+// One read holds a whole frame with its separator, whatever max_frame_bytes
+// is, so a frame of the largest size that arrives at once is read in one call.
+func TestOneReadHoldsAWholeFrame(t *testing.T) {
+	const maxFrame = 5000
+	opts := serialOpts("scanner-1", "/dev/fake", "\r\n")
+	opts.MaxFrameBytes = maxFrame
+	var logged *logtest.Log
+	opts.Logger, logged = logtest.New(t, "debug")
+	port := &scriptedPort{blockingPort: blockingPort{hold: time.Hour}, data: bytes.Repeat([]byte("7"), 3*maxFrame)}
+	opts.Open = func(string, *goserial.Mode) (goserial.Port, error) { return port, nil }
+	runDevice(t, opts, 1)
+
+	var reads []map[string]any
+	deadline := time.Now().Add(3 * time.Second)
+	for len(reads) == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+		reads = logged.WithMessage(t, "device read")
+	}
+	if len(reads) == 0 {
+		t.Fatal("no read was logged")
+	}
+	if want := float64(maxFrame + len("\r\n")); reads[0]["bytes"] != want {
+		t.Errorf("the first read took %v bytes, want %v, a whole frame and its separator", reads[0]["bytes"], want)
 	}
 }

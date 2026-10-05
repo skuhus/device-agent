@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -15,7 +14,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/skuhus/device-serial-scanner/internal/device"
+	"github.com/skuhus/device-agent/internal/backoff"
+	"github.com/skuhus/device-agent/internal/device"
+	"github.com/skuhus/device-agent/internal/logging/logtest"
 	goserial "go.bug.st/serial"
 	"golang.org/x/sys/unix"
 )
@@ -28,40 +29,39 @@ import (
 // the desk.
 func newPTY(t *testing.T) (master *os.File, slavePath string) {
 	t.Helper()
-	m, err := os.OpenFile("/dev/ptmx", os.O_RDWR, 0)
+	ptmx, err := os.OpenFile("/dev/ptmx", os.O_RDWR, 0)
 	if err != nil {
 		t.Skipf("no /dev/ptmx on this host: %v", err)
 	}
-	t.Cleanup(func() { m.Close() })
+	t.Cleanup(func() { ptmx.Close() })
 
-	if err := unix.IoctlSetPointerInt(int(m.Fd()), unix.TIOCSPTLCK, 0); err != nil {
+	if err := unix.IoctlSetPointerInt(int(ptmx.Fd()), unix.TIOCSPTLCK, 0); err != nil {
 		t.Fatalf("unlock pty: %v", err)
 	}
-	n, err := unix.IoctlGetInt(int(m.Fd()), unix.TIOCGPTN)
+	ptyNumber, err := unix.IoctlGetInt(int(ptmx.Fd()), unix.TIOCGPTN)
 	if err != nil {
 		t.Fatalf("get pty number: %v", err)
 	}
-	return m, fmt.Sprintf("/dev/pts/%d", n)
-}
-
-func testLogger() *slog.Logger {
-	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	return ptmx, fmt.Sprintf("/dev/pts/%d", ptyNumber)
 }
 
 // runDevice starts a device against the given path and returns its frame
 // channel. It fails the test if the device goroutine outlives cancellation.
 func runDevice(t *testing.T, opts Options, sinkCap int) (chan device.Frame, context.CancelFunc) {
 	t.Helper()
+	return runDeviceReporting(t, opts, sinkCap, nil)
+}
+
+// runDeviceReporting is runDevice with a function that receives every port
+// event.
+func runDeviceReporting(t *testing.T, opts Options, sinkCap int, report func(device.Event)) (chan device.Frame, context.CancelFunc) {
+	t.Helper()
 	if opts.Logger == nil {
-		opts.Logger = testLogger()
+		// The agent's log at DEBUG, captured, so that every line the reader
+		// writes is held to the log's rules when the test ends.
+		opts.Logger, _ = logtest.New(t, "debug")
 	}
-	if opts.BackoffInitial == 0 {
-		opts.BackoffInitial = 5 * time.Millisecond
-	}
-	if opts.BackoffMax == 0 {
-		opts.BackoffMax = 20 * time.Millisecond
-	}
-	d, err := New(opts)
+	dev, err := New(opts)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -71,7 +71,7 @@ func runDevice(t *testing.T, opts Options, sinkCap int) (chan device.Frame, cont
 	stopped := make(chan struct{})
 	go func() {
 		defer close(stopped)
-		if err := d.Run(ctx, frames); !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		if err := dev.Run(ctx, frames, report); !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 			t.Errorf("Run returned %v, want a context error", err)
 		}
 	}()
@@ -86,22 +86,33 @@ func runDevice(t *testing.T, opts Options, sinkCap int) (chan device.Frame, cont
 	return frames, cancel
 }
 
-func serialOpts(id, path string, term string) Options {
+// testTxChunkBytes is the tests' tx chunk: not the default 1024, so that a
+// chunk taken from anywhere but the options shows.
+const testTxChunkBytes = 700
+
+// fastReopen is the reopen policy of tests that do not test it: v1's shape,
+// scaled down so that a test does not wait on it.
+var fastReopen = backoff.Policy{Interval: 5 * time.Millisecond, Grow: true, Max: 20 * time.Millisecond, Jitter: 0.3}
+
+func serialOpts(id, path string, separator string) Options {
 	return Options{
 		ID:               id,
 		Path:             path,
 		Baud:             9600,
-		Terminator:       []byte(term),
+		DataBits:         8,
+		Separator:        []byte(separator),
 		MaxFrameBytes:    4096,
 		InterCharTimeout: 50 * time.Millisecond,
+		TxChunkBytes:     testTxChunkBytes,
+		Reopen:           fastReopen,
 	}
 }
 
 func recvFrame(t *testing.T, frames <-chan device.Frame) device.Frame {
 	t.Helper()
 	select {
-	case f := <-frames:
-		return f
+	case frame := <-frames:
+		return frame
 	case <-time.After(3 * time.Second):
 		t.Fatal("timed out waiting for a frame")
 		return device.Frame{}
@@ -111,8 +122,8 @@ func recvFrame(t *testing.T, frames <-chan device.Frame) device.Frame {
 func expectNoFrame(t *testing.T, frames <-chan device.Frame, within time.Duration) {
 	t.Helper()
 	select {
-	case f := <-frames:
-		t.Fatalf("unexpected frame %q", f.Raw)
+	case frame := <-frames:
+		t.Fatalf("unexpected frame %q", frame.Raw)
 	case <-time.After(within):
 	}
 }
@@ -123,8 +134,8 @@ func expectNoFrame(t *testing.T, frames <-chan device.Frame, within time.Duratio
 func waitForOpen(t *testing.T, present <-chan bool) {
 	t.Helper()
 	select {
-	case p := <-present:
-		if !p {
+	case isPresent := <-present:
+		if !isPresent {
 			t.Fatal("first presence transition was absent, want present")
 		}
 	case <-time.After(3 * time.Second):
@@ -132,11 +143,23 @@ func waitForOpen(t *testing.T, present <-chan bool) {
 	}
 }
 
-func presenceChan() (chan bool, func(bool, error)) {
-	ch := make(chan bool, 16)
-	return ch, func(present bool, _ error) {
+// presenceChan turns port events into the present/absent transitions these
+// tests were written against: opened is present, lost is absent. A failed open
+// is neither, because a port that never opened was never present.
+func presenceChan() (chan bool, func(device.Event)) {
+	changes := make(chan bool, 16)
+	return changes, func(event device.Event) {
+		var present bool
+		switch event.Kind {
+		case device.PortOpened:
+			present = true
+		case device.PortLost:
+			present = false
+		default:
+			return
+		}
 		select {
-		case ch <- present:
+		case changes <- present:
 		default:
 		}
 	}
@@ -146,9 +169,9 @@ func presenceChan() (chan bool, func(bool, error)) {
 // and checks the frames the agent would publish.
 func TestPTYReplayCaptures(t *testing.T) {
 	cases := []struct {
-		file       string
-		terminator string
-		want       [][]byte
+		file      string
+		separator string
+		want      [][]byte
 	}{
 		{"code128-cr.bin", "\r", [][]byte{[]byte("0123456789")}},
 		{"gs1-128-cr.bin", "\r", [][]byte{[]byte("]C1\x1d0104912345123459\x1d17250101")}},
@@ -165,33 +188,32 @@ func TestPTYReplayCaptures(t *testing.T) {
 			[]byte("A001100133391"),
 		}},
 	}
-	for _, tc := range cases {
-		t.Run(tc.file, func(t *testing.T) {
-			capture, err := os.ReadFile(filepath.Join("testdata", tc.file))
+	for _, testCase := range cases {
+		t.Run(testCase.file, func(t *testing.T) {
+			capture, err := os.ReadFile(filepath.Join("testdata", testCase.file))
 			if err != nil {
 				t.Fatalf("read capture: %v", err)
 			}
 			master, slave := newPTY(t)
 			present, onPresence := presenceChan()
 
-			opts := serialOpts("replay", slave, tc.terminator)
-			opts.OnPresence = onPresence
-			frames, _ := runDevice(t, opts, 8)
+			opts := serialOpts("replay", slave, testCase.separator)
+			frames, _ := runDeviceReporting(t, opts, 8, onPresence)
 			waitForOpen(t, present)
 
 			if _, err := master.Write(capture); err != nil {
 				t.Fatalf("replay write: %v", err)
 			}
-			for i, want := range tc.want {
+			for index, want := range testCase.want {
 				got := recvFrame(t, frames)
 				if string(got.Raw) != string(want) {
-					t.Errorf("frame %d = %q, want %q", i, got.Raw, want)
+					t.Errorf("frame %d = %q, want %q", index, got.Raw, want)
 				}
 				if got.DeviceID != "replay" {
-					t.Errorf("frame %d device id = %q, want replay", i, got.DeviceID)
+					t.Errorf("frame %d device id = %q, want replay", index, got.DeviceID)
 				}
 				if got.At.IsZero() {
-					t.Errorf("frame %d has no timestamp", i)
+					t.Errorf("frame %d has no timestamp", index)
 				}
 			}
 			expectNoFrame(t, frames, 200*time.Millisecond)
@@ -206,13 +228,12 @@ func TestPTYFrameArrivesAcrossManyReads(t *testing.T) {
 	present, onPresence := presenceChan()
 	opts := serialOpts("drip", slave, "\r")
 	opts.InterCharTimeout = 500 * time.Millisecond
-	opts.OnPresence = onPresence
-	frames, _ := runDevice(t, opts, 4)
+	frames, _ := runDeviceReporting(t, opts, 4, onPresence)
 	waitForOpen(t, present)
 
-	for _, b := range []byte("SKU-9911\r") {
-		if _, err := master.Write([]byte{b}); err != nil {
-			t.Fatalf("write %q: %v", b, err)
+	for _, oneByte := range []byte("SKU-9911\r") {
+		if _, err := master.Write([]byte{oneByte}); err != nil {
+			t.Fatalf("write %q: %v", oneByte, err)
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
@@ -227,14 +248,13 @@ func TestPTYFrameArrivesAcrossManyReads(t *testing.T) {
 //
 // What happens to a tail that arrives after the timeout depends on how long the
 // device stayed silent, and is pinned deterministically by the framer tests.
-// See DESIGN.md on choosing inter_char_timeout.
+// See DESIGN-V2.md, "Choosing inter_char_timeout".
 func TestPTYInterCharTimeoutDropsStalledFrame(t *testing.T) {
 	master, slave := newPTY(t)
 	present, onPresence := presenceChan()
 	opts := serialOpts("stall", slave, "\r")
 	opts.InterCharTimeout = 50 * time.Millisecond
-	opts.OnPresence = onPresence
-	frames, _ := runDevice(t, opts, 4)
+	frames, _ := runDeviceReporting(t, opts, 4, onPresence)
 	waitForOpen(t, present)
 
 	if _, err := master.Write([]byte("STALL")); err != nil {
@@ -257,21 +277,20 @@ func TestPTYFullSinkBlocksReaderWithoutLoss(t *testing.T) {
 	master, slave := newPTY(t)
 	present, onPresence := presenceChan()
 	opts := serialOpts("backpressure", slave, "\r")
-	opts.OnPresence = onPresence
-	frames, _ := runDevice(t, opts, 0)
+	frames, _ := runDeviceReporting(t, opts, 0, onPresence)
 	waitForOpen(t, present)
 
 	want := []string{"ONE", "TWO", "THREE", "FOUR"}
-	for _, s := range want {
-		if _, err := master.Write([]byte(s + "\r")); err != nil {
-			t.Fatalf("write %s: %v", s, err)
+	for _, text := range want {
+		if _, err := master.Write([]byte(text + "\r")); err != nil {
+			t.Fatalf("write %s: %v", text, err)
 		}
 	}
 	time.Sleep(100 * time.Millisecond)
-	for i, w := range want {
+	for index, expected := range want {
 		got := recvFrame(t, frames)
-		if string(got.Raw) != w {
-			t.Errorf("frame %d = %q, want %q", i, got.Raw, w)
+		if string(got.Raw) != expected {
+			t.Errorf("frame %d = %q, want %q", index, got.Raw, expected)
 		}
 	}
 }
@@ -281,8 +300,7 @@ func TestPTYDisconnectReportsAbsenceAndRetries(t *testing.T) {
 	master, slave := newPTY(t)
 	present, onPresence := presenceChan()
 	opts := serialOpts("unplug", slave, "\r")
-	opts.OnPresence = onPresence
-	frames, _ := runDevice(t, opts, 4)
+	frames, _ := runDeviceReporting(t, opts, 4, onPresence)
 	waitForOpen(t, present)
 
 	if _, err := master.Write([]byte("BEFORE\r")); err != nil {
@@ -297,8 +315,8 @@ func TestPTYDisconnectReportsAbsenceAndRetries(t *testing.T) {
 	deadline := time.After(3 * time.Second)
 	for {
 		select {
-		case p := <-present:
-			if !p {
+		case isPresent := <-present:
+			if !isPresent {
 				return // absence reported, Run is in its reopen loop
 			}
 		case <-deadline:
@@ -341,13 +359,12 @@ func TestReopenLoopOnMissingDeviceStopsOnCancel(t *testing.T) {
 func TestNoGoroutineLeakAcrossDeviceRestarts(t *testing.T) {
 	before := goroutineCount(t, 0)
 
-	for i := 0; i < 5; i++ {
+	for index := 0; index < 5; index++ {
 		master, slave := newPTY(t)
 		present, onPresence := presenceChan()
 		opts := serialOpts("cycle", slave, "\r")
-		opts.OnPresence = onPresence
 
-		d, err := New(opts)
+		dev, err := New(opts)
 		if err != nil {
 			t.Fatalf("New: %v", err)
 		}
@@ -356,7 +373,7 @@ func TestNoGoroutineLeakAcrossDeviceRestarts(t *testing.T) {
 		stopped := make(chan struct{})
 		go func() {
 			defer close(stopped)
-			d.Run(ctx, frames)
+			dev.Run(ctx, frames, onPresence)
 		}()
 		waitForOpen(t, present)
 		if _, err := master.Write([]byte("CYCLE\r")); err != nil {
@@ -384,17 +401,17 @@ func TestNoGoroutineLeakAcrossDeviceRestarts(t *testing.T) {
 // goroutine that is merely slow to exit is not reported as a leak.
 func goroutineCount(t *testing.T, target int) int {
 	t.Helper()
-	n := runtime.NumGoroutine()
+	goroutines := runtime.NumGoroutine()
 	if target == 0 {
-		return n
+		return goroutines
 	}
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		n = runtime.NumGoroutine()
-		if n <= target {
-			return n
+		goroutines = runtime.NumGoroutine()
+		if goroutines <= target {
+			return goroutines
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	return n
+	return goroutines
 }

@@ -1,0 +1,44 @@
+# Local development broker. Start it with "make broker-up" from the repository
+# root; the Makefile owns the image tag.
+#
+# State lives in a named volume, so stopping the broker keeps its data and only
+# "make broker-reset" discards it. Ports bind to the loopback interface: this
+# broker takes plaintext MQTT and has fixed passwords, and neither belongs on a
+# shared network.
+name: skuhus-dev
+
+services:
+  rabbitmq:
+    image: ${RABBITMQ_IMAGE:-rabbitmq:4.3.5-management}
+    container_name: skuhus-dev-rabbitmq
+    hostname: skuhus-dev-rabbitmq
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:1883:1883"
+      - "127.0.0.1:5672:5672"
+      - "127.0.0.1:15672:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+      - ./rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+      - ./enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
+      - ./definitions.json:/etc/rabbitmq/definitions.json:ro
+    healthcheck:
+      # check_port_connectivity covers every enabled listener, so this goes
+      # green only once MQTT is actually accepting connections.
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 20s
+
+volumes:
+  rabbitmq-data:
+    name: skuhus-dev-rabbitmq-data
+
+networks:
+  # Created by the Makefile, which owns it, so that a spike container and a
+  # second cluster node can join the same network without compose and make
+  # disagreeing about who made it.
+  default:
+    name: skuhus-dev
+    external: true

@@ -1,0 +1,74 @@
+{
+  "rabbit_version": "4.3.5",
+  "users": [
+    {
+      "name": "admin",
+      "password_hash": "XmcjAneWAolFQ8gtPM3Cx3d9uOCMNIwqje3JF2Y1mJtx2BNR",
+      "hashing_algorithm": "rabbit_password_hashing_sha256",
+      "tags": ["administrator"],
+      "limits": {}
+    },
+    {
+      "name": "station-pack-03",
+      "password_hash": "NUBVvrZyElBSzXkSXie2Y7ec6JDPYQEsWpGnM4gRiUNo54DQ",
+      "hashing_algorithm": "rabbit_password_hashing_sha256",
+      "tags": [],
+      "limits": {}
+    },
+    {
+      "name": "ingest",
+      "password_hash": "tEN4dscHNPa0zPZTq3Bnd9QTroEcna3dI6t1gXa7HzzRS99Y",
+      "hashing_algorithm": "rabbit_password_hashing_sha256",
+      "tags": [],
+      "limits": {}
+    }
+  ],
+  "vhosts": [
+    { "name": "/" }
+  ],
+  "permissions": [
+    {
+      "user": "admin",
+      "vhost": "/",
+      "configure": ".*",
+      "write": ".*",
+      "read": ".*"
+    },
+    {
+      "user": "station-pack-03",
+      "vhost": "/",
+      "configure": "^mqtt-subscription-.*$",
+      "write": "^(amq\\.topic|mqtt-subscription-.*)$",
+      "read": "^(amq\\.topic|mqtt-subscription-.*)$"
+    },
+    {
+      "user": "ingest",
+      "vhost": "/",
+      "configure": "^(mqtt-subscription-.*|skuhus-ingest.*)$",
+      "write": "^(amq\\.topic|mqtt-subscription-.*|skuhus-ingest.*)$",
+      "read": "^(amq\\.topic|mqtt-subscription-.*|skuhus-ingest.*)$"
+    }
+  ],
+  "topic_permissions": [
+    {
+      "user": "station-pack-03",
+      "vhost": "/",
+      "exchange": "amq.topic",
+      "write": "^skuhus\\.acme\\.vasby\\.pack-03\\..*$",
+      "read": "^skuhus\\.acme\\.vasby\\.pack-03\\..*$"
+    },
+    {
+      "user": "ingest",
+      "vhost": "/",
+      "exchange": "amq.topic",
+      "write": "^skuhus\\.[^.]+\\.[^.]+\\.[^.]+\\.[^.]+\\.tx$",
+      "read": "^skuhus\\..*$"
+    }
+  ],
+  "parameters": [],
+  "global_parameters": [],
+  "policies": [],
+  "queues": [],
+  "exchanges": [],
+  "bindings": []
+}

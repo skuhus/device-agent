@@ -1,7 +1,6 @@
 package config
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,7 +15,7 @@ type fixture struct {
 	dir             string
 	path            string
 	credentialsFile string
-	auditFile       string
+	logFile         string
 }
 
 func newFixture(t *testing.T, body string) fixture {
@@ -26,13 +25,13 @@ func newFixture(t *testing.T, body string) fixture {
 		dir:             dir,
 		path:            filepath.Join(dir, "config.yaml"),
 		credentialsFile: filepath.Join(dir, "credentials"),
-		auditFile:       filepath.Join(dir, "audit.log"),
+		logFile:         filepath.Join(dir, "agent.log"),
 	}
 	if err := os.WriteFile(fixture.credentialsFile, []byte("username=pack-03\npassword=secret\n"), 0o600); err != nil {
 		t.Fatalf("write credentials: %v", err)
 	}
 	body = strings.ReplaceAll(body, "{{credentials}}", fixture.credentialsFile)
-	body = strings.ReplaceAll(body, "{{audit}}", fixture.auditFile)
+	body = strings.ReplaceAll(body, "{{log}}", fixture.logFile)
 	if err := os.WriteFile(fixture.path, []byte(body), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
@@ -49,28 +48,38 @@ broker:
   url: tls://mq.internal:8883
   credentials_file: {{credentials}}
   keepalive: 30s
-  connect_backoff: { initial: 1s, max: 60s, jitter: 0.3 }
+  reconnect_interval: 1s
 
 devices:
   - id: scanner-main
     kind: serial
     path: /dev/serial/by-id/usb-Honeywell_1470g-if00
     baud: 9600
-    terminator: "\r"
+    data_bits: 8
+    parity: none
+    stop_bits: 1
+    separator: "\r"
     max_frame_bytes: 4096
     inter_char_timeout: 200ms
+    message_expiry: 30s
+    device_type: honeywell-1470g
 
 delivery:
-  scan_ttl: 30s
   publish_timeout: 2s
   buffer_size: 64
+
+status:
+  keepalive_interval: 15s
+  missed_keepalives: 3
+  event_buffer_size: 64
 
 logging:
   level: info
   log_payloads: false
-  audit_file: {{audit}}
-  audit_max_size_mb: 64
-  audit_keep: 7
+  file: {{log}}
+  max_size_mb: 64
+  keep: 7
+  stdout: true
 `
 
 func noEnv() []string { return nil }
@@ -99,15 +108,18 @@ func TestLoadValidConfig(t *testing.T) {
 	if len(cfg.Devices) != 1 {
 		t.Fatalf("got %d devices, want 1", len(cfg.Devices))
 	}
-	d := cfg.Devices[0]
-	if d.Terminator != "\r" {
-		t.Errorf("terminator = %q, want a carriage return", d.Terminator)
+	device := cfg.Devices[0]
+	if device.Separator != "\r" {
+		t.Errorf("separator = %q, want a carriage return", device.Separator)
 	}
-	if d.InterCharTimeout.Duration() != 200*time.Millisecond {
-		t.Errorf("inter_char_timeout = %s, want 200ms", d.InterCharTimeout)
+	if device.InterCharTimeout.Duration() != 200*time.Millisecond {
+		t.Errorf("inter_char_timeout = %s, want 200ms", device.InterCharTimeout)
 	}
-	if cfg.Delivery.ScanTTL.Duration() != 30*time.Second {
-		t.Errorf("scan_ttl = %s, want 30s", cfg.Delivery.ScanTTL)
+	if device.MessageExpiry.Duration() != 30*time.Second {
+		t.Errorf("message_expiry = %s, want 30s", device.MessageExpiry)
+	}
+	if device.DeviceType != "honeywell-1470g" {
+		t.Errorf("device_type = %q, want honeywell-1470g", device.DeviceType)
 	}
 }
 
@@ -121,40 +133,88 @@ broker:
 devices:
   - id: scanner-main
     path: /dev/serial/by-id/usb-scanner-if00
-    terminator: "\r"
-logging:
-  audit_file: {{audit}}
+    separator: "\r"
 `)
 	cfg, _, err := load(t, fixture.path, noEnv(), Overrides{})
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	d := cfg.Devices[0]
+	device := cfg.Devices[0]
 	checks := []struct {
 		name string
 		got  any
 		want any
 	}{
-		{"kind", d.Kind, KindSerial},
-		{"baud", d.Baud, DefaultBaud},
-		{"max_frame_bytes", d.MaxFrameBytes, DefaultMaxFrameBytes},
-		{"inter_char_timeout", d.InterCharTimeout.Duration(), DefaultInterCharTimeout},
+		{"kind", device.Kind, KindSerial},
+		{"baud", device.Baud, DefaultBaud},
+		{"data_bits", device.DataBits, DefaultDataBits},
+		{"parity", device.Parity, DefaultParity},
+		{"stop_bits", device.StopBits, DefaultStopBits},
+		{"max_frame_bytes", device.MaxFrameBytes, DefaultMaxFrameBytes},
+		{"inter_char_timeout", device.InterCharTimeout.Duration(), DefaultInterCharTimeout},
+		{"message_expiry", device.MessageExpiry.Duration(), DefaultMessageExpiry},
+		{"device_type", device.DeviceType, ""},
+		{"tx_open_attempts", device.TxOpenAttempts, DefaultTxOpenAttempts},
+		{"tx_open_interval", device.TxOpenInterval.Duration(), DefaultTxOpenInterval},
+		{"tx_chunk_bytes", device.TxChunkBytes, DefaultTxChunkBytes},
+		{"tx_remembered_ids", device.TxRememberedIDs, DefaultTxRememberedIDs},
+		{"reopen_interval", device.ReopenInterval.Duration(), DefaultReopenInterval},
+		{"reopen_backoff.enabled", device.ReopenBackoff.Enabled, true},
+		{"reopen_backoff.max", device.ReopenBackoff.Max.Duration(), DefaultReopenBackoffMax},
+		{"reopen_backoff.jitter", device.ReopenBackoff.Jitter, DefaultReopenBackoffJitter},
 		{"keepalive", cfg.Broker.Keepalive.Duration(), DefaultKeepalive},
-		{"connect_backoff.initial", cfg.Broker.ConnectBackoff.Initial.Duration(), DefaultBackoffInitial},
-		{"connect_backoff.max", cfg.Broker.ConnectBackoff.Max.Duration(), DefaultBackoffMax},
-		{"connect_backoff.jitter", cfg.Broker.ConnectBackoff.Jitter, DefaultBackoffJitter},
-		{"scan_ttl", cfg.Delivery.ScanTTL.Duration(), DefaultScanTTL},
+		{"connect_timeout", cfg.Broker.ConnectTimeout.Duration(), DefaultConnectTimeout},
+		{"reconnect_interval", cfg.Broker.ReconnectInterval.Duration(), DefaultReconnectInterval},
+		{"reconnect_backoff.enabled", cfg.Broker.ReconnectBackoff.Enabled, false},
+		{"reconnect_backoff.max", cfg.Broker.ReconnectBackoff.Max.Duration(), DefaultReconnectBackoffMax},
+		{"reconnect_backoff.jitter", cfg.Broker.ReconnectBackoff.Jitter, DefaultReconnectBackoffJitter},
 		{"publish_timeout", cfg.Delivery.PublishTimeout.Duration(), DefaultPublishTimeout},
 		{"buffer_size", cfg.Delivery.BufferSize, DefaultBufferSize},
+		{"drain_timeout", cfg.Delivery.DrainTimeout.Duration(), DefaultDrainTimeout},
+		{"tx_intake_size", cfg.Delivery.TxIntakeSize, DefaultTxIntakeSize},
+		{"keepalive_interval", cfg.Status.KeepaliveInterval.Duration(), DefaultKeepaliveInterval},
+		{"missed_keepalives", cfg.Status.MissedKeepalives, DefaultMissedKeepalives},
+		{"event_buffer_size", cfg.Status.EventBufferSize, DefaultEventBufferSize},
 		{"logging.level", cfg.Logging.Level, DefaultLogLevel},
 		{"logging.log_payloads", cfg.Logging.LogPayloads, false},
-		{"audit_max_size_mb", cfg.Logging.AuditMaxSizeMB, DefaultAuditMaxSizeMB},
-		{"audit_keep", cfg.Logging.AuditKeep, DefaultAuditKeep},
+		{"logging.file", cfg.Logging.File, ""},
+		{"logging.max_size_mb", cfg.Logging.MaxSizeMB, DefaultLogMaxSizeMB},
+		{"logging.keep", cfg.Logging.Keep, DefaultLogKeep},
+		{"logging.stdout", cfg.Logging.Stdout, true},
 	}
 	for _, cfg := range checks {
 		if cfg.got != cfg.want {
 			t.Errorf("%s = %v, want %v", cfg.name, cfg.got, cfg.want)
 		}
+	}
+}
+
+// A device key set to zero is read as zero and refused, not replaced by its
+// default: a station whose file says 0 would otherwise run a value nobody
+// wrote, with no sign of it.
+func TestLoadRefusesADeviceKeySetToZero(t *testing.T) {
+	cases := []struct{ setting, want string }{
+		{"    tx_open_attempts: 0\n", "devices.scanner-main.tx_open_attempts must be at least 1, got 0"},
+		{"    baud: 0\n", "devices.scanner-main.baud must be positive, got 0"},
+		{"    message_expiry: 0s\n", "devices.scanner-main.message_expiry"},
+	}
+	for _, testCase := range cases {
+		t.Run(strings.TrimSpace(testCase.setting), func(t *testing.T) {
+			fixture := newFixture(t, `
+identity: { project: acme, site: vasby, station: pack-03 }
+broker:
+  url: tls://mq.internal:8883
+  credentials_file: {{credentials}}
+devices:
+  - id: scanner-main
+    path: /dev/serial/by-id/usb-scanner-if00
+    separator: "\r"
+`+testCase.setting)
+			_, _, err := load(t, fixture.path, noEnv(), Overrides{})
+			if err == nil || !strings.Contains(err.Error(), testCase.want) {
+				t.Errorf("err = %v, want it to contain %q", err, testCase.want)
+			}
+		})
 	}
 }
 
@@ -165,6 +225,7 @@ func TestLoadPrecedence(t *testing.T) {
 	fromEnv := []string{
 		EnvPrefix + "IDENTITY_STATION=from-env",
 		EnvPrefix + "LOGGING_LEVEL=warn",
+		EnvPrefix + "STATUS_EVENT_BUFFER_SIZE=8",
 	}
 	cfg, _, err := load(t, fixture.path, fromEnv, Overrides{})
 	if err != nil {
@@ -175,6 +236,9 @@ func TestLoadPrecedence(t *testing.T) {
 	}
 	if cfg.Logging.Level != "warn" {
 		t.Errorf("level = %q, want warn", cfg.Logging.Level)
+	}
+	if cfg.Status.EventBufferSize != 8 {
+		t.Errorf("event_buffer_size = %d, want 8 from the environment over the file's 64", cfg.Status.EventBufferSize)
 	}
 
 	station, level := "from-flag", "debug"
@@ -220,13 +284,74 @@ func TestLoadRejectsUnknownEnvironmentVariable(t *testing.T) {
 	fixture := newFixture(t, validConfig)
 	_, _, err := load(t, fixture.path, []string{EnvPrefix + "IDENTITY_STATON=typo"}, Overrides{})
 	if err == nil {
-		t.Fatal("a misspelled SH_DEV_SER_SCANNER_ variable should be rejected")
+		t.Fatal("a misspelled SH_DEV_AGENT_ variable should be rejected")
 	}
 	if !strings.Contains(err.Error(), "IDENTITY_STATON") {
 		t.Errorf("error does not name the variable: %v", err)
 	}
 	if !strings.Contains(err.Error(), "IDENTITY_STATION") {
 		t.Errorf("error does not list the recognised variables: %v", err)
+	}
+}
+
+// A station upgraded without editing its unit file still sets variables with an
+// earlier prefix. Ignoring them would run it on the file's values in silence;
+// SKUHUS_AGENT_ shipped in 0.1.0 and SH_DEV_SER_SCANNER_ in 0.2.0 and 0.3.0.
+func TestLoadRejectsEnvironmentFromEarlierReleases(t *testing.T) {
+	fixture := newFixture(t, validConfig)
+	env := []string{
+		"SH_DEV_SER_SCANNER_IDENTITY_STATION=pack-04",
+		"SKUHUS_AGENT_MQTT_PASSWORD=hunter2",
+		"SH_DEV_SER_SCANNER_LOGGING_AUDIT_FILE=/var/log/skuhus/audit.log",
+		EnvPrefix + "IDENTITY_SITE=vasby",
+	}
+	_, _, err := load(t, fixture.path, env, Overrides{})
+	if err == nil {
+		t.Fatal("variables with an earlier release's prefix were accepted")
+	}
+	for _, want := range []string{
+		"SH_DEV_SER_SCANNER_IDENTITY_STATION", EnvPrefix + "IDENTITY_STATION",
+		"SKUHUS_AGENT_MQTT_PASSWORD", EnvPrefix + "MQTT_PASSWORD",
+		// A setting 2.0.0 removed names its replacement, not a variable that
+		// does not exist.
+		"SH_DEV_SER_SCANNER_LOGGING_AUDIT_FILE uses the prefix of an earlier release, and its setting was removed in 2.0.0; use " + EnvPrefix + "LOGGING_FILE",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error does not name %s: %v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "hunter2") {
+		t.Errorf("the error repeats a variable's value, which can be a password: %v", err)
+	}
+}
+
+// Every variable an earlier release defined is either recognised under the
+// current prefix or listed as removed with its replacement, so the error for a
+// legacy variable never names one that does not exist. A later change that
+// drops a setting without listing it fails here.
+func TestLegacyReplacementsAreRecognised(t *testing.T) {
+	recognised := envTargets(&Config{})
+	released := []string{
+		"CONFIG", "MQTT_USERNAME", "MQTT_PASSWORD",
+		"IDENTITY_PROJECT", "IDENTITY_SITE", "IDENTITY_STATION", "IDENTITY_INSTANCE",
+		"BROKER_URL", "BROKER_CREDENTIALS_FILE", "BROKER_CA_FILE", "BROKER_INSECURE", "BROKER_KEEPALIVE",
+		"DELIVERY_SCAN_TTL", "DELIVERY_PUBLISH_TIMEOUT", "DELIVERY_BUFFER_SIZE",
+		"LOGGING_LEVEL", "LOGGING_LOG_PAYLOADS", "LOGGING_AUDIT_FILE", "LOGGING_AUDIT_MAX_SIZE_MB", "LOGGING_AUDIT_KEEP",
+	}
+	for _, suffix := range released {
+		_, current := recognised[EnvPrefix+suffix]
+		_, removed := removedEnv[EnvPrefix+suffix]
+		if current == removed {
+			t.Errorf("%s shipped in an earlier release: recognised %t, listed as removed %t; want exactly one", suffix, current, removed)
+		}
+	}
+	// A replacement named in a removal message is itself a variable that exists.
+	for name, instead := range removedEnv {
+		if replacement, named := strings.CutPrefix(instead, "use "); named {
+			if _, ok := recognised[replacement]; !ok {
+				t.Errorf("%s names %s as its replacement, which is not recognised", name, replacement)
+			}
+		}
 	}
 }
 
@@ -258,7 +383,7 @@ func TestLoadMissingFile(t *testing.T) {
 }
 
 func TestLoadRejectsBareNumberDuration(t *testing.T) {
-	fixture := newFixture(t, strings.Replace(validConfig, "  scan_ttl: 30s", "  scan_ttl: 30", 1))
+	fixture := newFixture(t, strings.Replace(validConfig, "    message_expiry: 30s", "    message_expiry: 30", 1))
 	_, _, err := load(t, fixture.path, noEnv(), Overrides{})
 	if err == nil {
 		t.Fatal("a bare number should not be accepted as a duration")
@@ -270,15 +395,14 @@ func TestLoadRejectsBareNumberDuration(t *testing.T) {
 func TestValidateReportsAllProblems(t *testing.T) {
 	cfg := Defaults()
 	cfg.Identity = Identity{Project: "Acme", Site: "", Station: "pack_03"}
-	cfg.Devices = []Device{{ID: "d", Kind: KindSerial, Path: "/dev/x", Baud: 9600,
-		Terminator: "\r", MaxFrameBytes: 4096, InterCharTimeout: Duration(time.Millisecond)}}
-	cfg.Logging.AuditFile = "/nonexistent-directory-for-tests/audit.log"
+	cfg.Devices = []Device{validDevice("/dev/x")}
+	cfg.Logging.File = "/nonexistent-directory-for-tests/agent.log"
 
 	_, err := Validate(&cfg, nil)
 	if err == nil {
 		t.Fatal("expected validation to fail")
 	}
-	for _, want := range []string{"identity.project", "identity.site", "identity.station", "broker.url", "audit_file"} {
+	for _, want := range []string{"identity.project", "identity.site", "identity.station", "broker.url", "logging.file"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error does not mention %s:\n%v", want, err)
 		}
@@ -343,23 +467,21 @@ func TestInstanceOverride(t *testing.T) {
 	}
 }
 
+// The instance is a level of the agent's status topic, so it follows the same
+// rule as every other level (#11 Q2). v1 accepted capitals, dots and
+// underscores because there it was only the MQTT client id.
 func TestInstanceCharacterSet(t *testing.T) {
 	fixture := newFixture(t, validConfig)
-	// Not a topic segment, so uppercase and dots are allowed; a slash is not,
-	// because a client id with one is unreadable in broker tooling.
-	for _, valid := range []string{"pack-03", "pack-03.b", "PACK_03", "pack-03-second"} {
+	for _, valid := range []string{"pack-03", "pack-03-second", "a", strings.Repeat("a", 64)} {
 		if _, _, err := load(t, fixture.path, []string{EnvPrefix + "IDENTITY_INSTANCE=" + valid}, Overrides{}); err != nil {
 			t.Errorf("instance %q was rejected: %v", valid, err)
 		}
 	}
-	for _, invalid := range []string{"pack 03", "pack/03", strings.Repeat("a", 65)} {
+	for _, invalid := range []string{"pack-03.b", "PACK_03", "Pack-03", "pack 03", "pack/03", strings.Repeat("a", 65)} {
 		_, _, err := load(t, fixture.path, []string{EnvPrefix + "IDENTITY_INSTANCE=" + invalid}, Overrides{})
-		if err == nil {
-			t.Errorf("instance %q was accepted", invalid)
-			continue
-		}
-		if !strings.Contains(err.Error(), "identity.instance") {
-			t.Errorf("instance %q error = %v, want it to name the field", invalid, err)
+		want := fmt.Sprintf("identity.instance %q must match [a-z0-9-]+ and be at most 64 characters", invalid)
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("instance %q: error = %v, want it to contain %q", invalid, err, want)
 		}
 	}
 }
@@ -394,10 +516,10 @@ func TestRedactedURL(t *testing.T) {
 		{"password", "tls://pack-03:hunter2@mq.internal:8883", "tls://pack-03:xxxxx@mq.internal:8883"},
 		{"unparseable", "://nope", "://nope"},
 	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := (Broker{URL: tc.url}).RedactedURL(); got != tc.want {
-				t.Errorf("RedactedURL() = %q, want %q", got, tc.want)
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := (Broker{URL: testCase.url}).RedactedURL(); got != testCase.want {
+				t.Errorf("RedactedURL() = %q, want %q", got, testCase.want)
 			}
 		})
 	}
@@ -407,9 +529,9 @@ func TestValidateRejectsHIDDevice(t *testing.T) {
 	fixture := newFixture(t, strings.Replace(validConfig, "    kind: serial", "    kind: hid", 1))
 	_, _, err := load(t, fixture.path, noEnv(), Overrides{})
 	if err == nil {
-		t.Fatal("hid should be rejected in v1")
+		t.Fatal("hid should be rejected")
 	}
-	if !strings.Contains(err.Error(), "not implemented in v1") {
+	if !strings.Contains(err.Error(), "hid is not implemented") {
 		t.Errorf("error should say hid is not implemented: %v", err)
 	}
 	if !strings.Contains(err.Error(), "USB-CDC") {
@@ -420,10 +542,7 @@ func TestValidateRejectsHIDDevice(t *testing.T) {
 // Opening a macOS callin device blocks on carrier detect forever, so it is
 // rejected before the agent ever tries.
 func TestValidateRejectsMacOSCallinDevice(t *testing.T) {
-	warnings, err := ValidateDevice(Device{
-		ID: "d", Kind: KindSerial, Path: "/dev/tty.usbmodem1234", Baud: 9600,
-		Terminator: "\r", MaxFrameBytes: 4096, InterCharTimeout: Duration(200 * time.Millisecond),
-	})
+	warnings, err := ValidateDevice(validDevice("/dev/tty.usbmodem1234"))
 	if err == nil {
 		t.Fatal("a /dev/tty.* path should be rejected")
 	}
@@ -437,10 +556,7 @@ func TestValidateRejectsMacOSCallinDevice(t *testing.T) {
 
 // A kernel-assigned name works, but it moves between reboots, so it warns.
 func TestValidateWarnsOnUnstableDevicePath(t *testing.T) {
-	warnings, err := ValidateDevice(Device{
-		ID: "d", Kind: KindSerial, Path: "/dev/ttyACM0", Baud: 9600,
-		Terminator: "\r", MaxFrameBytes: 4096, InterCharTimeout: Duration(200 * time.Millisecond),
-	})
+	warnings, err := ValidateDevice(validDevice("/dev/ttyACM0"))
 	if err != nil {
 		t.Fatalf("a kernel-assigned name should be usable: %v", err)
 	}
@@ -459,10 +575,7 @@ func TestValidateAcceptsStableDevicePaths(t *testing.T) {
 		"/dev/scanner-left",
 		"/dev/cu.usbmodem1234",
 	} {
-		warnings, err := ValidateDevice(Device{
-			ID: "d", Kind: KindSerial, Path: path, Baud: 9600,
-			Terminator: "\r", MaxFrameBytes: 4096, InterCharTimeout: Duration(200 * time.Millisecond),
-		})
+		warnings, err := ValidateDevice(validDevice(path))
 		if err != nil {
 			t.Errorf("path %q rejected: %v", path, err)
 		}
@@ -472,13 +585,13 @@ func TestValidateAcceptsStableDevicePaths(t *testing.T) {
 	}
 }
 
-// terminator: \r without quotes is the two characters backslash and r. It has
+// separator: \r without quotes is the two characters backslash and r. It has
 // to be caught, because it produces a device that silently never frames.
-func TestValidateCatchesUnquotedTerminator(t *testing.T) {
-	fixture := newFixture(t, strings.Replace(validConfig, `    terminator: "\r"`, `    terminator: '\r'`, 1))
+func TestValidateCatchesUnquotedSeparator(t *testing.T) {
+	fixture := newFixture(t, strings.Replace(validConfig, `    separator: "\r"`, `    separator: '\r'`, 1))
 	_, _, err := load(t, fixture.path, noEnv(), Overrides{})
 	if err == nil {
-		t.Fatal("a literal backslash in the terminator should be rejected")
+		t.Fatal("a literal backslash in the separator should be rejected")
 	}
 	if !strings.Contains(err.Error(), "double-quoted") {
 		t.Errorf("error should explain the YAML quoting: %v", err)
@@ -494,12 +607,10 @@ broker:
 devices:
   - id: scanner-main
     path: /dev/serial/by-id/usb-Honeywell_1470g-if00
-    terminator: "\r"
+    separator: "\r"
   - id: scanner-main
     path: /dev/serial/by-id/usb-other-if00
-    terminator: "\r"
-logging:
-  audit_file: {{audit}}
+    separator: "\r"
 `)
 	_, _, err := load(t, fixture.path, noEnv(), Overrides{})
 	if err == nil {
@@ -525,32 +636,53 @@ func TestValidateBrokerScheme(t *testing.T) {
 		{"ftp://mq.internal:21", false, true},
 		{"tls://", false, true},
 	}
-	for _, tc := range cases {
-		name := tc.url
-		if tc.insecure {
+	for _, testCase := range cases {
+		name := testCase.url
+		if testCase.insecure {
 			name += " insecure"
 		}
 		t.Run(name, func(t *testing.T) {
-			problems, _ := validateBroker(Broker{
-				URL: tc.url, Insecure: tc.insecure, CredentialsFile: "",
-				Keepalive:      Duration(DefaultKeepalive),
-				ConnectBackoff: Backoff{Initial: Duration(time.Second), Max: Duration(time.Minute), Jitter: 0.3},
-			}, map[string]string{EnvMQTTPassword: "x"})
-			if gotErr := len(problems) > 0; gotErr != tc.wantErr {
-				t.Errorf("error = %t, want %t (%v)", gotErr, tc.wantErr, problems)
+			problems, _ := validateBroker(defaultBroker(testCase.url, testCase.insecure), map[string]string{EnvMQTTPassword: "x"})
+			if gotErr := len(problems) > 0; gotErr != testCase.wantErr {
+				t.Errorf("error = %t, want %t (%v)", gotErr, testCase.wantErr, problems)
 			}
 		})
+	}
+}
+
+// The configuration decides whether the connection uses TLS, from the URL's
+// scheme, and tells the transport.
+func TestUsesTLSFollowsTheScheme(t *testing.T) {
+	for url, want := range map[string]bool{
+		"tls://mq.internal:8883": true, "ssl://mq.internal:8883": true, "mqtts://mq.internal:8883": true, "wss://mq.internal/mqtt": true,
+		"tcp://mq.internal:1883": false, "mqtt://mq.internal:1883": false, "ws://mq.internal/mqtt": false,
+	} {
+		if got := defaultBroker(url, true).UsesTLS(); got != want {
+			t.Errorf("%s: UsesTLS = %t, want %t", url, got, want)
+		}
+	}
+}
+
+// A CA file with a plaintext URL means someone believes the connection is
+// encrypted when it is not, so validation refuses it, naming both keys.
+func TestValidateRefusesCAFileWithPlaintextURL(t *testing.T) {
+	caFile := filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(caFile, []byte("-"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	broker := defaultBroker("tcp://mq.internal:1883", true)
+	broker.CAFile = caFile
+	problems, _ := validateBroker(broker, map[string]string{EnvMQTTPassword: "x"})
+	want := `broker.ca_file is set but broker.url "tcp://mq.internal:1883" is plaintext; the connection would not be encrypted`
+	if len(problems) != 1 || problems[0].Error() != want {
+		t.Errorf("problems = %v, want exactly %q", problems, want)
 	}
 }
 
 // Plaintext is allowed only when it is asked for explicitly, and it still warns
 // on every load.
 func TestValidatePlaintextBrokerWarnsWhenAllowed(t *testing.T) {
-	problems, warnings := validateBroker(Broker{
-		URL: "tcp://mq.internal:1883", Insecure: true,
-		Keepalive:      Duration(DefaultKeepalive),
-		ConnectBackoff: Backoff{Initial: Duration(time.Second), Max: Duration(time.Minute), Jitter: 0.3},
-	}, map[string]string{EnvMQTTPassword: "x"})
+	problems, warnings := validateBroker(defaultBroker("tcp://mq.internal:1883", true), map[string]string{EnvMQTTPassword: "x"})
 	if len(problems) > 0 {
 		t.Fatalf("insecure plaintext should be allowed: %v", problems)
 	}
@@ -587,49 +719,31 @@ func TestValidateRequiresCredentials(t *testing.T) {
 	}
 }
 
-// Telling the operator a scan failed after the broker already discarded it is
-// worse than useless, so the two timings are checked against each other.
-func TestValidateRejectsPublishTimeoutLongerThanTTL(t *testing.T) {
-	problems := validateDelivery(Delivery{
-		ScanTTL:        Duration(2 * time.Second),
-		PublishTimeout: Duration(5 * time.Second),
-		BufferSize:     64,
-	})
-	if len(problems) == 0 {
-		t.Fatal("publish_timeout longer than scan_ttl should be rejected")
-	}
-	if !strings.Contains(errors.Join(problems...).Error(), "expired") {
-		t.Errorf("error should explain the consequence: %v", problems)
+// Telling the operator a reading failed after the broker already discarded it
+// is worse than useless, so the publish timeout is checked against each
+// device's message expiry.
+func TestValidateRejectsPublishTimeoutLongerThanExpiry(t *testing.T) {
+	delivery := Defaults().Delivery
+	delivery.PublishTimeout = Duration(5 * time.Second)
+	problems := validateDelivery(delivery,
+		[]Device{{ID: "scanner-1", MessageExpiry: Duration(30 * time.Second)}, {ID: "scale-1", MessageExpiry: Duration(2 * time.Second)}})
+	want := "delivery.publish_timeout (5s) exceeds devices.scale-1.message_expiry (2s); the operator would be told a reading failed after the broker had already expired it"
+	if len(problems) != 1 || problems[0].Error() != want {
+		t.Errorf("problems = %v, want exactly %q", problems, want)
 	}
 }
 
 func TestValidateLoggingLevel(t *testing.T) {
 	dir := t.TempDir()
 	for _, level := range []string{"debug", "info", "warn", "error", "INFO"} {
-		if problems := validateLogging(Logging{Level: level, AuditFile: filepath.Join(dir, "a.log"),
-			AuditMaxSizeMB: 1, AuditKeep: 1}); len(problems) > 0 {
+		if problems := validateLogging(Logging{Level: level, File: filepath.Join(dir, "a.log"),
+			MaxSizeMB: 1, Keep: 1}); len(problems) > 0 {
 			t.Errorf("level %q rejected: %v", level, problems)
 		}
 	}
-	if problems := validateLogging(Logging{Level: "verbose", AuditFile: filepath.Join(dir, "a.log"),
-		AuditMaxSizeMB: 1, AuditKeep: 1}); len(problems) == 0 {
+	if problems := validateLogging(Logging{Level: "verbose", File: filepath.Join(dir, "a.log"),
+		MaxSizeMB: 1, Keep: 1}); len(problems) == 0 {
 		t.Error("an unknown level should be rejected")
-	}
-}
-
-// assert_config cannot be honoured without a per-model profile, so asking for
-// it warns rather than passing quietly.
-func TestValidateWarnsOnAssertConfig(t *testing.T) {
-	warnings, err := ValidateDevice(Device{
-		ID: "d", Kind: KindSerial, Path: "/dev/serial/by-id/usb-x-if00", Baud: 9600,
-		Terminator: "\r", MaxFrameBytes: 4096, InterCharTimeout: Duration(200 * time.Millisecond),
-		AssertConfig: true,
-	})
-	if err != nil {
-		t.Fatalf("assert_config should not be fatal: %v", err)
-	}
-	if len(warnings) != 1 || !strings.Contains(warnings[0].Message, "no per-model scanner profile") {
-		t.Errorf("warnings = %v, want one explaining assert_config is not implemented", warnings)
 	}
 }
 
@@ -641,14 +755,14 @@ func TestDefaultPathIsPlatformSpecific(t *testing.T) {
 }
 
 func TestDurationRoundTrip(t *testing.T) {
-	var d Duration
-	if err := d.UnmarshalYAML(yamlScalar(t, "1500ms")); err != nil {
+	var duration Duration
+	if err := duration.UnmarshalYAML(yamlScalar(t, "1500ms")); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if d.Duration() != 1500*time.Millisecond {
-		t.Errorf("duration = %s, want 1.5s", d)
+	if duration.Duration() != 1500*time.Millisecond {
+		t.Errorf("duration = %s, want 1.5s", duration)
 	}
-	out, err := d.MarshalYAML()
+	out, err := duration.MarshalYAML()
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
@@ -668,12 +782,10 @@ broker:
 devices:
   - id: scanner-left
     path: /dev/serial/by-id/usb-shared-if00
-    terminator: "\r"
+    separator: "\r"
   - id: scanner-right
     path: /dev/serial/by-id/usb-shared-if00
-    terminator: "\r"
-logging:
-  audit_file: {{audit}}
+    separator: "\r"
 `)
 	_, _, err := load(t, fixture.path, noEnv(), Overrides{})
 	if err == nil {
@@ -691,15 +803,15 @@ func TestLoadEnvironmentErrorsAreDeterministic(t *testing.T) {
 	env := []string{
 		EnvPrefix + "DELIVERY_BUFFER_SIZE=many",
 		EnvPrefix + "BROKER_KEEPALIVE=soon",
-		EnvPrefix + "LOGGING_AUDIT_KEEP=lots",
+		EnvPrefix + "LOGGING_KEEP=lots",
 	}
 	var first string
-	for i := 0; i < 20; i++ {
+	for index := 0; index < 20; index++ {
 		_, _, err := load(t, fixture.path, env, Overrides{})
 		if err == nil {
 			t.Fatal("three unparseable values should fail")
 		}
-		if i == 0 {
+		if index == 0 {
 			first = err.Error()
 			continue
 		}
@@ -707,4 +819,18 @@ func TestLoadEnvironmentErrorsAreDeterministic(t *testing.T) {
 			t.Fatalf("error text varies between runs:\n%s\n---\n%s", first, err.Error())
 		}
 	}
+}
+
+// defaultBroker is the broker section's defaults with the given URL.
+func defaultBroker(url string, insecure bool) Broker {
+	broker := Defaults().Broker
+	broker.URL, broker.Insecure = url, insecure
+	return broker
+}
+
+// validDevice is a device entry every rule accepts, with the given path.
+func validDevice(path string) Device {
+	deviceCfg := DefaultDevice()
+	deviceCfg.ID, deviceCfg.Path, deviceCfg.Separator = "d", path, "\r"
+	return deviceCfg
 }
