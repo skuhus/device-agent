@@ -147,23 +147,23 @@ func captureLogs(t *testing.T, logPayloads bool, data string) *logtest.Log {
 // the log (#23 Q13).
 func TestLogPayloadsGatesContent(t *testing.T) {
 	const payload = "SKU-98765"
-	wrongTerminator := payload + "\n" // the device sends LF where CR is configured
-	asHex := hex.EncodeToString([]byte(wrongTerminator))
+	wrongSeparator := payload + "\n" // the device sends LF where CR is configured
+	asHex := hex.EncodeToString([]byte(wrongSeparator))
 	for _, tc := range []struct {
 		payloads bool
 		want     map[string]any
 	}{
 		{false, map[string]any{}},
-		{true, map[string]any{"data_hex": asHex, "data_text": wrongTerminator}},
+		{true, map[string]any{"data_hex": asHex, "data_text": wrongSeparator}},
 	} {
-		logged := captureLogs(t, tc.payloads, wrongTerminator)
+		logged := captureLogs(t, tc.payloads, wrongSeparator)
 		discards := logged.WithMessage(t, "discarded partial frame")
 		if len(discards) != 1 {
 			t.Fatalf("log_payloads %v: %d discard lines, want 1:\n%s", tc.payloads, len(discards), logged.String())
 		}
 		discard := discards[0]
-		if discard["level"] != "WARN" || discard["reason"] != "inter_char_timeout" || discard["bytes"] != float64(len(wrongTerminator)) {
-			t.Errorf("log_payloads %v: discard = %v, want WARN, inter_char_timeout, %d bytes", tc.payloads, discard, len(wrongTerminator))
+		if discard["level"] != "WARN" || discard["reason"] != "inter_char_timeout" || discard["bytes"] != float64(len(wrongSeparator)) {
+			t.Errorf("log_payloads %v: discard = %v, want WARN, inter_char_timeout, %d bytes", tc.payloads, discard, len(wrongSeparator))
 		}
 		for _, key := range []string{"data_hex", "data_text"} {
 			if discard[key] != tc.want[key] {

@@ -94,13 +94,13 @@ const testTxChunkBytes = 700
 // scaled down so that a test does not wait on it.
 var fastReopen = backoff.Policy{Interval: 5 * time.Millisecond, Grow: true, Max: 20 * time.Millisecond, Jitter: 0.3}
 
-func serialOpts(id, path string, term string) Options {
+func serialOpts(id, path string, separator string) Options {
 	return Options{
 		ID:               id,
 		Path:             path,
 		Baud:             9600,
 		DataBits:         8,
-		Terminator:       []byte(term),
+		Separator:        []byte(separator),
 		MaxFrameBytes:    4096,
 		InterCharTimeout: 50 * time.Millisecond,
 		TxChunkBytes:     testTxChunkBytes,
@@ -169,9 +169,9 @@ func presenceChan() (chan bool, func(device.Event)) {
 // and checks the frames the agent would publish.
 func TestPTYReplayCaptures(t *testing.T) {
 	cases := []struct {
-		file       string
-		terminator string
-		want       [][]byte
+		file      string
+		separator string
+		want      [][]byte
 	}{
 		{"code128-cr.bin", "\r", [][]byte{[]byte("0123456789")}},
 		{"gs1-128-cr.bin", "\r", [][]byte{[]byte("]C1\x1d0104912345123459\x1d17250101")}},
@@ -197,7 +197,7 @@ func TestPTYReplayCaptures(t *testing.T) {
 			master, slave := newPTY(t)
 			present, onPresence := presenceChan()
 
-			opts := serialOpts("replay", slave, tc.terminator)
+			opts := serialOpts("replay", slave, tc.separator)
 			frames, _ := runDeviceReporting(t, opts, 8, onPresence)
 			waitForOpen(t, present)
 

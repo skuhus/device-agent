@@ -79,7 +79,7 @@ func TestEveryFrameIsOneRxMessageOnItsDeviceTopic(t *testing.T) {
 	for _, capture := range captures {
 		master, slave := newPTY(t)
 		reader, err := serial.New(serial.Options{
-			ID: capture.id, Path: slave, Baud: 9600, DataBits: 8, Terminator: []byte("\r\n"),
+			ID: capture.id, Path: slave, Baud: 9600, DataBits: 8, Separator: []byte("\r\n"),
 			MaxFrameBytes: 4096, InterCharTimeout: 50 * time.Millisecond, TxChunkBytes: 1024,
 			Reopen: backoff.Policy{Interval: 5 * time.Millisecond, Grow: true, Max: 20 * time.Millisecond, Jitter: 0.3},
 		})
@@ -165,7 +165,7 @@ func runPTYCore(t *testing.T, opts Options) {
 func ptyReader(t *testing.T, id, slave string, separator string) device.Device {
 	t.Helper()
 	reader, err := serial.New(serial.Options{
-		ID: id, Path: slave, Baud: 9600, DataBits: 8, Terminator: []byte(separator),
+		ID: id, Path: slave, Baud: 9600, DataBits: 8, Separator: []byte(separator),
 		MaxFrameBytes: 4096, InterCharTimeout: 50 * time.Millisecond, TxChunkBytes: 1024,
 		Reopen: backoff.Policy{Interval: 5 * time.Millisecond, Grow: true, Max: 20 * time.Millisecond, Jitter: 0.3},
 	})

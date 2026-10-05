@@ -56,11 +56,11 @@ func wantDiscards(t *testing.T, got []Discard, want ...wire.DiscardReason) {
 	}
 }
 
-func newFramer(t *testing.T, term string, maxFrame int) *Framer {
+func newFramer(t *testing.T, separator string, maxFrame int) *Framer {
 	t.Helper()
-	framer, err := NewFramer([]byte(term), maxFrame)
+	framer, err := NewFramer([]byte(separator), maxFrame)
 	if err != nil {
-		t.Fatalf("NewFramer(%q, %d): %v", term, maxFrame, err)
+		t.Fatalf("NewFramer(%q, %d): %v", separator, maxFrame, err)
 	}
 	return framer
 }
@@ -100,9 +100,9 @@ func TestFramerTrailingPartialFrameIsNotEmitted(t *testing.T) {
 	}
 }
 
-// A CR inside the payload must not split a frame when the terminator is CRLF,
-// and the terminator must be found even when it straddles two reads.
-func TestFramerCRLFTerminator(t *testing.T) {
+// A CR inside the payload must not split a frame when the separator is CRLF,
+// and the separator must be found even when it straddles two reads.
+func TestFramerCRLFSeparator(t *testing.T) {
 	framer := newFramer(t, "\r\n", 4096)
 	frames, discards := feed(t, framer, "AB\rCD\r", "\nEF\r\n")
 	wantFrames(t, frames, "AB\rCD", "EF")
@@ -141,9 +141,9 @@ func TestFramerPreservesNonUTF8Bytes(t *testing.T) {
 	}
 }
 
-// The terminator arriving in the same read that took the frame past the limit
+// The separator arriving in the same read that took the frame past the limit
 // must still be rejected, not emitted as a very long barcode.
-func TestFramerOversizeFrameWithTerminatorInSameRead(t *testing.T) {
+func TestFramerOversizeFrameWithSeparatorInSameRead(t *testing.T) {
 	framer := newFramer(t, "\r", 8)
 	frames, discards := feed(t, framer, strings.Repeat("X", 20)+"\rGOOD\r")
 	wantFrames(t, frames, "GOOD")
@@ -153,17 +153,17 @@ func TestFramerOversizeFrameWithTerminatorInSameRead(t *testing.T) {
 	}
 }
 
-// When the limit is passed before any terminator arrives, the framer must drop
+// When the limit is passed before any separator arrives, the framer must drop
 // the remainder of that frame too rather than emitting its tail.
-func TestFramerOversizeResyncsToNextTerminator(t *testing.T) {
+func TestFramerOversizeResyncsToNextSeparator(t *testing.T) {
 	framer := newFramer(t, "\r", 8)
 	frames, discards := feed(t, framer, strings.Repeat("X", 20), "TAIL\r", "GOOD\r")
 	wantFrames(t, frames, "GOOD")
 	wantDiscards(t, discards, wire.DiscardOversize, wire.DiscardResync)
 }
 
-// A terminator split across two reads must still end the resynchronisation.
-func TestFramerResyncFindsSplitTerminator(t *testing.T) {
+// A separator split across two reads must still end the resynchronisation.
+func TestFramerResyncFindsSplitSeparator(t *testing.T) {
 	framer := newFramer(t, "\r\n", 8)
 	frames, discards := feed(t, framer, strings.Repeat("X", 30), "TAIL\r", "\nGOOD\r\n")
 	wantFrames(t, frames, "GOOD")
@@ -171,7 +171,7 @@ func TestFramerResyncFindsSplitTerminator(t *testing.T) {
 }
 
 // A payload of exactly max_frame_bytes is legal, including when only part of
-// its terminator has arrived.
+// its separator has arrived.
 func TestFramerAcceptsExactlyMaxFrameBytes(t *testing.T) {
 	framer := newFramer(t, "\r\n", 8)
 	frames, discards := feed(t, framer, "12345678\r")
@@ -195,8 +195,8 @@ func TestFramerBoundsBufferOnEndlessInput(t *testing.T) {
 	framer := newFramer(t, "\r", maxFrame)
 	for i := 0; i < 1000; i++ {
 		framer.Append(bytes.Repeat([]byte("Z"), 512))
-		if framer.Pending() > maxFrame+len(framer.term) {
-			t.Fatalf("after %d reads Pending() = %d, want at most %d", i, framer.Pending(), maxFrame+len(framer.term))
+		if framer.Pending() > maxFrame+len(framer.separator) {
+			t.Fatalf("after %d reads Pending() = %d, want at most %d", i, framer.Pending(), maxFrame+len(framer.separator))
 		}
 	}
 	if !framer.Resyncing() {
@@ -245,7 +245,7 @@ func TestFramerTimeoutResyncsBeforeNextFrame(t *testing.T) {
 
 // A second timeout means the device has fallen silent, so the burst that
 // produced the broken frame is over and resynchronisation ends. Otherwise a
-// scanner configured with the wrong terminator would eat the following scan
+// scanner configured with the wrong separator would eat the following scan
 // forever.
 func TestFramerSecondTimeoutEndsResync(t *testing.T) {
 	framer := newFramer(t, "\r", 4096)
@@ -289,7 +289,7 @@ func TestFramerFramesDoNotAliasBuffer(t *testing.T) {
 
 func TestNewFramerRejectsBadArguments(t *testing.T) {
 	if _, err := NewFramer(nil, 4096); err == nil {
-		t.Error("empty terminator should be rejected")
+		t.Error("empty separator should be rejected")
 	}
 	if _, err := NewFramer([]byte("\r"), 0); err == nil {
 		t.Error("zero max frame should be rejected")
@@ -297,7 +297,7 @@ func TestNewFramerRejectsBadArguments(t *testing.T) {
 }
 
 // A discard has to carry the bytes it threw away, or a scanner sending the
-// wrong terminator can only ever be diagnosed as a byte count. Whether they
+// wrong separator can only ever be diagnosed as a byte count. Whether they
 // reach a log is a separate decision, governed by logging.log_payloads.
 func TestFramerDiscardCarriesTheDiscardedBytes(t *testing.T) {
 	t.Run("timeout", func(t *testing.T) {
@@ -308,7 +308,7 @@ func TestFramerDiscardCarriesTheDiscardedBytes(t *testing.T) {
 			t.Fatal("expected a timeout discard")
 		}
 		if string(discard.Data) != "SKU-12345\n" {
-			t.Errorf("Data = %q, want the buffered bytes including the wrong terminator", discard.Data)
+			t.Errorf("Data = %q, want the buffered bytes including the wrong separator", discard.Data)
 		}
 		if discard.Bytes != len(discard.Data) {
 			t.Errorf("Bytes = %d but Data is %d bytes", discard.Bytes, len(discard.Data))

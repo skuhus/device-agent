@@ -24,7 +24,7 @@ func newSerialReader(deviceCfg config.Device, logPayloads bool, log *slog.Logger
 		DataBits:         deviceCfg.DataBits,
 		Parity:           parity,
 		StopBits:         stopBits,
-		Terminator:       deviceCfg.SeparatorBytes(),
+		Separator:        deviceCfg.SeparatorBytes(),
 		MaxFrameBytes:    deviceCfg.MaxFrameBytes,
 		InterCharTimeout: deviceCfg.InterCharTimeout.Duration(),
 		LogPayloads:      logPayloads,

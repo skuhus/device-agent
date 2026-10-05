@@ -75,7 +75,7 @@ type Options struct {
 	DataBits         int
 	Parity           goserial.Parity
 	StopBits         goserial.StopBits
-	Terminator       []byte
+	Separator        []byte
 	MaxFrameBytes    int
 	InterCharTimeout time.Duration
 	// LogPayloads puts the discarded bytes on each discard's log line. Default
@@ -139,7 +139,7 @@ func New(opts Options) (*Device, error) {
 	if opts.DataBits < minDataBits || opts.DataBits > maxDataBits {
 		return nil, fmt.Errorf("device %s: data bits must be %d to %d, got %d", opts.ID, minDataBits, maxDataBits, opts.DataBits)
 	}
-	if _, err := NewFramer(opts.Terminator, opts.MaxFrameBytes); err != nil {
+	if _, err := NewFramer(opts.Separator, opts.MaxFrameBytes); err != nil {
 		return nil, fmt.Errorf("device %s: %w", opts.ID, err)
 	}
 	if opts.TxChunkBytes < 1 {
@@ -161,7 +161,7 @@ func New(opts Options) (*Device, error) {
 			// outright on any port without modem control. The lines are raised
 			// after open instead, where failing to do so is not fatal.
 		},
-		readBufferBytes: opts.MaxFrameBytes + len(opts.Terminator),
+		readBufferBytes: opts.MaxFrameBytes + len(opts.Separator),
 		log:             opts.Logger,
 		open:            opts.Open,
 		retry:           make(chan struct{}, 1),
@@ -200,7 +200,7 @@ func (dev *Device) Run(ctx context.Context, sink chan<- device.Frame, report fun
 	stableAfter := policy.Max
 	dev.log.Info("device settings",
 		"baud", dev.opts.Baud, "data_bits", dev.mode.DataBits, "parity", parityNames[dev.mode.Parity],
-		"stop_bits", stopBitsNames[dev.mode.StopBits], "terminator_hex", hex.EncodeToString(dev.opts.Terminator),
+		"stop_bits", stopBitsNames[dev.mode.StopBits], "separator_hex", hex.EncodeToString(dev.opts.Separator),
 		"max_frame_bytes", dev.opts.MaxFrameBytes, "inter_char_timeout", dev.opts.InterCharTimeout.String(),
 		"read_buffer_bytes", dev.readBufferBytes, "tx_chunk_bytes", dev.opts.TxChunkBytes,
 		"reopen_interval", policy.Interval.String(), "reopen_backoff", policy.Grow,
@@ -262,7 +262,7 @@ func (dev *Device) session(ctx context.Context, sink chan<- device.Frame, report
 		"read_buffer_bytes", dev.readBufferBytes,
 		"inter_char_timeout", dev.opts.InterCharTimeout.String(),
 		"max_frame_bytes", dev.opts.MaxFrameBytes,
-		"terminator_hex", hex.EncodeToString(dev.opts.Terminator))
+		"separator_hex", hex.EncodeToString(dev.opts.Separator))
 
 	// Writes go through the same port, under a lock that closing takes too
 	// (DESIGN-V2.md, "Writing: tx"). The port takes writes before it is
@@ -306,7 +306,7 @@ func (dev *Device) session(ctx context.Context, sink chan<- device.Frame, report
 		return false, fmt.Errorf("set read timeout on %s: %w", dev.opts.Path, terr)
 	}
 
-	framer, ferr := NewFramer(dev.opts.Terminator, dev.opts.MaxFrameBytes)
+	framer, ferr := NewFramer(dev.opts.Separator, dev.opts.MaxFrameBytes)
 	if ferr != nil {
 		return false, ferr
 	}

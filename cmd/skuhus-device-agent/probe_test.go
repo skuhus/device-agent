@@ -116,7 +116,7 @@ func TestProbePresenceLogsOnlyChanges(t *testing.T) {
 	}
 }
 
-// The terminator is bytes, and the command line can only carry text, so escapes
+// The separator is bytes, and the command line can only carry text, so escapes
 // have to be decoded. Getting this wrong makes probe disagree with the config
 // file about what ends a frame.
 func TestParseSeparator(t *testing.T) {
