@@ -926,7 +926,7 @@ every removed key is ("Loading is strict in both directions").
 status topic, and counts the failed opens. Source: maintainer, 2026-09-29.
 
 v1 already keeps running and retries with backoff, because a device unplugged at
-startup is an expected condition (internal/device/serial/serial.go, New). A
+startup is an expected condition (internal/device/serial/serial.go:84). A
 process that exited instead could not publish the status or metrics meant to
 report the problem, and a service manager would restart it in a loop until the
 device appeared.
