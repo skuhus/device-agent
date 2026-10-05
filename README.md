@@ -134,8 +134,8 @@ answer. `validate` shows each group's topic.
 The station's broker user must be allowed to read its project's and its site's
 group topics before a station joins a group there. RabbitMQ 4.3.5 closes the
 connection of a client whose subscription it refuses, and the agent then
-reconnects at once and is refused again, without a pause: measured, 549
-connections in 8 s. DESIGN-V2.md, "Broadcast groups", has the rest.
+reconnects at once and is refused again, without a pause: measured, 482
+connections in 5 s. DESIGN-V2.md, "Broadcast groups", has the rest.
 
 ## Build and test
 
@@ -205,9 +205,9 @@ and never from a repository.
 
 Anonymous MQTT is refused, which is the fleet broker's current behaviour and the
 reason this file sets it explicitly. `station-pack-03` is confined by topic
-permission to `skuhus.acme.vasby.pack-03.*`: it cannot publish or subscribe
-outside its own station, which is what device-agent-spec.md, section 8, asks
-per-station credentials to buy; it may also read its project's and its site's
+permission to `skuhus.acme.vasby.pack-03.*`: it cannot publish outside its own
+station, which is what device-agent-spec.md, section 8, asks per-station
+credentials to buy, and outside it may read only its project's and its site's
 broadcast group tx topics. `ingest` reads every station's topics and writes only
 tx topics, a device's or a broadcast group's, so it cannot pass anything off as
 a reading or a status. Adding a station means adding a user and a topic
@@ -247,8 +247,8 @@ make send-tx TX_TOPIC=skuhus/acme/vasby/group/scales/tx FLAGS="--hex 05"
 
 Sent to a broadcast group, it prints every device's results, with the station
 and the device, until `--wait` ends, 15 s by default. `--file` takes a path from
-the repository root. `--id` sends a chosen id, to
-see a resend rejected while the first is still being written.
+the repository root. `--id` sends a chosen id, to see a resend rejected while
+the first is still being written.
 
 Each message prints its topic, QoS, retained flag and message expiry, a response
 topic or correlation data when it carries one, then the payload with JSON
@@ -543,6 +543,13 @@ flat.
 
 `probe` prints payload contents by design; `logging.log_payloads` does not apply
 to it.
+
+An agent whose log repeats `broker connected`, `subscription refused; no tx will
+arrive on this topic` and `broker connection lost, reconnecting`, many times a
+second, subscribes to a topic its broker user may not read, usually a broadcast
+group's; the refused record names the topic. RabbitMQ 4.3.5 closes the
+connection over it, and the agent reconnects at once. Grant the read permission,
+or take the group out of `broadcast_groups` ("Writing to a device").
 
 ## Environment hazards on Linux
 

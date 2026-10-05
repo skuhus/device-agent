@@ -252,8 +252,8 @@ type TxResult struct {
 	Detail map[string]any `json:"detail"`
 }
 
-// Tx is what a sender publishes on a device's tx topic, for the agent to write
-// to the device.
+// Tx is what a sender publishes on a device's tx topic, or on a broadcast
+// group's, for the agent to write to the device, or to each in the group.
 type Tx struct {
 	Schema int    `json:"schema"`
 	ID     string `json:"id"`

@@ -166,10 +166,11 @@ devices:
     #   site     skuhus/<project>/<site>/group/<group>/tx
     #   station  skuhus/<project>/<site>/<station>/group/<group>/tx
     #
-    # A group's name is a topic level, [a-z0-9-]+. The broker must let this
-    # station's user read its project and site group topics: RabbitMQ 4.3.5
-    # closes the connection of an agent whose subscription it refuses, which
-    # takes the whole agent off the broker. For example:
+    # A group's name is a topic level, [a-z0-9-]+, listed once per scope. The
+    # broker must let this station's user read its project and site group
+    # topics: RabbitMQ 4.3.5 closes the connection of an agent whose
+    # subscription it refuses, and the agent reconnects at once and is refused
+    # again, which keeps it off the broker. For example:
     #
     #   broadcast_groups: { project: [], site: [scales], station: [] }
     broadcast_groups: { project: [], site: [], station: [] }

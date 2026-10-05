@@ -108,8 +108,8 @@ type Options struct {
 	// from. It defaults to when New is called.
 	Started time.Time
 
-	// TxIn delivers the tx that arrive on the devices' tx topics. Nil means
-	// no tx is taken.
+	// TxIn delivers the tx that arrive on the devices' tx topics and their
+	// broadcast groups'. Nil means no tx is taken.
 	TxIn <-chan TxMessage
 
 	// LogPayloads puts each published reading's data on its record, and each

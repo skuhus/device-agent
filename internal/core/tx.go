@@ -12,7 +12,8 @@ import (
 	"github.com/skuhus/device-agent/internal/wire"
 )
 
-// TxMessage is a tx as it arrived from the broker, on a device's tx topic.
+// TxMessage is a tx as it arrived from the broker, on a device's tx topic or a
+// broadcast group's.
 type TxMessage struct {
 	Topic   string
 	Payload []byte

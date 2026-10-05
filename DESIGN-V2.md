@@ -457,18 +457,21 @@ Measured on 2026-10-06 against RabbitMQ 4.3.5 (#35):
   refused, the broker closed the connection after the SUBACK, and the client
   received 0 of 10 tx sent to its own device. With every topic permitted, it
   received 10 of 10.
-- The agent, with a site group its station may not read: it connected 549
-  times in 8 s. Each time the broker closed the connection over the refused
-  subscription (`subscribe_error`), the agent logged that subscribing failed,
-  and it reconnected at once, since the first attempt after a lost connection
-  does not wait ("Reconnecting to the broker"). With the permission in place it
+- The agent, with a site group its station may not read: it connected 482
+  times in 5 s. Each time it logged the group's topic as refused, reason 0x87,
+  the broker closed the connection over it (`subscribe_error`), and the agent
+  reconnected at once, since the first attempt after a lost connection does not
+  wait ("Reconnecting to the broker"). With the permission in place it
   connected once.
 
 A group subscription the broker refuses therefore takes the whole agent off the
 broker, and makes it reconnect without a pause; the permissions come before the
-configuration. The agent logs a refusal that the broker answers without closing
-the connection as `subscription refused; no tx will arrive on this topic`
-(internal/transport/mqtt/client.go, subscribe).
+configuration. The agent logs each refused topic as `subscription refused; no
+tx will arrive on this topic`, with the reason code
+(internal/transport/mqtt/client.go, subscribe). paho hands the SUBACK over
+together with an error when a topic is refused (paho/client.go, Subscribe, in
+paho.golang v0.23.0); the agent reads the SUBACK, and logs that subscribing
+failed only when there is none.
 
 ## Status channel
 
@@ -659,8 +662,8 @@ one of the events that waits (measured in #13).
 
 ### tx
 
-On `<device>/tx`, published by senders. The agent subscribes to it (PLAN-V2.md,
-T14).
+On `<device>/tx`, or on a broadcast group's tx topic ("Broadcast groups"),
+published by senders. The agent subscribes to both (PLAN-V2.md, T14; #35).
 
 ```json tx
 {
@@ -992,7 +995,7 @@ channel").
 | event, tx result | `<device>/status` | 1 | no | the device's |
 | keepalive | `agent/<instance>/status` | 0 | no | `gone_after_s`: a keepalive older than that says nothing true. v1 used four intervals (internal/transport/mqtt/client.go:24-27). |
 | offline | `agent/<instance>/status` | 1 | no | none |
-| tx | `<device>/tx` | 1, by senders | no | set by the sender (#23 Q19) |
+| tx | `<device>/tx`, or a broadcast group's | 1, by senders | no | set by the sender (#23 Q19) |
 
 `[Decided]` Nothing is retained. v1 retains its status and its will
 (internal/transport/mqtt/client.go:141-149, 182-192), and three measurements
