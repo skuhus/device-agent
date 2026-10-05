@@ -1,0 +1,121 @@
+{
+  "rabbit_version": "4.3.5",
+  "users": [
+    {
+      "name": "admin",
+      "password_hash": "UTwp/cW9IeOk7S5DQMhdEK5EVqlSRuzCxaNofkFK7jweoCNN",
+      "hashing_algorithm": "rabbit_password_hashing_sha256",
+      "tags": ["administrator"],
+      "limits": {}
+    },
+    {
+      "name": "station-pack-03",
+      "password_hash": "Ma/hou4osqBPHF8Q05X58Dig5ZmPb8CYmKByG9vPsjsxg6PE",
+      "hashing_algorithm": "rabbit_password_hashing_sha256",
+      "tags": [],
+      "limits": {}
+    },
+    {
+      "name": "ingest",
+      "password_hash": "q/8ozIAYrVbs9ShlRQh9pmqJwVbMY+pMfTx+ILKYYWnHoX4n",
+      "hashing_algorithm": "rabbit_password_hashing_sha256",
+      "tags": ["management"],
+      "limits": {}
+    }
+  ],
+  "vhosts": [
+    { "name": "skuhus" }
+  ],
+  "permissions": [
+    {
+      "user": "admin",
+      "vhost": "skuhus",
+      "configure": ".*",
+      "write": ".*",
+      "read": ".*"
+    },
+    {
+      "user": "station-pack-03",
+      "vhost": "skuhus",
+      "configure": "^mqtt-subscription-.*$",
+      "write": "^(amq\\.topic|mqtt-subscription-.*)$",
+      "read": "^(amq\\.topic|mqtt-subscription-.*)$"
+    },
+    {
+      "user": "ingest",
+      "vhost": "skuhus",
+      "configure": "^(mqtt-subscription-.*|skuhus-ingest\\..*)$",
+      "write": "^(amq\\.topic|mqtt-subscription-.*|skuhus-ingest\\..*)$",
+      "read": "^(amq\\.topic|mqtt-subscription-.*|skuhus-ingest\\..*)$"
+    }
+  ],
+  "topic_permissions": [
+    {
+      "user": "station-pack-03",
+      "vhost": "skuhus",
+      "exchange": "amq.topic",
+      "write": "^skuhus\\.acme\\.vasby\\.pack-03\\..*$",
+      "read": "^skuhus\\.acme\\.vasby\\.pack-03\\..*$"
+    },
+    {
+      "user": "ingest",
+      "vhost": "skuhus",
+      "exchange": "amq.topic",
+      "write": "^skuhus\\.[^.]+\\.[^.]+\\.[^.]+\\.[^.]+\\.tx$",
+      "read": "^skuhus\\..*$"
+    }
+  ],
+  "parameters": [],
+  "global_parameters": [],
+  "policies": [],
+  "queues": [
+    {
+      "name": "skuhus-ingest.rx",
+      "vhost": "skuhus",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": { "x-queue-type": "quorum" }
+    },
+    {
+      "name": "skuhus-ingest.device-status",
+      "vhost": "skuhus",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": { "x-queue-type": "quorum" }
+    },
+    {
+      "name": "skuhus-ingest.agent-status",
+      "vhost": "skuhus",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": { "x-queue-type": "quorum" }
+    }
+  ],
+  "exchanges": [],
+  "bindings": [
+    {
+      "source": "amq.topic",
+      "vhost": "skuhus",
+      "destination": "skuhus-ingest.rx",
+      "destination_type": "queue",
+      "routing_key": "skuhus.*.*.*.*.rx",
+      "arguments": {}
+    },
+    {
+      "source": "amq.topic",
+      "vhost": "skuhus",
+      "destination": "skuhus-ingest.device-status",
+      "destination_type": "queue",
+      "routing_key": "skuhus.*.*.*.*.status",
+      "arguments": {}
+    },
+    {
+      "source": "amq.topic",
+      "vhost": "skuhus",
+      "destination": "skuhus-ingest.agent-status",
+      "destination_type": "queue",
+      "routing_key": "skuhus.*.*.*.agent.*.status",
+      "arguments": {}
+    }
+  ]
+}
