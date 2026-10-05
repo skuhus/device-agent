@@ -55,13 +55,13 @@
       "vhost": "/",
       "exchange": "amq.topic",
       "write": "^skuhus\\.acme\\.vasby\\.pack-03\\..*$",
-      "read": "^skuhus\\.acme\\.vasby\\.pack-03\\..*$"
+      "read": "^skuhus\\.acme\\.(vasby\\.pack-03\\..*|group\\.[^.]+\\.tx|vasby\\.group\\.[^.]+\\.tx)$"
     },
     {
       "user": "ingest",
       "vhost": "/",
       "exchange": "amq.topic",
-      "write": "^skuhus\\.[^.]+\\.[^.]+\\.[^.]+\\.[^.]+\\.tx$",
+      "write": "^skuhus\\.[^.]+\\.(group\\.[^.]+|[^.]+\\.[^.]+\\.[^.]+|[^.]+\\.[^.]+\\.group\\.[^.]+)\\.tx$",
       "read": "^skuhus\\..*$"
     }
   ],

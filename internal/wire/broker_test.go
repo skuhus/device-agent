@@ -193,9 +193,10 @@ func connectWith(ctx context.Context, t *testing.T, addr, user, pass, clientID s
 // TestBrokerPermissions publishes as each development user to the topics the
 // permissions in dev/rabbitmq/definitions.json are meant to allow and refuse,
 // and checks what the broker does with each: a sender may publish tx to a
-// device, and nothing that would pass for a reading, a device's status or an
-// agent's keepalive or offline message; a station may not reach another
-// station's devices.
+// device and to a broadcast group at each scope, which the station may read,
+// and nothing that would pass for a reading, a device's status or an agent's
+// keepalive or offline message; a station may not reach another station's
+// devices, nor send to its site's group.
 //
 // RabbitMQ refuses a publish by closing the connection, not with a reason code
 // (measured on 4.3.5, T11), so a publish is judged by two things: whether the
@@ -244,7 +245,16 @@ func TestBrokerPermissions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("agent: %v", err)
 	}
+	groups := map[TxScope]TxRoute{}
+	for _, scope := range []TxScope{ScopeProject, ScopeSite, ScopeStation} {
+		if groups[scope], err = own.GroupTx(scope, "perm-"+run); err != nil {
+			t.Fatalf("%s group: %v", scope, err)
+		}
+	}
 
+	// A group check has the station subscribe to the group's topic, as its
+	// agent does, so it checks the station's read permission as well as the
+	// sender's write.
 	checks := []struct {
 		name      string
 		publisher user
@@ -253,10 +263,14 @@ func TestBrokerPermissions(t *testing.T) {
 		allowed   bool
 	}{
 		{"a sender publishes tx to a device", ingest, ownDevice.Tx(), station, true},
+		{"a sender publishes tx to a project's broadcast group", ingest, groups[ScopeProject].Topic, station, true},
+		{"a sender publishes tx to a site's broadcast group", ingest, groups[ScopeSite].Topic, station, true},
+		{"a sender publishes tx to a station's broadcast group", ingest, groups[ScopeStation].Topic, station, true},
 		{"a sender cannot publish a reading", ingest, ownDevice.Rx(), station, false},
 		{"a sender cannot publish a device status", ingest, ownDevice.Status(), station, false},
 		{"a sender cannot publish an agent's status", ingest, agent.Status(), station, false},
 		{"a station cannot publish to another station's tx", station, otherDevice.Tx(), ingest, false},
+		{"a station cannot publish to its site's broadcast group", station, groups[ScopeSite].Topic, ingest, false},
 	}
 	for index, check := range checks {
 		t.Run(check.name, func(t *testing.T) {
