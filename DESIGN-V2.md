@@ -112,6 +112,9 @@ receives nothing from a v2 agent, which is one reason the release is 2.0.0.
 A consumer takes every device at a station with a single-level wildcard:
 `skuhus/<project>/<site>/<station>/+/rx`.
 
+A tx can also reach every device in a broadcast group, on the group's own topic
+("Broadcast groups"; not built, #35).
+
 `[Decided]` Status at two levels. Source: maintainer, 2026-09-29.
 
     skuhus/<project>/<site>/<station>/agent/<instance>/status   will, keepalive, counters
@@ -389,6 +392,69 @@ racing a close reaches whatever descriptor now has that number; and it makes one
 write(2) call without continuing after a partial write (serial_unix.go:112-118).
 The agent's port type holds one lock across `Write` and `Close`, and loops until
 every byte is written. Source: maintainer, 2026-09-29 (#23 Q20).
+
+## Broadcast groups
+
+Not built: #35.
+
+`[Decided]` A device can be in broadcast groups at three scopes, its project,
+its site and its station, and one tx on a group's topic reaches every device in
+the group. Each device declares its groups, one list per scope. Source:
+maintainer, 2026-10-06 (#35 Q1, Q2, Q1b).
+
+```yaml
+devices:
+  - id: scales-a
+    broadcast_groups:
+      project: [scales]
+      site: [scales]
+      station: []
+```
+
+| Scope | Topic | Levels |
+|---|---|---|
+| project | `skuhus/<project>/group/<group>/tx` | 5 |
+| site | `skuhus/<project>/<site>/group/<group>/tx` | 6 |
+| station | `skuhus/<project>/<site>/<station>/group/<group>/tx` | 7 |
+
+A group name is a topic level, so it follows `[a-z0-9-]+`, as a device id does
+("Topics"). The site topic has the shape of a device's tx topic, so `group` is
+reserved as a station id, as `agent` is reserved as a device id. No other topic
+has the project topic's or the station topic's number of levels (#35 Q1b).
+
+`[Decided]` A group is not a `device_type`, which does not identify a model.
+What describes a device, a `device_info` with its model, description, serial
+number and part number, is decided on #36. Source: maintainer, 2026-10-06
+(#35 Q1, Q1a).
+
+The agent subscribes to a group's topic once, however many of its devices are in
+the group, and hands a tx on it to each of them. Tx ids are kept per device
+(internal/core/pipeline.go:25-30). Each device therefore takes the tx once and
+publishes its own results on its own status topic, all with the same `tx_id`. A
+resend is answered per device, as "The tx contract" describes.
+
+`[Decided]` Each device's entry in the keepalive lists every group the device
+is in, with its scope, and every tx topic that reaches the device: its own and
+each group's. A topic is reported as the filter that went into the SUBSCRIBE
+packet, with the broker's SUBACK answer to it, both recorded when the agent
+subscribes. The value used to subscribe is the value reported, so the keepalive
+cannot drift from what was subscribed. Source: maintainer, 2026-10-06 (#35 Q3,
+Q3a, Q3b).
+
+MQTT gives a client no way to read the broker's bindings. The other option was
+reading them from RabbitMQ's management API, and it was not chosen: it needs an
+HTTP credential with the `management` tag on every station, and works with
+RabbitMQ only (#35 Q3a).
+
+A station's agent needs read permission on its project and site group topics
+before it subscribes to them. This was measured on 2026-10-06 against RabbitMQ
+4.3.5, with mosquitto_sub 2.1.2 subscribing as a station (#35):
+- with one topic in a SUBSCRIBE refused, the broker closed the connection after
+  the SUBACK, and the client received 0 of 10 tx sent to its own device;
+- with every topic permitted, it received 10 of 10.
+
+The agent today expects a refused subscription to cost only that topic
+(internal/transport/mqtt/client.go:251-273).
 
 ## Status channel
 
@@ -831,6 +897,9 @@ Every reason and every class is present, at 0 when nothing happened, so a
 consumer can difference two keepalives without handling a missing key. An
 unmatched separator ("Reading: rx") shows as `discards.inter_char_timeout` and
 `rx_bytes` rising while `rx_frames` stays flat.
+
+Each entry is to list the device's broadcast groups as well, and every tx topic
+that reaches the device ("Broadcast groups"; not built, #35).
 
 Besides every interval, a keepalive goes out as soon as the broker connection
 comes up. The first one does not wait an interval, and a consumer that saw a
