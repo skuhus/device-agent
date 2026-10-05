@@ -44,6 +44,9 @@ const (
 
 	DefaultPublishTimeout = 2 * time.Second
 	DefaultBufferSize     = 64
+	// DefaultDrainTimeout is the drain's bound since v1, where it was a
+	// constant (DESIGN-V2.md, "The shutdown drain is bounded").
+	DefaultDrainTimeout = 5 * time.Second
 
 	// DefaultKeepaliveInterval is v1's heartbeat interval, and three missed
 	// keepalives, 45 seconds, is when a consumer treats the agent as gone
@@ -89,6 +92,7 @@ func Defaults() Config {
 		Delivery: Delivery{
 			PublishTimeout: Duration(DefaultPublishTimeout),
 			BufferSize:     DefaultBufferSize,
+			DrainTimeout:   Duration(DefaultDrainTimeout),
 		},
 		Status: Status{
 			KeepaliveInterval: Duration(DefaultKeepaliveInterval),

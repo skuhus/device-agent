@@ -349,6 +349,9 @@ func validateDelivery(delivery Delivery, devices []Device) []error {
 				delivery.PublishTimeout, where, deviceCfg.MessageExpiry))
 		}
 	}
+	if delivery.DrainTimeout <= 0 {
+		problems = append(problems, fmt.Errorf("delivery.drain_timeout must be positive, got %s", delivery.DrainTimeout))
+	}
 	if delivery.BufferSize < 1 {
 		problems = append(problems, fmt.Errorf("delivery.buffer_size must be at least 1, got %d", delivery.BufferSize))
 	}

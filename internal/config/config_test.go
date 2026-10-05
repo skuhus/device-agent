@@ -168,6 +168,7 @@ devices:
 		{"reconnect_backoff.jitter", cfg.Broker.ReconnectBackoff.Jitter, DefaultReconnectBackoffJitter},
 		{"publish_timeout", cfg.Delivery.PublishTimeout.Duration(), DefaultPublishTimeout},
 		{"buffer_size", cfg.Delivery.BufferSize, DefaultBufferSize},
+		{"drain_timeout", cfg.Delivery.DrainTimeout.Duration(), DefaultDrainTimeout},
 		{"keepalive_interval", cfg.Status.KeepaliveInterval.Duration(), DefaultKeepaliveInterval},
 		{"missed_keepalives", cfg.Status.MissedKeepalives, DefaultMissedKeepalives},
 		{"event_buffer_size", cfg.Status.EventBufferSize, DefaultEventBufferSize},
@@ -690,7 +691,9 @@ func TestValidateRequiresCredentials(t *testing.T) {
 // is worse than useless, so the publish timeout is checked against each
 // device's message expiry.
 func TestValidateRejectsPublishTimeoutLongerThanExpiry(t *testing.T) {
-	problems := validateDelivery(Delivery{PublishTimeout: Duration(5 * time.Second), BufferSize: 64},
+	delivery := Defaults().Delivery
+	delivery.PublishTimeout = Duration(5 * time.Second)
+	problems := validateDelivery(delivery,
 		[]Device{{ID: "scanner-1", MessageExpiry: Duration(30 * time.Second)}, {ID: "scale-1", MessageExpiry: Duration(2 * time.Second)}})
 	want := "delivery.publish_timeout (5s) exceeds devices.scale-1.message_expiry (2s); the operator would be told a reading failed after the broker had already expired it"
 	if len(problems) != 1 || problems[0].Error() != want {

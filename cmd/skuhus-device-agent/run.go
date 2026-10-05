@@ -285,6 +285,7 @@ func runAgent(ctx context.Context, cfg *config.Config, warnings []config.Warning
 		Builder:           builder,
 		AgentStatus:       agentTopics.Status(),
 		PublishTimeout:    cfg.Delivery.PublishTimeout.Duration(),
+		DrainTimeout:      cfg.Delivery.DrainTimeout.Duration(),
 		BufferSize:        cfg.Delivery.BufferSize,
 		EventBufferSize:   cfg.Status.EventBufferSize,
 		KeepaliveInterval: cfg.Status.KeepaliveInterval.Duration(),

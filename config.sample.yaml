@@ -158,6 +158,10 @@ delivery:
   # reading stops.
   publish_timeout: 2s
   buffer_size: 64
+  # When the agent stops, a tx being written goes on for at most this long, and
+  # then what is buffered waits for the broker at most this long again; what
+  # is left is recorded in the log as dropped, with its data.
+  drain_timeout: 5s
 
 status:
   # The agent publishes a keepalive with every device's state and counters on

@@ -26,12 +26,6 @@ import (
 	"github.com/skuhus/device-agent/internal/wire"
 )
 
-// DefaultDrainTimeout bounds the shutdown drain. A reading is perishable, so
-// spending a minute delivering a backlog nobody can act on is worse than
-// dropping it and recording it: the operator who rescans is ahead of the one
-// reading a stale pick.
-const DefaultDrainTimeout = 5 * time.Second
-
 // Transport is the broker connection as the core uses it. Each method publishes
 // one kind of message with the QoS and expiry DESIGN-V2.md, "Publishing",
 // assigns it.
@@ -72,7 +66,12 @@ type Options struct {
 	// BufferSize is how many frames each device's channel holds. When it is
 	// full the reader blocks, which is the intended backpressure: a stalled
 	// broker shows as a stalled device rather than as a queue growing unseen.
-	BufferSize   int
+	BufferSize int
+	// DrainTimeout bounds the shutdown: how long a tx being written goes on,
+	// and how long what is buffered waits for the broker. A reading is
+	// perishable, so spending a minute delivering a backlog nobody can act on
+	// is worse than dropping it and recording it: the operator who rescans is
+	// ahead of the one reading a stale pick.
 	DrainTimeout time.Duration
 	// EventBufferSize is how many port events each device keeps while they
 	// cannot be published. A full queue drops its oldest event, so that a long
@@ -168,6 +167,8 @@ func New(opts Options) (*Core, error) {
 		return nil, fmt.Errorf("core: publish timeout must be positive, got %s", opts.PublishTimeout)
 	case opts.BufferSize <= 0:
 		return nil, fmt.Errorf("core: buffer size must be positive, got %d", opts.BufferSize)
+	case opts.DrainTimeout <= 0:
+		return nil, fmt.Errorf("core: drain timeout must be positive, got %s", opts.DrainTimeout)
 	case opts.EventBufferSize <= 0:
 		return nil, fmt.Errorf("core: event buffer size must be positive, got %d", opts.EventBufferSize)
 	case opts.KeepaliveInterval <= 0:
@@ -189,9 +190,6 @@ func New(opts Options) (*Core, error) {
 		if dev.TxOpenAttempts < 0 || dev.TxOpenInterval < 0 {
 			return nil, fmt.Errorf("core: device %s has negative tx open settings", dev.Wire.ID)
 		}
-	}
-	if opts.DrainTimeout <= 0 {
-		opts.DrainTimeout = DefaultDrainTimeout
 	}
 	if opts.Logger == nil {
 		opts.Logger = slog.New(slog.DiscardHandler)
@@ -293,7 +291,7 @@ func (core *Core) Run(ctx context.Context) error {
 	}()
 
 	<-ctx.Done()
-	core.log.Info("shutting down", "buffered", buffered(pipelines))
+	core.log.Info("shutting down", "buffered", buffered(pipelines), "drain_timeout", core.opts.DrainTimeout.String())
 	core.intakeMu.Lock()
 	core.stopping.Store(true)
 	core.intakeMu.Unlock()

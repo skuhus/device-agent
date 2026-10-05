@@ -312,7 +312,8 @@ arrives without the connection.
 
 `[Decided]` A tx the agent stops before writing fails as `agent_stopping`,
 with the bytes written. A tx being written when the agent starts to stop goes
-on for at most the drain's 5 s, with its port still open, and then stops after
+on for at most the drain, `delivery.drain_timeout` (5 s by default, a key since
+#30), with its port still open, and then stops after
 the chunk in hand; a queued one, or one that arrives while the agent stops, is
 not started and gets `bytes_written` 0. Source: maintainer, 2026-10-04
 (#19 Q1).
@@ -962,10 +963,10 @@ or a name, the section says so.
   attached ("device_open, not device_present").
 - agent_ts is the host clock in UTC, and nothing in a message vouches for it
   ("The agent does not ask whether the clock is synchronised").
-- The connection outlives the run context, the shutdown drain lasts at most 5 s,
-  and the disconnect is bounded ("The broker connection outlives the run
-  context", "The shutdown drain is bounded at 5 seconds", "Shutdown does not
-  wait on the network without a bound").
+- The connection outlives the run context, the shutdown drain lasts at most
+  `delivery.drain_timeout`, and the disconnect is bounded ("The broker
+  connection outlives the run context", "The shutdown drain is bounded",
+  "Shutdown does not wait on the network without a bound").
 - The version is one constant in source. A merge to master with an untagged
   version builds, tags and releases, attaching a tarball and a bare binary per
   platform and one checksums file (README.md, "Continuous integration").
@@ -1147,27 +1148,27 @@ is: the keepalive stops, the devices stop, the buffers drain, the offline
 message goes out, then DISCONNECT (internal/core/core.go, Run). The end-to-end
 test checks it (T10).
 
-### The shutdown drain is bounded at 5 seconds
+### The shutdown drain is bounded
 
 A frame already in the buffer gets its full `publish_timeout`, but the drain as
-a whole stops after `DefaultDrainTimeout` (internal/core/core.go). Without a
-bound, a full buffer against an unresponsive broker holds the process open for
+a whole stops after `delivery.drain_timeout`, 5 s by default
+(internal/core/core.go, Run). Without a bound, a full buffer against an unresponsive broker holds the process open for
 `buffer_size` times `publish_timeout`, which at the defaults is over two minutes
 spent delivering readings whose sessions have ended ("Scans are perishable").
 What is left is recorded in the log as dropped, with its data, not discarded
 silently. Device events still waiting for the connection end at the same
 deadline.
 
-This is an internal constant rather than a configuration key: it is a tuning
-value.
+The bound was an internal constant, 5 s, until the maintainer asked that tuning
+values be settable (#30).
 
-A tx being written when the agent starts to stop has the same 5 s before the
+A tx being written when the agent starts to stop has the same bound before the
 readers stop, since its port has to stay open (#19 Q1). It stops after the
 chunk in hand, and that chunk cannot be cut short: go.bug.st/serial writes on a
 blocking descriptor. On the bench adapter, which takes 16 KB at a time, the
-chunk in hand returned 9.8 s after the 5 s, and closing the port took another
-4.5 s, most likely while the driver sent the block it held; the whole stop took
-19.3 s. A write deadline needs a port layer of the agent's own, the one #5
+chunk in hand returned 9.8 s after the drain's 5 s, and closing the port took
+another 4.5 s, most likely while the driver sent the block it held; the whole
+stop took 19.3 s. A write deadline needs a port layer of the agent's own, the one #5
 proposes.
 
 ### Shutdown does not wait on the network without a bound

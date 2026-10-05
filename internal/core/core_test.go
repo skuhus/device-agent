@@ -620,6 +620,7 @@ func TestNewRejectsUnusableOptions(t *testing.T) {
 		{"no agent status topic", func(o *Options) { o.AgentStatus = "" }, "status topic is required"},
 		{"zero publish timeout", func(o *Options) { o.PublishTimeout = 0 }, "publish timeout must be positive"},
 		{"zero buffer", func(o *Options) { o.BufferSize = 0 }, "buffer size must be positive"},
+		{"zero drain timeout", func(o *Options) { o.DrainTimeout = 0 }, "drain timeout must be positive, got 0s"},
 		{"zero event buffer", func(o *Options) { o.EventBufferSize = 0 }, "event buffer size must be positive"},
 		{"device without message expiry", func(o *Options) { o.Devices[0].Wire.Expiry = 0 }, "has no message expiry"},
 		{"zero keepalive interval", func(o *Options) { o.KeepaliveInterval = 0 }, "keepalive interval must be positive"},

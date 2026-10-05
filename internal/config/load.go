@@ -364,6 +364,7 @@ func envTargets(cfg *Config) map[string]func(string) error {
 
 		EnvPrefix + "DELIVERY_PUBLISH_TIMEOUT": setDuration(&cfg.Delivery.PublishTimeout),
 		EnvPrefix + "DELIVERY_BUFFER_SIZE":     setInt(&cfg.Delivery.BufferSize),
+		EnvPrefix + "DELIVERY_DRAIN_TIMEOUT":   setDuration(&cfg.Delivery.DrainTimeout),
 
 		EnvPrefix + "STATUS_KEEPALIVE_INTERVAL": setDuration(&cfg.Status.KeepaliveInterval),
 		EnvPrefix + "STATUS_MISSED_KEEPALIVES":  setInt(&cfg.Status.MissedKeepalives),

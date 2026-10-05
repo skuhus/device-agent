@@ -200,6 +200,10 @@ func (stopBits *StopBits) UnmarshalYAML(node *yaml.Node) error {
 type Delivery struct {
 	PublishTimeout Duration `yaml:"publish_timeout"`
 	BufferSize     int      `yaml:"buffer_size"`
+	// DrainTimeout bounds the shutdown: a tx being written goes on for this
+	// long, and then what is buffered waits for the broker at most this long
+	// (DESIGN-V2.md, "The shutdown drain is bounded").
+	DrainTimeout Duration `yaml:"drain_timeout"`
 }
 
 // Status configures the agent's keepalive and device events (DESIGN-V2.md,

@@ -112,8 +112,9 @@ logging:
 }
 
 // The waits the configuration sets are the ones the agent keeps: a device's
-// reopen_interval with its backoff off, and the broker's reconnect_interval.
-// Both differ from their defaults, so a wait taken from anywhere else shows.
+// reopen_interval with its backoff off, the broker's reconnect_interval, and
+// the shutdown's drain_timeout. Each differs from its default, so a wait
+// taken from anywhere else shows.
 func TestRunUsesTheConfiguredWaits(t *testing.T) {
 	dir := t.TempDir()
 	configFile := filepath.Join(dir, "agent.yaml")
@@ -128,6 +129,8 @@ devices:
     separator: "\r\n"
     reopen_interval: 70ms
     reopen_backoff: { enabled: false }
+delivery:
+  drain_timeout: 300ms
 logging:
   level: debug
   stdout: true
@@ -163,6 +166,9 @@ logging:
 	stopping := stdout.WithMessage(t, "shutting down")
 	if len(stopping) != 1 {
 		t.Fatalf("%d shutting down lines, want 1", len(stopping))
+	}
+	if stopping[0]["drain_timeout"] != "300ms" {
+		t.Errorf("shutting down with drain_timeout %v, want 300ms", stopping[0]["drain_timeout"])
 	}
 	stoppedAt := recordTime(t, stopping[0])
 	attempts := 0

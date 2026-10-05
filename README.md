@@ -99,7 +99,8 @@ how many bytes were written. No attempt is made once the tx's message expiry
 has passed.
 
 A tx the agent stops before writing fails as `agent_stopping`, with the bytes
-written: one being written goes on for 5 s first and then stops after the chunk
+written: one being written goes on for `delivery.drain_timeout`, 5 s by default,
+first and then stops after the chunk
 in hand, which on the bench adapter took up to 16 s more; one still queued is
 not started. A tx published while the agent is disconnected is lost and gets no
 result, and a sender treats a tx that got no result as not written.
@@ -269,11 +270,12 @@ makes that wait grow instead. Each failed attempt to open a device is a
 `port_open_failed` event with its error class, and is counted in the keepalive.
 
 SIGTERM and SIGINT stop it in this order: no tx is started any more, and one
-being written gets 5 seconds and then stops after the chunk in hand; the
-keepalive stops; the devices close, so nothing new arrives; what is already
-framed is published, for at most 5 seconds; the offline message goes out with
-reason `shutdown`; and only then does the connection close. A reading still
-buffered after those 5 seconds is recorded in the log as dropped, with its data,
+being written gets `delivery.drain_timeout`, 5 seconds by default, and then
+stops after the chunk in hand; the keepalive stops; the devices close, so
+nothing new arrives; what is already framed is published, for at most the same
+time again; the offline message goes out with reason `shutdown`; and only then
+does the connection close. A reading still buffered after that is recorded in
+the log as dropped, with its data,
 because a reading whose session has ended is not worth delivering late. A clean
 stop exits 0. An unknown command or a positional argument exits 2, and any other
 error 1, a flag that does not exist included.

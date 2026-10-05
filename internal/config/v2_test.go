@@ -466,3 +466,31 @@ func TestConnectTimeout(t *testing.T) {
 		t.Errorf("error = %v, want %q", err, want)
 	}
 }
+
+// delivery.drain_timeout comes from the file or the environment, and a
+// non-positive one is refused: zero would drop everything buffered at once.
+func TestDrainTimeout(t *testing.T) {
+	set := strings.Replace(validConfig, "  buffer_size: 64\n", "  buffer_size: 64\n  drain_timeout: 12s\n", 1)
+	if set == validConfig {
+		t.Fatal("validConfig no longer sets buffer_size; this test needs to add to delivery")
+	}
+	cfg, _, err := load(t, newFixture(t, set).path, noEnv(), Overrides{})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.Delivery.DrainTimeout.Duration(); got != 12*time.Second {
+		t.Errorf("drain_timeout from the file = %s, want 12s", got)
+	}
+	cfg, _, err = load(t, newFixture(t, set).path, []string{EnvPrefix + "DELIVERY_DRAIN_TIMEOUT=3s"}, Overrides{})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.Delivery.DrainTimeout.Duration(); got != 3*time.Second {
+		t.Errorf("drain_timeout from the environment = %s, want 3s", got)
+	}
+	zero := strings.Replace(validConfig, "  buffer_size: 64\n", "  buffer_size: 64\n  drain_timeout: 0s\n", 1)
+	_, _, err = load(t, newFixture(t, zero).path, noEnv(), Overrides{})
+	if want := "delivery.drain_timeout must be positive, got 0s"; err == nil || !strings.Contains(err.Error(), want) {
+		t.Errorf("error = %v, want %q", err, want)
+	}
+}
