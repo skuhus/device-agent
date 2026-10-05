@@ -50,11 +50,8 @@ func runCommand(args []string, stdout, stderr io.Writer) error {
 	flags.Var(&logLevel, "log-level", "override logging.level")
 	flags.Var(&logPayloads, "log-payloads", "override logging.log_payloads")
 
-	if err := flags.Parse(args); err != nil {
+	if err := parseCommandLine(flags, args); err != nil {
 		return err
-	}
-	if flags.NArg() > 0 {
-		return fmt.Errorf("%w: run takes no positional arguments, got %q", errUsage, flags.Arg(0))
 	}
 
 	cfg, warnings, err := config.Load(config.Options{

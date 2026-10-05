@@ -84,6 +84,22 @@ func main() {
 	}
 }
 
+// parseCommandLine parses a command's flags and refuses positional arguments.
+// A flag that does not parse, or an argument no command takes, is a usage
+// error, which exits 2; -h stays flag.ErrHelp, which exits 0.
+func parseCommandLine(flags *flag.FlagSet, args []string) error {
+	if err := flags.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return err
+		}
+		return fmt.Errorf("%w: %v", errUsage, err)
+	}
+	if flags.NArg() > 0 {
+		return fmt.Errorf("%w: %s takes no positional arguments, got %q", errUsage, flags.Name(), flags.Arg(0))
+	}
+	return nil
+}
+
 // stringFlag records whether a flag was set, which is what keeps flags above
 // the environment above the config file. The flag package has no built-in way
 // to distinguish "set to the zero value" from "not set".

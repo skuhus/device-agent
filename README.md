@@ -277,8 +277,8 @@ time again; the offline message goes out with reason `shutdown`; and only then
 does the connection close. A reading still buffered after that is recorded in
 the log as dropped, with its data,
 because a reading whose session has ended is not worth delivering late. A clean
-stop exits 0. An unknown command or a positional argument exits 2, and any other
-error 1, a flag that does not exist included.
+stop exits 0. An unknown command, a flag that does not exist or does not parse,
+and a positional argument exit 2, and any other error 1.
 
 Broker credentials come from `broker.credentials_file`:
 

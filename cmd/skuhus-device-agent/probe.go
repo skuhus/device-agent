@@ -57,11 +57,8 @@ func probeCommand(args []string, stdout, stderr io.Writer) error {
 	logLevel := flags.String("log-level", config.DefaultLogLevel, "log level for the structured log on stderr")
 	logPayloads := flags.Bool("log-payloads", false, "put discarded bytes on each discard's log line, as hex and as text when valid UTF-8; use this when a device frames nothing and the separator is unknown")
 
-	if err := flags.Parse(args); err != nil {
+	if err := parseCommandLine(flags, args); err != nil {
 		return err
-	}
-	if flags.NArg() > 0 {
-		return fmt.Errorf("%w: probe takes no positional arguments, got %q", errUsage, flags.Arg(0))
 	}
 	if *list {
 		return listDevices(stdout)
