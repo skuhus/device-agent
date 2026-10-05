@@ -176,8 +176,8 @@ func (core *Core) publishTxResult(line *pipeline, item *txResultItem) {
 	core.log.Info("tx result published", append(attrs, "message_expiry_left", remaining.String())...)
 }
 
-// sendKeepalives publishes the agent's keepalive every interval, and at once each
-// time the connection comes up, until stop is closed.
+// sendKeepalives publishes the agent's keepalive every interval, and at once
+// each time the connection comes up, until stop is closed.
 func (core *Core) sendKeepalives(stop <-chan struct{}, pipelines []*pipeline) {
 	ticker := time.NewTicker(core.opts.KeepaliveInterval)
 	defer ticker.Stop()

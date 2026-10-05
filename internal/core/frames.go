@@ -19,8 +19,8 @@ const (
 	outcomeDropped = "dropped"
 )
 
-// publishFrames drains one device's frames until its channel is closed. It is the
-// device's only publisher, so its sequence numbers are in reading order.
+// publishFrames drains one device's frames until its channel is closed. It is
+// the device's only publisher, so its sequence numbers are in reading order.
 //
 // During the shutdown drain each frame still gets its full publish timeout,
 // but the drain as a whole stops at the deadline Run sets. Without it, a full

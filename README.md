@@ -540,7 +540,8 @@ Dependabot names its own branches and commits.
 ```
 cmd/skuhus-device-agent/   main, flags, and the run, validate, probe and version commands
 internal/config/           load, validate, defaults
-internal/core/             runs the agent: each device's reader and publisher, events, keepalive, shutdown
+internal/backoff/          the wait between attempts, for a device's reopen and the broker's reconnect
+internal/core/             runs the agent: each device's frames, status messages, tx, keepalive, shutdown
 internal/device/           Device interface
 internal/device/serial/    CDC / RS-232 implementation, framing, PTY harness
 internal/wire/             topics and the JSON of every message

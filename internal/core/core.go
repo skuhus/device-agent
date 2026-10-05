@@ -187,9 +187,9 @@ func New(opts Options) (*Core, error) {
 // from then on. One being written goes on for at most the drain timeout, with
 // its port still open, and is then stopped after the chunk in hand (#19 Q1).
 // The keepalive stops, so none follows the offline message. The readers stop,
-// so nothing new arrives; each reports its port closed. The publishers drain what is already framed and
-// queued, for at most the drain timeout, including events still waiting for
-// the connection. The offline message goes out, and only then does the
+// so nothing new arrives; each reports its port closed. The publishers drain
+// what is already framed and queued, for at most the drain timeout, including
+// events still waiting for the connection. The offline message goes out, and only then does the
 // connection close. Closing first would make the broker publish the will
 // instead, reporting a crash where there was an orderly stop.
 func (core *Core) Run(ctx context.Context) error {
