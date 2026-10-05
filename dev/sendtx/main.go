@@ -3,7 +3,8 @@
 // prints the result of every device that takes the tx until --wait ends.
 //
 // It is the writing counterpart of the consumer: run it as the ingest user,
-// which may write device tx topics and read everything. It is not part of the
+// which may write tx topics, a device's or a broadcast group's, and read
+// everything. It is not part of the
 // agent and is not built by "make build".
 package main
 
@@ -43,7 +44,7 @@ func main() {
 	}
 	data, err := payload(*text, *file, *hexData)
 	if err == nil && !strings.HasSuffix(*topic, "/tx") {
-		err = fmt.Errorf("--topic %q is not a device's tx topic", *topic)
+		err = fmt.Errorf("--topic %q is not a tx topic", *topic)
 	}
 	if err == nil && *id == "" {
 		*id, err = newUUID()
@@ -194,21 +195,26 @@ func run(broker, username, password, topic, id, sender string, data []byte, expi
 		select {
 		case result := <-results:
 			detail, _ := json.Marshal(result["detail"])
-			device := ""
+			device := fmt.Sprintf("%s/%s", result["station"], result["device_id"])
+			shown := ""
 			if group {
-				device = fmt.Sprintf("  %s/%s", result["station"], result["device_id"])
+				shown = "  " + device
 			}
-			fmt.Printf("+%s%s  %s  %s  %s  %s\n", time.Since(sent).Round(time.Millisecond), device, result["state"], result["code"], result["text"], detail)
+			fmt.Printf("+%s%s  %s  %s  %s  %s\n", time.Since(sent).Round(time.Millisecond), shown, result["state"], result["code"], result["text"], detail)
 			switch result["state"] {
 			case "written", "failed", "rejected":
 				if !group {
 					return nil
 				}
-				finished[fmt.Sprintf("%s/%s", result["station"], result["device_id"])] = true
+				finished[device] = true
 			}
 		case <-deadline:
 			if group && len(finished) > 0 {
-				fmt.Printf("%d devices finished the tx within %s\n", len(finished), wait)
+				noun := "devices"
+				if len(finished) == 1 {
+					noun = "device"
+				}
+				fmt.Printf("%d %s finished the tx within %s\n", len(finished), noun, wait)
 				return nil
 			}
 			return fmt.Errorf("no final result within %s", wait)
