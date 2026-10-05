@@ -92,6 +92,11 @@ func validateIdentity(identity Identity) []error {
 			problems = append(problems, fmt.Errorf("%s %q must match [a-z0-9-]+; it is used verbatim as an MQTT topic segment", field.name, field.value))
 		}
 	}
+	if identity.Station == reservedStationID {
+		problems = append(problems, fmt.Errorf(
+			"identity.station %q is reserved: the site's broadcast group topics, skuhus/<project>/<site>/group/<group>/tx, would be this station's device tx topics",
+			identity.Station))
+	}
 	// The instance is a level of the agent's status topic, so it follows the
 	// same rule. v1 allowed [A-Za-z0-9._-] because there it was only the MQTT
 	// client id; it still is that, which is where the length limit comes from.
@@ -298,6 +303,7 @@ func validateDevices(devices []Device) ([]error, []Warning) {
 			problems = append(problems, fmt.Errorf("%s.reopen_interval and %s.reopen_backoff: %w", where, where, err))
 		}
 		problems = append(problems, validateDeviceType(where, deviceCfg.DeviceType)...)
+		problems = append(problems, validateBroadcastGroups(where, deviceCfg.BroadcastGroups)...)
 	}
 	return problems, warnings
 }
@@ -305,6 +311,39 @@ func validateDevices(devices []Device) ([]error, []Warning) {
 // reservedDeviceID is the topic level of the agent's own status, which no
 // device may take (DESIGN-V2.md, "Topics").
 const reservedDeviceID = "agent"
+
+// reservedStationID is the topic level of a site's broadcast group topics,
+// which no station may take (DESIGN-V2.md, "Broadcast groups").
+const reservedStationID = "group"
+
+// validateBroadcastGroups requires each group to be named as a topic level,
+// since its name is one in the group's tx topic, and to be listed once in its
+// scope.
+func validateBroadcastGroups(where string, groups BroadcastGroups) []error {
+	var problems []error
+	for _, scope := range []struct {
+		name   string
+		groups []string
+	}{
+		{"project", groups.Project},
+		{"site", groups.Site},
+		{"station", groups.Station},
+	} {
+		field := where + ".broadcast_groups." + scope.name
+		seen := make(map[string]int, len(scope.groups))
+		for index, group := range scope.groups {
+			if !topicSegment.MatchString(group) {
+				problems = append(problems, fmt.Errorf("%s[%d] %q must match [a-z0-9-]+; it is a level of the group's tx topic", field, index, group))
+				continue
+			}
+			if prev, dup := seen[group]; dup {
+				problems = append(problems, fmt.Errorf("%s[%d] %q duplicates %s[%d]", field, index, group, field, prev))
+			}
+			seen[group] = index
+		}
+	}
+	return problems
+}
 
 // validateDeviceType accepts any short text without control characters. It is
 // published in every message about the device, where a newline or an escape

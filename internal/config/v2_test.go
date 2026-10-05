@@ -127,6 +127,14 @@ func TestDeviceRejections(t *testing.T) {
 			`devices.d.device_type is 65 bytes; expected at most 64`},
 		{"device type with a newline", func(device *Device) { device.DeviceType = "a\nb" },
 			`devices.d.device_type "a\nb" contains a control character`},
+		{"broadcast group with capitals", func(device *Device) { device.BroadcastGroups.Site = []string{"Scales"} },
+			`devices.d.broadcast_groups.site[0] "Scales" must match [a-z0-9-]+; it is a level of the group's tx topic`},
+		{"broadcast group empty", func(device *Device) { device.BroadcastGroups.Project = []string{"scales", ""} },
+			`devices.d.broadcast_groups.project[1] "" must match [a-z0-9-]+; it is a level of the group's tx topic`},
+		{"broadcast group with a slash", func(device *Device) { device.BroadcastGroups.Station = []string{"a/b"} },
+			`devices.d.broadcast_groups.station[0] "a/b" must match [a-z0-9-]+; it is a level of the group's tx topic`},
+		{"broadcast group twice in a scope", func(device *Device) { device.BroadcastGroups.Site = []string{"scales", "front", "scales"} },
+			`devices.d.broadcast_groups.site[2] "scales" duplicates devices.d.broadcast_groups.site[0]`},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {

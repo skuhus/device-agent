@@ -174,6 +174,19 @@ type Device struct {
 	// being written again (#11 Q6a). The oldest is forgotten first, and a
 	// restart forgets them all.
 	TxRememberedIDs int `yaml:"tx_remembered_ids"`
+	// BroadcastGroups are the broadcast groups the device is in. A tx on a
+	// group's topic reaches every device in the group (DESIGN-V2.md,
+	// "Broadcast groups").
+	BroadcastGroups BroadcastGroups `yaml:"broadcast_groups"`
+}
+
+// BroadcastGroups lists a device's broadcast groups by scope. A group's tx
+// topic is under the project, the site or the station, so the same name at two
+// scopes is two groups.
+type BroadcastGroups struct {
+	Project []string `yaml:"project"`
+	Site    []string `yaml:"site"`
+	Station []string `yaml:"station"`
 }
 
 // ReopenPolicy is the wait before each attempt to open the port again.
