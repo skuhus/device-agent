@@ -390,9 +390,10 @@ func TestConnectionIsReportedUpAfterTheAnswers(t *testing.T) {
 
 	upCalled := false
 	opts = Options{ConnectTimeout: time.Second, OnUp: func() { upCalled = true }}
-	connectionUp(&fakeSubscriber{err: errors.New("Subscribe must not be called")}, opts, answers, answers.begin(), slog.New(slog.DiscardHandler))
-	if !upCalled {
-		t.Error("a connection with nothing to subscribe to was not reported up")
+	idle := &fakeSubscriber{}
+	connectionUp(idle, opts, answers, answers.begin(), slog.New(slog.DiscardHandler))
+	if !upCalled || idle.packet != nil {
+		t.Errorf("a connection with nothing to subscribe to: reported up %t, SUBSCRIBE sent %t; want up, and none sent", upCalled, idle.packet != nil)
 	}
 }
 

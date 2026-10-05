@@ -218,3 +218,20 @@ func TestKeepaliveListsEveryTxTopicWithItsAnswer(t *testing.T) {
 		}
 	}
 }
+
+// A tx that reaches a device through two of its groups is written once: the
+// second copy is answered as a resend, from the device's own ids.
+func TestTxThroughTwoGroupsIsWrittenOnce(t *testing.T) {
+	run := startGroupRun(t)
+	run.send(groupRoute(t, wire.ScopeSite, "scales").Topic, txA, []byte{0x05})
+	waitUntil(t, "scales-a's written result", func() bool { return len(run.resultsOf("scales-a", txA)) == 2 })
+	run.send(groupRoute(t, wire.ScopeStation, "front").Topic, txA, []byte{0x05})
+	waitUntil(t, "scales-a's answer to the copy from its station group", func() bool { return len(run.resultsOf("scales-a", txA)) >= 3 })
+	time.Sleep(100 * time.Millisecond)
+	if got := codes(run.resultsOf("scales-a", txA)); got != "accepted/accepted written/written written/already_written" {
+		t.Errorf("scales-a results = %s, want the second copy answered already_written", got)
+	}
+	if writes, _ := run.printers["scales-a"].snapshot(); len(writes) != 1 {
+		t.Errorf("scales-a was written %d times, want once", len(writes))
+	}
+}
