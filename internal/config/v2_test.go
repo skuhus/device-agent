@@ -382,7 +382,7 @@ func TestTxOpenSettings(t *testing.T) {
 	if device := cfg.Devices[0]; device.TxOpenAttempts != 3 || device.TxOpenInterval.Duration() != time.Second {
 		t.Errorf("defaults: tx_open_attempts %d, tx_open_interval %s; want 3 and 1s", device.TxOpenAttempts, device.TxOpenInterval)
 	}
-	set := strings.Replace(validConfig, "    message_expiry: 30s\n", "    message_expiry: 30s\n    tx_open_attempts: 5\n    tx_open_interval: 250ms\n    tx_chunk_bytes: 512\n", 1)
+	set := strings.Replace(validConfig, "    message_expiry: 30s\n", "    message_expiry: 30s\n    tx_open_attempts: 5\n    tx_open_interval: 250ms\n    tx_chunk_bytes: 512\n    tx_remembered_ids: 64\n", 1)
 	if set == validConfig {
 		t.Fatal("validConfig no longer sets message_expiry; this test needs to add to a device")
 	}
@@ -390,14 +390,16 @@ func TestTxOpenSettings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if device := cfg.Devices[0]; device.TxOpenAttempts != 5 || device.TxOpenInterval.Duration() != 250*time.Millisecond || device.TxChunkBytes != 512 {
-		t.Errorf("set: tx_open_attempts %d, tx_open_interval %s, tx_chunk_bytes %d; want 5, 250ms and 512",
-			device.TxOpenAttempts, device.TxOpenInterval, device.TxChunkBytes)
+	if device := cfg.Devices[0]; device.TxOpenAttempts != 5 || device.TxOpenInterval.Duration() != 250*time.Millisecond ||
+		device.TxChunkBytes != 512 || device.TxRememberedIDs != 64 {
+		t.Errorf("set: tx_open_attempts %d, tx_open_interval %s, tx_chunk_bytes %d, tx_remembered_ids %d; want 5, 250ms, 512 and 64",
+			device.TxOpenAttempts, device.TxOpenInterval, device.TxChunkBytes, device.TxRememberedIDs)
 	}
 	for settings, want := range map[string]string{
 		"    tx_open_attempts: -1\n":  "devices.scanner-main.tx_open_attempts must be at least 1, got -1",
 		"    tx_open_interval: -1s\n": "devices.scanner-main.tx_open_interval must be positive, got -1s",
 		"    tx_chunk_bytes: 0\n":     "devices.scanner-main.tx_chunk_bytes must be at least 1, got 0",
+		"    tx_remembered_ids: 0\n":  "devices.scanner-main.tx_remembered_ids must be at least 1, got 0",
 	} {
 		body := strings.Replace(validConfig, "    message_expiry: 30s\n", "    message_expiry: 30s\n"+settings, 1)
 		_, _, err := load(t, newFixture(t, body).path, noEnv(), Overrides{})

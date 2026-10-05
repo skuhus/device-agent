@@ -23,6 +23,10 @@ const (
 	// DefaultTxChunkBytes is the chunk since T14, where it was a constant:
 	// about a second on the line at 9600 baud.
 	DefaultTxChunkBytes = 1024
+	// DefaultTxRememberedIDs is T16's number, an internal constant until #30:
+	// a sender resends within its own timeout, seconds or minutes, and 1024
+	// jobs is more than a station prints in that time.
+	DefaultTxRememberedIDs = 1024
 	// DefaultReopenInterval and the reopen backoff's defaults are v1's: from
 	// 100 ms, doubling to 30 s. The backoff is on, because each failed attempt
 	// is a port_open_failed event, and a device unplugged overnight would
@@ -136,6 +140,7 @@ func DefaultDevice() Device {
 		TxOpenAttempts:   DefaultTxOpenAttempts,
 		TxOpenInterval:   Duration(DefaultTxOpenInterval),
 		TxChunkBytes:     DefaultTxChunkBytes,
+		TxRememberedIDs:  DefaultTxRememberedIDs,
 		ReopenInterval:   Duration(DefaultReopenInterval),
 		ReopenBackoff: Backoff{
 			Enabled: DefaultReopenBackoffEnabled,

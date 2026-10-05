@@ -642,7 +642,7 @@ was written recently gets `already_written` alone, and is not written again
 |---|---|---|---|
 | `accepted` | `accepted` | | Received and queued for the port. |
 | `written` | `written` | `bytes_written`, `open_attempts` | Every byte reached the port. |
-| `written` | `already_written` | `written_at` | A tx with this id was written before, so this one was not (#23 Q15). The agent remembers the ids of the last 1024 tx written to each device, in memory, and a restart forgets them (#11 Q6a, T16). |
+| `written` | `already_written` | `written_at` | A tx with this id was written before, so this one was not (#23 Q15). The agent remembers the ids of the last `tx_remembered_ids` tx written to each device, 1024 by default, in memory, and a restart forgets them (#11 Q6a, T16, #30). |
 | `rejected` | `in_progress` | `stage`, `since`, `bytes_written` | A tx with this id is queued or being written, so this one is not taken (#11 Q6). |
 | `failed` | `invalid_message` | `error` | Not JSON, `schema` is not 2, a field is missing or unknown, or `raw_b64` is not base64. |
 | `failed` | `invalid_id` | | `id` is not a UUID. |

@@ -151,6 +151,11 @@ type Device struct {
 	// time. Closing the port, and a stopping agent, wait for the chunk in
 	// hand rather than for the whole tx.
 	TxChunkBytes int `yaml:"tx_chunk_bytes"`
+	// TxRememberedIDs is how many written tx ids the device remembers, in
+	// memory, so that a resend of one is answered already_written instead of
+	// being written again (#11 Q6a). The oldest is forgotten first, and a
+	// restart forgets them all.
+	TxRememberedIDs int `yaml:"tx_remembered_ids"`
 	// TxOpenAttempts is how many times a tx that finds the port closed asks
 	// for it to be opened, TxOpenInterval apart, before it fails. Once
 	// writing has started nothing is retried (DESIGN-V2.md, "Writing: tx").

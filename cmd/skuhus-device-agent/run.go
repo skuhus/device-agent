@@ -200,11 +200,12 @@ func runAgent(ctx context.Context, cfg *config.Config, warnings []config.Warning
 			return err
 		}
 		devices = append(devices, core.Device{
-			Reader:         reader,
-			Wire:           wire.Device{ID: deviceCfg.ID, Type: deviceCfg.DeviceType, Expiry: deviceCfg.MessageExpiry.Duration()},
-			Topics:         topics,
-			TxOpenAttempts: deviceCfg.TxOpenAttempts,
-			TxOpenInterval: deviceCfg.TxOpenInterval.Duration(),
+			Reader:          reader,
+			Wire:            wire.Device{ID: deviceCfg.ID, Type: deviceCfg.DeviceType, Expiry: deviceCfg.MessageExpiry.Duration()},
+			Topics:          topics,
+			TxOpenAttempts:  deviceCfg.TxOpenAttempts,
+			TxOpenInterval:  deviceCfg.TxOpenInterval.Duration(),
+			TxRememberedIDs: deviceCfg.TxRememberedIDs,
 		})
 		txTopics = append(txTopics, topics.Tx())
 	}

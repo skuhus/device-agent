@@ -584,7 +584,8 @@ Work.
   tx and when each was written; a restart forgets them (#11 Q6a). The number
   is an internal constant, like the drain timeout: a sender resends within
   seconds or minutes, and 1024 jobs is more than any station prints in that
-  time.
+  time. (#30 made both settings: `devices[].tx_remembered_ids` and
+  `delivery.drain_timeout`, with these values as defaults.)
 - Only a tx that got `written` is remembered. One that failed, part way or not
   at all, is written again if it is sent again: its sender was told what
   became of it.

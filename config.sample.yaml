@@ -150,6 +150,12 @@ devices:
     # tx; at 9600 baud 1024 bytes is about a second on the line.
     tx_chunk_bytes: 1024
 
+    # The agent remembers, in memory, the ids of this many tx it wrote to this
+    # device. A tx sent again with one of them is answered already_written and
+    # not written again, so a sender that heard nothing can resend safely. The
+    # oldest is forgotten first, and a restart forgets them all.
+    tx_remembered_ids: 1024
+
     # There is no symbology setting. The agent publishes the complete frame
     # with only the separator removed, so any code identifier the scanner
     # prefixes stays in the payload for the upstream side to decode. See

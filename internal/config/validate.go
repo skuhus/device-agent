@@ -262,6 +262,9 @@ func validateDevices(devices []Device) ([]error, []Warning) {
 		if deviceCfg.TxChunkBytes < 1 {
 			problems = append(problems, fmt.Errorf("%s.tx_chunk_bytes must be at least 1, got %d", where, deviceCfg.TxChunkBytes))
 		}
+		if deviceCfg.TxRememberedIDs < 1 {
+			problems = append(problems, fmt.Errorf("%s.tx_remembered_ids must be at least 1, got %d", where, deviceCfg.TxRememberedIDs))
+		}
 		if err := deviceCfg.ReopenPolicy().Validate(); err != nil {
 			problems = append(problems, fmt.Errorf("%s.reopen_interval and %s.reopen_backoff: %w", where, where, err))
 		}

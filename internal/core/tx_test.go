@@ -675,8 +675,7 @@ func TestResendAfterFailureIsWrittenAgain(t *testing.T) {
 	}
 }
 
-// The set keeps the most recent ids, so the oldest is forgotten first, and the
-// agent remembers rememberedWritten of them.
+// The set keeps the most recent ids, so the oldest is forgotten first.
 func TestWrittenIDsKeepTheMostRecent(t *testing.T) {
 	ids := newWrittenIDs(3)
 	at := time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
@@ -691,8 +690,33 @@ func TestWrittenIDsKeepTheMostRecent(t *testing.T) {
 			t.Errorf("%s: %s, %t; want remembered with its time", id, when, known)
 		}
 	}
-	if rememberedWritten != 1024 {
-		t.Errorf("rememberedWritten = %d, want the 1024 T16 names", rememberedWritten)
+}
+
+// A device remembers as many written ids as it is configured to: with two,
+// a third written tx pushes out the first, which is then written again when
+// it is resent, while the most recent is still answered already_written.
+func TestADeviceRemembersItsConfiguredNumberOfIDs(t *testing.T) {
+	const txC = "3f2e1d0c-9b8a-4765-8432-10fedcba9876"
+	transport := &fakeTransport{}
+	printer := newFakePrinter("printer-1", true)
+	run := startTxRunWith(t, transport, printer, 3, 10*time.Millisecond, func(opts *Options) { opts.Devices[0].TxRememberedIDs = 2 })
+	for _, id := range []string{txA, txB, txC} {
+		run.send(id, []byte("label "+id[:4]), 30*time.Second)
+		run.resultsFor(id)
+	}
+
+	run.send(txA, []byte("label "+txA[:4]), 30*time.Second)
+	waitUntil(t, "the first id written again", func() bool { return len(run.resultsForAll(txA)) == 4 })
+	if got := codes(run.resultsForAll(txA)); got != "accepted/accepted written/written accepted/accepted written/written" {
+		t.Errorf("first id resent: results = %s, want it written again", got)
+	}
+	run.send(txC, []byte("label "+txC[:4]), 30*time.Second)
+	waitUntil(t, "the most recent id answered", func() bool { return len(run.resultsForAll(txC)) == 3 })
+	if got := codes(run.resultsForAll(txC)); got != "accepted/accepted written/written written/already_written" {
+		t.Errorf("most recent id resent: results = %s, want already_written", got)
+	}
+	if writes, _ := printer.snapshot(); len(writes) != 4 {
+		t.Errorf("%d writes, want 4: three tx and the first one again", len(writes))
 	}
 }
 

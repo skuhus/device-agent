@@ -78,12 +78,6 @@ func (job *txJob) expired(now time.Time) bool {
 	return !job.deadline.IsZero() && !now.Before(job.deadline)
 }
 
-// rememberedWritten is how many written tx ids each device remembers. A
-// sender resends within its own timeout, seconds or minutes, and this is more
-// jobs than a station prints in that time. A tuning value, not a setting, as
-// the drain timeout is (PLAN-V2.md, T16).
-const rememberedWritten = 1024
-
 // writtenIDs remembers the most recently written tx ids, and when each was
 // written, so that a resend is answered rather than printed twice (#11 Q6a).
 // Only the running agent holds them: a restart forgets them. The caller holds

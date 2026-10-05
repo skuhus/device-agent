@@ -280,9 +280,10 @@ func coreDevice(t *testing.T, reader device.Device, deviceType string) Device {
 		t.Fatalf("topics for %s: %v", reader.ID(), err)
 	}
 	return Device{
-		Reader: reader,
-		Wire:   wire.Device{ID: reader.ID(), Type: deviceType, Expiry: 30 * time.Second},
-		Topics: topics,
+		Reader:          reader,
+		Wire:            wire.Device{ID: reader.ID(), Type: deviceType, Expiry: 30 * time.Second},
+		Topics:          topics,
+		TxRememberedIDs: 1024,
 	}
 }
 
@@ -627,6 +628,7 @@ func TestNewRejectsUnusableOptions(t *testing.T) {
 		{"no missed keepalives", func(o *Options) { o.MissedKeepalives = 0 }, "missed keepalives must be at least 1"},
 		{"device without a reader", func(o *Options) { o.Devices[0].Reader = nil }, "has no reader"},
 		{"device without topics", func(o *Options) { o.Devices[0].Topics = wire.DeviceTopics{} }, "has no topics"},
+		{"device remembering no tx id", func(o *Options) { o.Devices[0].TxRememberedIDs = 0 }, "must remember at least 1 written tx id, got 0"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

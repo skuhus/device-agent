@@ -50,6 +50,10 @@ type Device struct {
 	// the reader to open it, TxOpenInterval apart, before it fails.
 	TxOpenAttempts int
 	TxOpenInterval time.Duration
+	// TxRememberedIDs is how many written tx ids the device remembers, so
+	// that a resend of one is answered already_written rather than written
+	// again; the oldest is forgotten first.
+	TxRememberedIDs int
 }
 
 // Options configures the core. Configuration rules are the configuration
@@ -190,6 +194,9 @@ func New(opts Options) (*Core, error) {
 		if dev.TxOpenAttempts < 0 || dev.TxOpenInterval < 0 {
 			return nil, fmt.Errorf("core: device %s has negative tx open settings", dev.Wire.ID)
 		}
+		if dev.TxRememberedIDs < 1 {
+			return nil, fmt.Errorf("core: device %s must remember at least 1 written tx id, got %d", dev.Wire.ID, dev.TxRememberedIDs)
+		}
 	}
 	if opts.Logger == nil {
 		opts.Logger = slog.New(slog.DiscardHandler)
@@ -226,7 +233,7 @@ func (core *Core) Run(ctx context.Context) error {
 			tx:       newTxQueue(),
 			opened:   make(chan struct{}, 1),
 			txActive: map[string]*txJob{},
-			written:  newWrittenIDs(rememberedWritten),
+			written:  newWrittenIDs(dev.TxRememberedIDs),
 		}
 		pipelines = append(pipelines, line)
 		byTxTopic[dev.Topics.Tx()] = line
@@ -263,8 +270,10 @@ func (core *Core) Run(ctx context.Context) error {
 			defer readers.Done()
 			reader := line.device.Reader
 			core.log.Info("device starting", "device_id", reader.ID(), "device_kind", reader.Kind(), "device_path", reader.Path(),
-				"rx_topic", line.device.Topics.Rx(), "status_topic", line.device.Topics.Status(),
-				"message_expiry", line.device.Wire.Expiry.String())
+				"rx_topic", line.device.Topics.Rx(), "status_topic", line.device.Topics.Status(), "tx_topic", line.device.Topics.Tx(),
+				"message_expiry", line.device.Wire.Expiry.String(),
+				"tx_open_attempts", line.device.TxOpenAttempts, "tx_open_interval", line.device.TxOpenInterval.String(),
+				"tx_remembered_ids", line.device.TxRememberedIDs)
 			report := func(event device.Event) { core.report(line, event) }
 			if err := reader.Run(readerCtx, line.frames, report); err != nil && !errors.Is(err, context.Canceled) {
 				core.log.Error("device reader failed", "device_id", reader.ID(), "error", err.Error())

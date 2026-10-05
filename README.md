@@ -81,8 +81,8 @@ status topic: `accepted` at once, then `written` once the operating system has
 taken every byte, or `failed` with a code. A tx that cannot be read fails at
 once; one whose id is still queued or being written is `rejected` with where
 that one stands; and one whose id was written recently gets `already_written`
-and is not written again. The agent remembers the last 1024 ids written to each
-device, until it restarts. A device's tx are written one at a time, whole, in
+and is not written again. The agent remembers the last `tx_remembered_ids` ids
+written to each device, 1024 by default, until it restarts. A device's tx are written one at a time, whole, in
 the order they arrived, while reading carries on.
 
 `written` means the operating system took the bytes, not that the device has
