@@ -477,8 +477,8 @@ Depends on: T3 to T11.
 
 ### T13. Release 2.0.0
 
-Status: in progress on branch gh-18-release. The version is 2.0.0 and the
-release build was run locally; Q1 and Q2 in #18 are open, and the release
+Status: in progress on branch gh-18-release. The version is 2.0.0, the release
+build was run locally, and #18 Q1 and Q2 are answered and applied; the release
 itself waits for the merge.
 
 2.0.0 releases reading and writing together (maintainer, 2026-10-04). Phase 2
@@ -496,8 +496,11 @@ Work.
   checksums.txt and reports 2.0.0, and the image
   `ghcr.io/skuhus/skuhus-device-agent` at 2.0.0 and latest on GHCR, reporting
   2.0.0. The release pushes the image to GHCR, as decided.
-- What the release notes say to a 0.3.0 station, and who can pull the image,
-  are open: #18 Q1 and Q2.
+- README.md gains "Upgrading", with what changed from 0.3.0 to 2.0.0, and the
+  release notes start with a link to it, above the generated notes (#18 Q1).
+- The image is public (#18 Q2). After the release first pushes it, an
+  organisation owner makes the package public; then an anonymous pull is
+  checked.
 
 Intended result. The merge creates tag v2.0.0 and a release with six tarballs,
 six bare binaries and checksums.txt, and the image appears on GHCR.
