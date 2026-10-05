@@ -7,6 +7,7 @@ import (
 
 	"github.com/skuhus/device-agent/internal/config"
 	serialdev "github.com/skuhus/device-agent/internal/device/serial"
+	"github.com/skuhus/device-agent/internal/wire"
 	goserial "go.bug.st/serial"
 )
 
@@ -32,6 +33,30 @@ func newSerialReader(deviceCfg config.Device, logPayloads bool, log *slog.Logger
 		TxChunkBytes:     deviceCfg.TxChunkBytes,
 		Reopen:           deviceCfg.ReopenPolicy(),
 	})
+}
+
+// broadcastGroupRoutes builds the tx topics of a device's broadcast groups,
+// the project's first, then the site's and the station's, as run subscribes to
+// them and validate shows them.
+func broadcastGroupRoutes(station wire.StationTopics, groups config.BroadcastGroups) ([]wire.TxRoute, error) {
+	var routes []wire.TxRoute
+	for _, scoped := range []struct {
+		scope  wire.TxScope
+		groups []string
+	}{
+		{wire.ScopeProject, groups.Project},
+		{wire.ScopeSite, groups.Site},
+		{wire.ScopeStation, groups.Station},
+	} {
+		for _, group := range scoped.groups {
+			route, err := station.GroupTx(scoped.scope, group)
+			if err != nil {
+				return nil, err
+			}
+			routes = append(routes, route)
+		}
+	}
+	return routes, nil
 }
 
 // lineFormat maps a device's parity and stop bits to the serial library's

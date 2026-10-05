@@ -92,6 +92,13 @@ func validateCommand(args []string, stdout, stderr io.Writer) error {
 			return err
 		}
 		fmt.Fprintf(stdout, "      topics rx %s status %s tx %s\n", topics.Rx(), topics.Status(), topics.Tx())
+		groups, err := broadcastGroupRoutes(stationTopics, deviceCfg.BroadcastGroups)
+		if err != nil {
+			return err
+		}
+		for _, route := range groups {
+			fmt.Fprintf(stdout, "      broadcast group %s %s tx %s\n", route.Scope, route.Group, route.Topic)
+		}
 	}
 	fmt.Fprintf(stdout, "  delivery       %s\n", describeSettings(cfg.Delivery))
 	fmt.Fprintf(stdout, "  status         %s\n", describeSettings(cfg.Status))

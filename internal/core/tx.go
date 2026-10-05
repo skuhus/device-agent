@@ -3,6 +3,7 @@ package core
 import (
 	"errors"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -110,10 +111,18 @@ func (ids *writtenIDs) lookup(id string) (time.Time, bool) {
 	return at, known
 }
 
-// receiveTxs gives each tx to its device until stop is closed, and then takes
+// txTarget is where a tx topic leads: the route it is, and the devices it
+// reaches, one for a device's own topic and every device in the group for a
+// broadcast group's.
+type txTarget struct {
+	route wire.TxRoute
+	lines []*pipeline
+}
+
+// receiveTxs gives each tx to its devices until stop is closed, and then takes
 // what is already waiting. While the agent stops, each still gets a result:
 // agent_stopping.
-func (core *Core) receiveTxs(stop <-chan struct{}, byTopic map[string]*pipeline) {
+func (core *Core) receiveTxs(stop <-chan struct{}, byTopic map[string]*txTarget) {
 	if core.opts.TxIn == nil {
 		return
 	}
@@ -154,17 +163,35 @@ func (core *Core) recordUntaken() {
 	}
 }
 
-// admitTx reads one tx, and either fails it, rejects it because a tx with its
-// id is still in hand, or queues it for the device's writer. Each gets its
-// result at once; a queued one gets accepted, and later written or failed.
-func (core *Core) admitTx(byTopic map[string]*pipeline, message TxMessage) {
-	line, ok := byTopic[message.Topic]
+// admitTx hands one tx to every device its topic reaches: one for a device's
+// own topic, each device in the group for a broadcast group's.
+func (core *Core) admitTx(byTopic map[string]*txTarget, message TxMessage) {
+	target, ok := byTopic[message.Topic]
 	if !ok {
 		core.log.Error("tx on a topic that is no device's; not written", "topic", message.Topic, "bytes", len(message.Payload))
 		return
 	}
+	if target.route.Scope != wire.ScopeDevice {
+		deviceIDs := make([]string, 0, len(target.lines))
+		for _, line := range target.lines {
+			deviceIDs = append(deviceIDs, line.device.Wire.ID)
+		}
+		core.log.Info("tx on a broadcast group's topic; each device in the group takes it", "topic", message.Topic,
+			"scope", string(target.route.Scope), "group", target.route.Group, "device_ids", deviceIDs, "bytes", len(message.Payload))
+	}
+	for _, line := range target.lines {
+		core.admitTxTo(line, message)
+	}
+}
+
+// admitTxTo reads one tx for one device, and either fails it, rejects it
+// because a tx with its id is still in hand, or queues it for the device's
+// writer. Each gets its result at once; a queued one gets accepted, and later
+// written or failed.
+func (core *Core) admitTxTo(line *pipeline, message TxMessage) {
 	now := core.opts.Now()
 	dev := line.device.Wire
+	topic := []any{"topic", message.Topic}
 	ref, data, problem := wire.ReadTx(message.Payload)
 	if problem != nil {
 		var result wire.TxResult
@@ -173,7 +200,7 @@ func (core *Core) admitTx(byTopic map[string]*pipeline, message TxMessage) {
 		} else {
 			result = core.opts.Builder.TxInvalidMessage(dev, line.isOpen(), ref, problem.Text, now)
 		}
-		core.recordTxResult(line, result, now, append([]any{"error", problem.Text}, logging.Payload(message.Payload)...))
+		core.recordTxResult(line, result, now, slices.Concat(topic, []any{"error", problem.Text}, logging.Payload(message.Payload)))
 		return
 	}
 
@@ -182,13 +209,14 @@ func (core *Core) admitTx(byTopic map[string]*pipeline, message TxMessage) {
 		line.txMu.Unlock()
 		stage, since, written := earlier.standing()
 		result := core.opts.Builder.TxInProgress(dev, line.isOpen(), ref, stage, since, written, now)
-		core.recordTxResult(line, result, now, nil)
+		core.recordTxResult(line, result, now, topic)
 		return
 	}
 	if writtenAt, known := line.written.lookup(ref.ID); known {
 		line.txMu.Unlock()
 		result := core.opts.Builder.TxAlreadyWritten(dev, line.isOpen(), ref, writtenAt, now)
-		core.recordTxResult(line, result, now, append([]any{"written_at", writtenAt.UTC().Format(wire.TimeFormat)}, logging.Payload(data)...))
+		core.recordTxResult(line, result, now,
+			slices.Concat(topic, []any{"written_at", writtenAt.UTC().Format(wire.TimeFormat)}, logging.Payload(data)))
 		return
 	}
 	core.intakeMu.Lock()
@@ -196,7 +224,7 @@ func (core *Core) admitTx(byTopic map[string]*pipeline, message TxMessage) {
 		core.intakeMu.Unlock()
 		line.txMu.Unlock()
 		core.recordTxResult(line, core.opts.Builder.TxAgentStopping(dev, line.isOpen(), ref, 0, now), now,
-			append([]any{"bytes_written", 0}, logging.Payload(data)...))
+			slices.Concat(topic, []any{"bytes_written", 0}, logging.Payload(data)))
 		return
 	}
 	job := &txJob{ref: ref, data: data, received: message.Received, stage: wire.TxQueued, since: now}
@@ -213,7 +241,7 @@ func (core *Core) admitTx(byTopic map[string]*pipeline, message TxMessage) {
 	// accepted is queued before the writer can see the job, so that it goes
 	// out before the job's written or failed.
 	core.recordTxResult(line, core.opts.Builder.TxAccepted(dev, line.isOpen(), ref, now), now,
-		append([]any{"bytes", len(data), "message_expiry", expiry}, core.payloadIfLogged(data)...))
+		slices.Concat(topic, []any{"bytes", len(data), "message_expiry", expiry}, core.payloadIfLogged(data)))
 	line.tx.push(job)
 	core.intakeMu.Unlock()
 }

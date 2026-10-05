@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +15,7 @@ import (
 	"github.com/skuhus/device-agent/internal/config"
 	"github.com/skuhus/device-agent/internal/logging/logtest"
 	"github.com/skuhus/device-agent/internal/transport/mqtt"
+	"github.com/skuhus/device-agent/internal/wire"
 )
 
 func TestRunRejectsPositionalArguments(t *testing.T) {
@@ -283,5 +286,50 @@ func TestTxIntakeDropsWhatDoesNotFit(t *testing.T) {
 	if len(dropped) != 1 || dropped[0]["level"] != "ERROR" || dropped[0]["tx_id"] != "7e6d5c4b-3a29-4817-9f6e-5d4c3b2a1f0e" ||
 		dropped[0]["sender"] != "label-service" || dropped[0]["tx_intake_size"] != float64(1) || dropped[0]["data_hex"] == nil {
 		t.Errorf("dropped records = %v, want one ERROR naming the second tx, with its data", dropped)
+	}
+}
+
+// The connection subscribes to every device's own tx topic and to each
+// broadcast group's once, in the order the devices list them, and each device
+// gets the routes of its own groups.
+func TestBuildDevicesSubscribesToEachGroupOnce(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Identity = config.Identity{Project: "acme", Site: "vasby", Station: "pack-03"}
+	scales := config.DefaultDevice()
+	scales.ID, scales.Path, scales.Separator = "scales-a", "/dev/serial/by-id/scales-a", "\r\n"
+	scales.BroadcastGroups = config.BroadcastGroups{Project: []string{"scales"}, Site: []string{"scales"}}
+	other := config.DefaultDevice()
+	other.ID, other.Path, other.Separator = "scales-b", "/dev/serial/by-id/scales-b", "\r\n"
+	other.BroadcastGroups = config.BroadcastGroups{Site: []string{"scales"}, Station: []string{"front"}}
+	cfg.Devices = []config.Device{scales, other}
+	station, err := wire.NewStationTopics("acme", "vasby", "pack-03")
+	if err != nil {
+		t.Fatalf("station: %v", err)
+	}
+
+	devices, subscriptions, err := buildDevices(&cfg, station, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatalf("buildDevices: %v", err)
+	}
+	want := []string{
+		"skuhus/acme/vasby/pack-03/scales-a/tx",
+		"skuhus/acme/group/scales/tx",
+		"skuhus/acme/vasby/group/scales/tx",
+		"skuhus/acme/vasby/pack-03/scales-b/tx",
+		"skuhus/acme/vasby/pack-03/group/front/tx",
+	}
+	if !slices.Equal(subscriptions, want) {
+		t.Errorf("subscriptions = %v, want %v", subscriptions, want)
+	}
+	wantGroups := [][]wire.TxRoute{
+		{{Topic: "skuhus/acme/group/scales/tx", Scope: wire.ScopeProject, Group: "scales"},
+			{Topic: "skuhus/acme/vasby/group/scales/tx", Scope: wire.ScopeSite, Group: "scales"}},
+		{{Topic: "skuhus/acme/vasby/group/scales/tx", Scope: wire.ScopeSite, Group: "scales"},
+			{Topic: "skuhus/acme/vasby/pack-03/group/front/tx", Scope: wire.ScopeStation, Group: "front"}},
+	}
+	for index, device := range devices {
+		if !slices.Equal(device.BroadcastGroups, wantGroups[index]) {
+			t.Errorf("device %s groups = %+v, want %+v", device.Wire.ID, device.BroadcastGroups, wantGroups[index])
+		}
 	}
 }

@@ -52,6 +52,10 @@ type Device struct {
 	// that a resend of one is answered already_written rather than written
 	// again; the oldest is forgotten first.
 	TxRememberedIDs int
+	// BroadcastGroups are the tx topics of the broadcast groups the device is
+	// in. A tx on one reaches every device in the group, as if sent to each on
+	// its own topic (DESIGN-V2.md, "Broadcast groups").
+	BroadcastGroups []wire.TxRoute
 }
 
 // Options configures the core. Configuration rules are the configuration
@@ -194,10 +198,11 @@ func New(opts Options) (*Core, error) {
 // instead, reporting a crash where there was an orderly stop.
 func (core *Core) Run(ctx context.Context) error {
 	pipelines := make([]*pipeline, 0, len(core.opts.Devices))
-	byTxTopic := make(map[string]*pipeline, len(core.opts.Devices))
+	byTxTopic := make(map[string]*txTarget, len(core.opts.Devices))
 	for _, dev := range core.opts.Devices {
 		line := &pipeline{
 			device:   dev,
+			txRoutes: append([]wire.TxRoute{dev.Topics.TxRoute()}, dev.BroadcastGroups...),
 			frames:   make(chan device.Frame, core.opts.BufferSize),
 			status:   newStatusQueue(core.opts.EventBufferSize),
 			tx:       newWaitingQueue[*txJob](),
@@ -206,7 +211,14 @@ func (core *Core) Run(ctx context.Context) error {
 			written:  newWrittenIDs(dev.TxRememberedIDs),
 		}
 		pipelines = append(pipelines, line)
-		byTxTopic[dev.Topics.Tx()] = line
+		for _, route := range line.txRoutes {
+			target, known := byTxTopic[route.Topic]
+			if !known {
+				target = &txTarget{route: route}
+				byTxTopic[route.Topic] = target
+			}
+			target.lines = append(target.lines, line)
+		}
 	}
 
 	// drained ends the event publishers' wait for the connection when the
@@ -239,9 +251,13 @@ func (core *Core) Run(ctx context.Context) error {
 		go func(line *pipeline) {
 			defer readers.Done()
 			reader := line.device.Reader
+			groupTopics := make([]string, 0, len(line.device.BroadcastGroups))
+			for _, route := range line.device.BroadcastGroups {
+				groupTopics = append(groupTopics, route.Topic)
+			}
 			core.log.Info("device starting", "device_id", reader.ID(), "device_kind", reader.Kind(), "device_path", reader.Path(),
 				"rx_topic", line.device.Topics.Rx(), "status_topic", line.device.Topics.Status(), "tx_topic", line.device.Topics.Tx(),
-				"message_expiry", line.device.Wire.Expiry.String(),
+				"broadcast_group_topics", groupTopics, "message_expiry", line.device.Wire.Expiry.String(),
 				"tx_open_attempts", line.device.TxOpenAttempts, "tx_open_interval", line.device.TxOpenInterval.String(),
 				"tx_remembered_ids", line.device.TxRememberedIDs)
 			report := func(event device.Event) { core.report(line, event) }

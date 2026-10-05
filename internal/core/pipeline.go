@@ -12,7 +12,10 @@ import (
 type pipeline struct {
 	device Device
 	frames chan device.Frame
-	status *statusQueue
+	// txRoutes are the topics that reach the device's tx: its own first, then
+	// its broadcast groups'.
+	txRoutes []wire.TxRoute
+	status   *statusQueue
 	// tx holds the device's tx in the order they arrived, for its one writer.
 	// It is not bounded: every tx carries a message expiry, and one that
 	// waited past it is failed rather than written.
