@@ -304,6 +304,12 @@ and waits up to the interval for it to open; that is one attempt. The expiry is
 the tx's MQTT message expiry as it arrived; a tx sent without one is written
 whenever its turn comes.
 
+A tx is written `tx_chunk_bytes` at a time, 1024 by default, with the port's
+lock held for one piece (internal/device/serial/serial.go, sharedPort). The
+reader's close waits for the piece being written, not for the whole tx, and a
+stopping agent stops a tx between pieces. At 9600 baud 1024 bytes is about a
+second on the line once the operating system's buffer is full.
+
 Tx results go out through the device's event queue, so they wait for the
 connection as its events do (#13 Q1), in order. Unlike an event, a result is
 never dropped to make room: a sender that hears nothing resends, and a printer

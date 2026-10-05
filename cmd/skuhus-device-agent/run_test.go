@@ -113,8 +113,9 @@ logging:
 }
 
 // The waits and sizes the configuration sets are the ones the agent keeps: a
-// device's reopen_interval with its backoff off, the broker's
-// reconnect_interval, the shutdown's drain_timeout and the tx intake's size.
+// device's reopen_interval with its backoff off and its tx chunk, the
+// broker's reconnect_interval, the shutdown's drain_timeout and the tx
+// intake's size.
 // Each differs from its default, so a value taken from anywhere else shows.
 func TestRunUsesTheConfiguredSettings(t *testing.T) {
 	dir := t.TempDir()
@@ -130,6 +131,7 @@ devices:
     separator: "\r\n"
     reopen_interval: 70ms
     reopen_backoff: { enabled: false }
+    tx_chunk_bytes: 333
 delivery:
   drain_timeout: 300ms
   tx_intake_size: 9
@@ -154,6 +156,11 @@ logging:
 		t.Fatalf("runAgent: %v", err)
 	}
 
+	settings := stdout.WithMessage(t, "device settings")
+	if len(settings) != 1 || settings[0]["tx_chunk_bytes"] != float64(333) || settings[0]["reopen_interval"] != "70ms" ||
+		settings[0]["reopen_backoff"] != false {
+		t.Errorf("device settings records = %v, want one with tx_chunk_bytes 333 and a fixed 70ms reopen", settings)
+	}
 	if intake := stdout.WithMessage(t, "tx intake ready"); len(intake) != 1 || intake[0]["tx_intake_size"] != float64(9) {
 		t.Errorf("tx intake records = %v, want one with the configured size 9", intake)
 	}

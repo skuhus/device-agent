@@ -20,6 +20,9 @@ const (
 	// for a closed port: about 3 s (PLAN-V2.md, T14).
 	DefaultTxOpenAttempts = 3
 	DefaultTxOpenInterval = 1 * time.Second
+	// DefaultTxChunkBytes is the chunk since T14, where it was a constant:
+	// about a second on the line at 9600 baud.
+	DefaultTxChunkBytes = 1024
 	// DefaultReopenInterval and the reopen backoff's defaults are v1's: from
 	// 100 ms, doubling to 30 s. The backoff is on, because each failed attempt
 	// is a port_open_failed event, and a device unplugged overnight would
@@ -132,6 +135,7 @@ func DefaultDevice() Device {
 		MessageExpiry:    Duration(DefaultMessageExpiry),
 		TxOpenAttempts:   DefaultTxOpenAttempts,
 		TxOpenInterval:   Duration(DefaultTxOpenInterval),
+		TxChunkBytes:     DefaultTxChunkBytes,
 		ReopenInterval:   Duration(DefaultReopenInterval),
 		ReopenBackoff: Backoff{
 			Enabled: DefaultReopenBackoffEnabled,

@@ -156,6 +156,7 @@ devices:
 		{"device_type", d.DeviceType, ""},
 		{"tx_open_attempts", d.TxOpenAttempts, DefaultTxOpenAttempts},
 		{"tx_open_interval", d.TxOpenInterval.Duration(), DefaultTxOpenInterval},
+		{"tx_chunk_bytes", d.TxChunkBytes, DefaultTxChunkBytes},
 		{"reopen_interval", d.ReopenInterval.Duration(), DefaultReopenInterval},
 		{"reopen_backoff.enabled", d.ReopenBackoff.Enabled, true},
 		{"reopen_backoff.max", d.ReopenBackoff.Max.Duration(), DefaultReopenBackoffMax},

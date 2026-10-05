@@ -86,6 +86,10 @@ func runDeviceReporting(t *testing.T, opts Options, sinkCap int, report func(dev
 	return frames, cancel
 }
 
+// testTxChunkBytes is the tests' tx chunk: not the default 1024, so that a
+// chunk taken from anywhere but the options shows.
+const testTxChunkBytes = 700
+
 // fastReopen is the reopen policy of tests that do not test it: v1's shape,
 // scaled down so that a test does not wait on it.
 var fastReopen = backoff.Policy{Interval: 5 * time.Millisecond, Grow: true, Max: 20 * time.Millisecond, Jitter: 0.3}
@@ -98,6 +102,7 @@ func serialOpts(id, path string, term string) Options {
 		Terminator:       []byte(term),
 		MaxFrameBytes:    4096,
 		InterCharTimeout: 50 * time.Millisecond,
+		TxChunkBytes:     testTxChunkBytes,
 		Reopen:           fastReopen,
 	}
 }

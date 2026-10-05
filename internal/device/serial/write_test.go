@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"syscall"
 	"testing"
@@ -127,9 +128,18 @@ func TestWriteReachesTheOpenPortWhole(t *testing.T) {
 		t.Errorf("progress = %v, want it to end at %d", reported, len(data))
 	}
 	for i := 1; i < len(reported); i++ {
-		if reported[i] <= reported[i-1] || reported[i]-reported[i-1] > writeChunk {
+		if reported[i] <= reported[i-1] || reported[i]-reported[i-1] > testTxChunkBytes {
 			t.Fatalf("progress step %d -> %d; want rising, at most a chunk at a time", reported[i-1], reported[i])
 		}
+	}
+}
+
+// A tx chunk of nothing would never write a byte, so New refuses it.
+func TestNewRejectsAnEmptyTxChunk(t *testing.T) {
+	opts := serialOpts("printer-1", "/dev/fake", "\r\n")
+	opts.TxChunkBytes = 0
+	if _, err := New(opts); err == nil || !strings.Contains(err.Error(), "device printer-1: tx chunk bytes must be at least 1, got 0") {
+		t.Errorf("err = %v, want the tx chunk refused", err)
 	}
 }
 
@@ -177,8 +187,8 @@ func TestWriteRacingACloseNeverReachesTheClosedPort(t *testing.T) {
 	if written != len(got) || written == 0 || written >= len(data) {
 		t.Errorf("Write reported %d bytes, the port has %d, of %d: want the same part way", written, len(got), len(data))
 	}
-	if written%writeChunk != 0 {
-		t.Errorf("stopped at %d bytes, not at a chunk boundary of %d", written, writeChunk)
+	if written%testTxChunkBytes != 0 {
+		t.Errorf("stopped at %d bytes, not at a chunk boundary of %d", written, testTxChunkBytes)
 	}
 }
 
@@ -262,7 +272,7 @@ func TestWriteStopsBetweenChunksWhenAsked(t *testing.T) {
 		t.Fatalf("Write ended with %v, want context.Canceled", err)
 	}
 	got, _, _ := port.state()
-	if written != writeChunk || len(got) != writeChunk {
-		t.Errorf("written %d, the port has %d; want the one chunk in hand, %d", written, len(got), writeChunk)
+	if written != testTxChunkBytes || len(got) != testTxChunkBytes {
+		t.Errorf("written %d, the port has %d; want the one chunk in hand, %d", written, len(got), testTxChunkBytes)
 	}
 }

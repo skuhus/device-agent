@@ -147,6 +147,10 @@ type Device struct {
 	// starts over.
 	ReopenInterval Duration `yaml:"reopen_interval"`
 	ReopenBackoff  Backoff  `yaml:"reopen_backoff"`
+	// TxChunkBytes is how much of a tx is written under the port's lock at a
+	// time. Closing the port, and a stopping agent, wait for the chunk in
+	// hand rather than for the whole tx.
+	TxChunkBytes int `yaml:"tx_chunk_bytes"`
 	// TxOpenAttempts is how many times a tx that finds the port closed asks
 	// for it to be opened, TxOpenInterval apart, before it fails. Once
 	// writing has started nothing is retried (DESIGN-V2.md, "Writing: tx").

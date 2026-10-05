@@ -193,6 +193,7 @@ func runAgent(ctx context.Context, cfg *config.Config, warnings []config.Warning
 			InterCharTimeout: deviceCfg.InterCharTimeout.Duration(),
 			LogPayloads:      cfg.Logging.LogPayloads,
 			Logger:           log,
+			TxChunkBytes:     deviceCfg.TxChunkBytes,
 			Reopen:           deviceCfg.ReopenPolicy(),
 		})
 		if err != nil {

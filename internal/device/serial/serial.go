@@ -57,12 +57,6 @@ func invert[V comparable](byName map[string]V) map[V]string {
 const (
 	minReadChunk = 64
 	maxReadChunk = 4096
-
-	// writeChunk is how much one write takes the port's lock for. A close
-	// waits for the chunk in hand, not for the whole tx: at 9600 baud a
-	// kilobyte is about a second on the line once the operating system's
-	// buffer is full.
-	writeChunk = 1024
 )
 
 // OpenFunc opens a serial port. It is a field on Options so tests can inject
@@ -88,6 +82,12 @@ type Options struct {
 	LogPayloads bool
 
 	Logger *slog.Logger
+
+	// TxChunkBytes is how much of a tx one write takes the port's lock for. A
+	// close, and a stopping agent, wait for the chunk in hand, not for the
+	// whole tx: at 9600 baud a kilobyte is about a second on the line once
+	// the operating system's buffer is full.
+	TxChunkBytes int
 
 	// Reopen is the wait before each attempt to open the port again after it
 	// failed or closed. A session that lasts as long as the policy's longest
@@ -142,6 +142,9 @@ func New(opts Options) (*Device, error) {
 	if _, err := NewFramer(opts.Terminator, opts.MaxFrameBytes); err != nil {
 		return nil, fmt.Errorf("device %s: %w", opts.ID, err)
 	}
+	if opts.TxChunkBytes < 1 {
+		return nil, fmt.Errorf("device %s: tx chunk bytes must be at least 1, got %d", opts.ID, opts.TxChunkBytes)
+	}
 	if err := opts.Reopen.Validate(); err != nil {
 		return nil, fmt.Errorf("device %s: reopen: %w", opts.ID, err)
 	}
@@ -195,6 +198,13 @@ func (dev *Device) Run(ctx context.Context, sink chan<- device.Frame, report fun
 	}
 	policy := dev.opts.Reopen
 	stableAfter := policy.Max
+	dev.log.Info("device settings",
+		"baud", dev.opts.Baud, "data_bits", dev.mode.DataBits, "parity", parityNames[dev.mode.Parity],
+		"stop_bits", stopBitsNames[dev.mode.StopBits], "terminator_hex", hex.EncodeToString(dev.opts.Terminator),
+		"max_frame_bytes", dev.opts.MaxFrameBytes, "inter_char_timeout", dev.opts.InterCharTimeout.String(),
+		"read_chunk", dev.chunk, "tx_chunk_bytes", dev.opts.TxChunkBytes,
+		"reopen_interval", policy.Interval.String(), "reopen_backoff", policy.Grow,
+		"reopen_backoff_max", policy.Max.String(), "reopen_backoff_jitter", policy.Jitter)
 	retry := 0
 	for {
 		if err := ctx.Err(); err != nil {
@@ -257,7 +267,7 @@ func (dev *Device) session(ctx context.Context, sink chan<- device.Frame, report
 
 	// Writes go through the same port, under a lock that closing takes too
 	// (DESIGN-V2.md, "Writing: tx").
-	shared := &sharedPort{port: port}
+	shared := &sharedPort{port: port, chunkBytes: dev.opts.TxChunkBytes}
 	dev.setCurrent(shared)
 
 	// Read blocks in select(2) and does not observe ctx. Closing the port is
@@ -388,9 +398,10 @@ func (dev *Device) getCurrent() *sharedPort {
 // (serial_unix.go:112-118 in go.bug.st/serial v1.8.0). The lock is held across
 // each chunk and across Close, and a closed port takes no more writes.
 type sharedPort struct {
-	mu     sync.Mutex
-	port   goserial.Port
-	closed bool
+	mu         sync.Mutex
+	port       goserial.Port
+	chunkBytes int
+	closed     bool
 }
 
 func (shared *sharedPort) write(ctx context.Context, data []byte, progress func(int)) (int, error) {
@@ -399,7 +410,7 @@ func (shared *sharedPort) write(ctx context.Context, data []byte, progress func(
 		if err := ctx.Err(); err != nil {
 			return written, err
 		}
-		end := min(written+writeChunk, len(data))
+		end := min(written+shared.chunkBytes, len(data))
 		n, err := shared.writeChunk(data[written:end])
 		written += n
 		if n > 0 && progress != nil {

@@ -80,7 +80,7 @@ func TestEveryFrameIsOneRxMessageOnItsDeviceTopic(t *testing.T) {
 		master, slave := newPTY(t)
 		reader, err := serial.New(serial.Options{
 			ID: capture.id, Path: slave, Baud: 9600, Terminator: []byte("\r\n"),
-			MaxFrameBytes: 4096, InterCharTimeout: 50 * time.Millisecond,
+			MaxFrameBytes: 4096, InterCharTimeout: 50 * time.Millisecond, TxChunkBytes: 1024,
 			Reopen: backoff.Policy{Interval: 5 * time.Millisecond, Grow: true, Max: 20 * time.Millisecond, Jitter: 0.3},
 		})
 		if err != nil {
@@ -166,7 +166,7 @@ func ptyReader(t *testing.T, id, slave string, separator string) device.Device {
 	t.Helper()
 	reader, err := serial.New(serial.Options{
 		ID: id, Path: slave, Baud: 9600, Terminator: []byte(separator),
-		MaxFrameBytes: 4096, InterCharTimeout: 50 * time.Millisecond,
+		MaxFrameBytes: 4096, InterCharTimeout: 50 * time.Millisecond, TxChunkBytes: 1024,
 		Reopen: backoff.Policy{Interval: 5 * time.Millisecond, Grow: true, Max: 20 * time.Millisecond, Jitter: 0.3},
 	})
 	if err != nil {

@@ -152,6 +152,7 @@ func runProbe(args []string, stdout, stderr io.Writer) error {
 		InterCharTimeout: dev.InterCharTimeout.Duration(),
 		LogPayloads:      *logPayloads,
 		Logger:           log,
+		TxChunkBytes:     dev.TxChunkBytes,
 		Reopen:           dev.ReopenPolicy(),
 	})
 	if err != nil {
