@@ -50,9 +50,9 @@ type Identity struct {
 	// agent's status topic, and it defaults to the station id.
 	//
 	// It is settable because a client id must be unique per broker connection:
-	// two processes sharing one would repeatedly disconnect each other. A
-	// second agent on the same station - a second device owned by its own
-	// process, per open question 4 - needs its own value.
+	// two processes sharing one would repeatedly disconnect each other, so a
+	// second agent on the same station needs its own value (DESIGN-V2.md,
+	// "instance_id, not host").
 	Instance string `yaml:"instance"`
 }
 

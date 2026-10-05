@@ -1,10 +1,11 @@
 // Package version carries the build identity: a version written in source, and
-// a commit and build date injected by the linker. Every event, heartbeat and log
-// line reports the version, so a fleet can be asked which stations are still
-// running an old build.
+// a commit and build date injected by the linker. Every message the agent
+// publishes and every log line report the version, so a fleet can be asked
+// which stations are still running an old build.
 package version
 
-// Reported as agent_version on every scan, status and heartbeat, and by the
+// Reported as agent_version in every message the agent publishes
+// (DESIGN-V2.md, "Fields in every message the agent publishes"), and by the
 // version subcommand. This is the only place it is written down: edit it, then
 // tag.
 //

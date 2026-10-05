@@ -42,7 +42,7 @@ FROM alpine:3.24
 # is read in local time even though every timestamp on the wire is UTC.
 RUN apk add --no-cache ca-certificates tzdata
 
-# A fixed uid and gid, so a host directory mounted for the audit log can be
+# A fixed uid and gid, so a host directory mounted for the log file can be
 # chowned to a number that does not change between builds.
 RUN addgroup -S -g 65532 skuhus-device-agent \
  && adduser -S -D -H -u 65532 -G skuhus-device-agent \
@@ -57,14 +57,14 @@ COPY config.sample.yaml /etc/skuhus-device-agent/config.sample.yaml
 # as --label at build time by the Makefile, which is the one place that reads
 # the version; putting them here would mean a second reader that can drift.
 LABEL org.opencontainers.image.title="skuhus-device-agent" \
-      org.opencontainers.image.description="Device agent that publishes barcode scans over MQTT" \
+      org.opencontainers.image.description="Device agent that moves bytes between serial devices and MQTT" \
       org.opencontainers.image.source="https://github.com/skuhus/device-agent" \
       org.opencontainers.image.licenses="MIT"
 
 # No VOLUME instruction: it would create an anonymous volume on every run that
 # did not mount over it, and those accumulate unnoticed. Two paths want mounting
 # and the README says so - /etc/skuhus-device-agent read-only for the config, and
-# /var/log/skuhus-device-agent writable for the audit log.
+# /var/log/skuhus-device-agent writable for the log file.
 
 USER skuhus-device-agent
 ENTRYPOINT ["skuhus-device-agent"]
