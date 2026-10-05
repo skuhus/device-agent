@@ -21,11 +21,12 @@ identity:
 
   # Names this agent process: it is the MQTT client id, the instance_id field
   # in every message, and a level of the agent's status topic,
-  # skuhus/<project>/<site>/<station>/agent/<instance>/status. Defaults to the
-  # station id, and only needs setting when two agents share a station: a
-  # client id must be unique per broker connection, and two processes sharing
-  # one disconnect each other in a loop. [a-z0-9-]+, up to 64 characters.
-  # instance: pack-03
+  # skuhus/<project>/<site>/<station>/agent/<instance>/status. Empty means
+  # the station id, and it only needs setting when two agents share a station:
+  # a client id must be unique per broker connection, and two processes
+  # sharing one disconnect each other in a loop. [a-z0-9-]+, up to 64
+  # characters.
+  instance: ""
 
 broker:
   # Plaintext is refused unless insecure is set below.
@@ -46,12 +47,13 @@ broker:
   # space, so that a password containing one still works.
   credentials_file: /etc/skuhus-device-agent/credentials
 
-  # Pinned CA bundle for the broker certificate. Optional.
-  # ca_file: /etc/skuhus-device-agent/ca.pem
+  # A CA bundle to verify the broker's certificate against, such as
+  # /etc/skuhus-device-agent/ca.pem. Empty means the system's CA certificates.
+  ca_file: ""
 
   # Development only. Allows a plaintext URL and skips certificate
   # verification, and is logged at WARN on every reconnect.
-  # insecure: false
+  insecure: false
 
   keepalive: 30s
 
@@ -124,8 +126,8 @@ devices:
 
     # Optional. Carried in every message about this device, so that the
     # services behind the broker know which physical device it is. The agent
-    # does not interpret it.
-    # device_type: honeywell-1470g
+    # does not interpret it. Empty is published as null.
+    device_type: honeywell-1470g
 
     # When the port cannot be opened, or fails, the agent opens it again after
     # reopen_interval. With reopen_backoff enabled, as it is by default, the

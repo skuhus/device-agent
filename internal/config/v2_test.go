@@ -259,21 +259,7 @@ func TestLoggingNeedsNoDestination(t *testing.T) {
 // must exist on a station are pointed at files this test creates; the test
 // fails if the sample stops naming them.
 func TestSampleConfigValidates(t *testing.T) {
-	body, err := os.ReadFile(filepath.Join("..", "..", "config.sample.yaml"))
-	if err != nil {
-		t.Fatalf("read the sample: %v", err)
-	}
-	fixture := newFixture(t, "")
-	sample := string(body)
-	for original, replacement := range map[string]string{
-		"/etc/skuhus-device-agent/credentials":   fixture.credentialsFile,
-		"/var/log/skuhus-device-agent/agent.log": fixture.logFile,
-	} {
-		if !strings.Contains(sample, original) {
-			t.Fatalf("the sample no longer names %s; update this test with what replaced it", original)
-		}
-		sample = strings.ReplaceAll(sample, original, replacement)
-	}
+	fixture, sample := sampleConfig(t)
 	if err := os.WriteFile(fixture.path, []byte(sample), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
