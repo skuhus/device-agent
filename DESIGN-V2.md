@@ -71,6 +71,12 @@ the release's tag, above the notes GitHub generates; that section says what a
 station and a consumer change for each release. Source: maintainer, 2026-10-05
 (#18 Q1). For 2.0.0 it lists what changed from 0.3.0.
 
+`[Decided]` The image on GHCR, `ghcr.io/skuhus/skuhus-device-agent`, is public,
+so that a station pulls it without credentials. Source: maintainer, 2026-10-05
+(#18 Q2). The 0.3.0 image, `ghcr.io/skuhus/skuhus-device-serial-scanner`,
+refuses an anonymous pull, so the new package is expected to start private too,
+and an organisation owner makes it public after the release first pushes it.
+
 ## Naming
 
 `[Decided]` The repository is skuhus/device-agent, renamed on 2026-09-29. The Go

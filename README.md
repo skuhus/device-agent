@@ -388,6 +388,15 @@ For the services that consume the messages:
 
 ## Container
 
+Each release publishes the image as `ghcr.io/skuhus/skuhus-device-agent`, tagged
+with its version and with `latest`:
+
+```
+docker pull ghcr.io/skuhus/skuhus-device-agent:<version>
+```
+
+To build it from a checkout instead:
+
 ```
 make image
 ```
@@ -433,6 +442,9 @@ docker run -d --name skuhus-device-agent --restart unless-stopped \
   -e SH_DEV_AGENT_MQTT_PASSWORD=... \
   skuhus-device-agent:local
 ```
+
+With the published image, `ghcr.io/skuhus/skuhus-device-agent:<version>` takes
+the place of `skuhus-device-agent:local`.
 
 Four things in that command are not decoration:
 
