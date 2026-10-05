@@ -132,8 +132,11 @@ type Core struct {
 type pipeline struct {
 	device Device
 	frames chan device.Frame
-	events *eventQueue
-	tx     *txQueue
+	events *statusQueue
+	// tx holds the device's tx in the order they arrived, for its one writer.
+	// It is not bounded: every tx carries a message expiry, and one that
+	// waited past it is failed rather than written.
+	tx *waitingQueue[*txJob]
 	// seq is written only by the device's rx publisher.
 	seq uint64
 
@@ -229,8 +232,8 @@ func (core *Core) Run(ctx context.Context) error {
 		line := &pipeline{
 			device:   dev,
 			frames:   make(chan device.Frame, core.opts.BufferSize),
-			events:   newEventQueue(core.opts.EventBufferSize),
-			tx:       newTxQueue(),
+			events:   newStatusQueue(core.opts.EventBufferSize),
+			tx:       newWaitingQueue[*txJob](),
 			opened:   make(chan struct{}, 1),
 			txActive: map[string]*txJob{},
 			written:  newWrittenIDs(dev.TxRememberedIDs),
@@ -730,100 +733,6 @@ func (item statusItem) attrs() []any {
 			"code", string(result.Code), "at", item.tx.at.UTC().Format(wire.TimeFormat)}
 	}
 	return eventAttrs(*item.event)
-}
-
-// eventQueue holds one device's status messages until they can be published,
-// oldest first. It keeps at most size events: pushing an event when size are
-// held drops the oldest, so that after a long broker outage the most recent
-// events are the ones left (#13 Q1). A tx result is never dropped for room. Its
-// sender waits for it and resends without it, and a printer prints a resent job
-// twice. Results cannot pile up during an outage either, since no tx arrives
-// without the connection. The reader and the tx side push, and one goroutine
-// takes.
-type eventQueue struct {
-	mu     sync.Mutex
-	events []statusItem
-	size   int
-	closed bool
-	// ready holds a value after every push and at close, so that wait need
-	// not poll.
-	ready chan struct{}
-}
-
-func newEventQueue(size int) *eventQueue {
-	return &eventQueue{size: size, ready: make(chan struct{}, 1)}
-}
-
-// push adds a message. When an event found size events held, it returns the
-// oldest, which it dropped to make room, and true.
-func (queue *eventQueue) push(item statusItem) (statusItem, bool) {
-	queue.mu.Lock()
-	defer queue.mu.Unlock()
-	var dropped statusItem
-	full := false
-	if item.event != nil {
-		held, oldest := 0, -1
-		for i, queued := range queue.events {
-			if queued.event != nil {
-				held++
-				if oldest < 0 {
-					oldest = i
-				}
-			}
-		}
-		if full = held >= queue.size; full {
-			dropped = queue.events[oldest]
-			queue.events = append(queue.events[:oldest], queue.events[oldest+1:]...)
-		}
-	}
-	queue.events = append(queue.events, item)
-	queue.signal()
-	return dropped, full
-}
-
-// close says that no event will be pushed again.
-func (queue *eventQueue) close() {
-	queue.mu.Lock()
-	defer queue.mu.Unlock()
-	queue.closed = true
-	queue.signal()
-}
-
-// wait blocks until the queue holds an event, and returns false instead once
-// it is closed and empty.
-func (queue *eventQueue) wait() bool {
-	for {
-		queue.mu.Lock()
-		held, closed := len(queue.events), queue.closed
-		queue.mu.Unlock()
-		switch {
-		case held > 0:
-			return true
-		case closed:
-			return false
-		}
-		<-queue.ready
-	}
-}
-
-// pop takes the oldest message, if there is one.
-func (queue *eventQueue) pop() (statusItem, bool) {
-	queue.mu.Lock()
-	defer queue.mu.Unlock()
-	if len(queue.events) == 0 {
-		return statusItem{}, false
-	}
-	event := queue.events[0]
-	queue.events = queue.events[1:]
-	return event, true
-}
-
-// signal wakes wait. It is called with mu held.
-func (queue *eventQueue) signal() {
-	select {
-	case queue.ready <- struct{}{}:
-	default:
-	}
 }
 
 // eventAttrs are a port event's log attributes.

@@ -112,59 +112,6 @@ func (ids *writtenIDs) lookup(id string) (time.Time, bool) {
 	return at, known
 }
 
-// txQueue holds a device's tx in the order they arrived, for its one writer.
-// It is not bounded: every tx carries a message expiry, and one that waited
-// past it is failed rather than written.
-type txQueue struct {
-	mu     sync.Mutex
-	jobs   []*txJob
-	closed bool
-	ready  chan struct{}
-}
-
-func newTxQueue() *txQueue { return &txQueue{ready: make(chan struct{}, 1)} }
-
-func (queue *txQueue) push(job *txJob) {
-	queue.mu.Lock()
-	defer queue.mu.Unlock()
-	queue.jobs = append(queue.jobs, job)
-	queue.signal()
-}
-
-func (queue *txQueue) close() {
-	queue.mu.Lock()
-	defer queue.mu.Unlock()
-	queue.closed = true
-	queue.signal()
-}
-
-// next blocks until a job is queued, and returns false once the queue is
-// closed and empty.
-func (queue *txQueue) next() (*txJob, bool) {
-	for {
-		queue.mu.Lock()
-		if len(queue.jobs) > 0 {
-			job := queue.jobs[0]
-			queue.jobs = queue.jobs[1:]
-			queue.mu.Unlock()
-			return job, true
-		}
-		closed := queue.closed
-		queue.mu.Unlock()
-		if closed {
-			return nil, false
-		}
-		<-queue.ready
-	}
-}
-
-func (queue *txQueue) signal() {
-	select {
-	case queue.ready <- struct{}{}:
-	default:
-	}
-}
-
 // takeTxs gives each tx to its device until stop is closed, and then takes
 // what is already waiting. While the agent stops, each still gets a result:
 // agent_stopping.
