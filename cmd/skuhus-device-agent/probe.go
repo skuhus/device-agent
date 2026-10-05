@@ -122,8 +122,8 @@ func probeCommand(args []string, stdout, stderr io.Writer) error {
 	if warnings, err := config.ValidateDevice(dev); err != nil {
 		return err
 	} else {
-		for _, w := range warnings {
-			fmt.Fprintln(stderr, "warning: "+w.String())
+		for _, warning := range warnings {
+			fmt.Fprintln(stderr, "warning: "+warning.String())
 		}
 	}
 
@@ -243,9 +243,9 @@ func (presence *presenceLog) set(present bool, event device.Event) {
 	presence.log.Warn("device absent", "error_class", string(event.ErrorClass), "error", event.ErrorText())
 }
 
-func printReading(w io.Writer, rx wire.Rx, raw []byte, asJSON bool) error {
+func printReading(out io.Writer, rx wire.Rx, raw []byte, asJSON bool) error {
 	if asJSON {
-		enc := json.NewEncoder(w)
+		enc := json.NewEncoder(out)
 		enc.SetEscapeHTML(false)
 		return enc.Encode(rx)
 	}
@@ -253,34 +253,34 @@ func printReading(w io.Writer, rx wire.Rx, raw []byte, asJSON bool) error {
 	if rx.Text != nil {
 		text = fmt.Sprintf("%q", *rx.Text)
 	}
-	fmt.Fprintf(w, "%s seq=%d frame_bytes=%d utf8=%t\n",
+	fmt.Fprintf(out, "%s seq=%d frame_bytes=%d utf8=%t\n",
 		rx.AgentTS, rx.Seq, len(raw), rx.TextValid)
-	fmt.Fprintf(w, "  hex   %s\n", hex.EncodeToString(raw))
-	fmt.Fprintf(w, "  text  %s\n", text)
+	fmt.Fprintf(out, "  hex   %s\n", hex.EncodeToString(raw))
+	fmt.Fprintf(out, "  text  %s\n", text)
 	return nil
 }
 
 // listDevices enumerates what the host offers and, on Linux, the stable
 // by-id and by-path symlinks that should be configured instead of the
 // kernel-assigned names.
-func listDevices(w io.Writer) error {
+func listDevices(out io.Writer) error {
 	ports, err := goserial.GetPortsList()
 	if err != nil {
 		return fmt.Errorf("enumerate serial ports: %w", err)
 	}
 	sort.Strings(ports)
 
-	fmt.Fprintln(w, "kernel-assigned device nodes:")
+	fmt.Fprintln(out, "kernel-assigned device nodes:")
 	if len(ports) == 0 {
-		fmt.Fprintln(w, "  (none found; check that the scanner is in USB-CDC mode, that it is not")
-		fmt.Fprintln(w, "   claimed by ModemManager or brltty, and that this user is in the dialout group)")
+		fmt.Fprintln(out, "  (none found; check that the scanner is in USB-CDC mode, that it is not")
+		fmt.Fprintln(out, "   claimed by ModemManager or brltty, and that this user is in the dialout group)")
 	}
-	for _, p := range ports {
+	for _, portName := range ports {
 		note := ""
-		if strings.HasPrefix(p, "/dev/tty.") {
+		if strings.HasPrefix(portName, "/dev/tty.") {
 			note = "  [unusable: macOS callin device, opening it blocks on carrier detect; use the /dev/cu.* twin]"
 		}
-		fmt.Fprintf(w, "  %s%s\n", p, note)
+		fmt.Fprintf(out, "  %s%s\n", portName, note)
 	}
 
 	for _, dir := range []string{"/dev/serial/by-id", "/dev/serial/by-path"} {
@@ -289,23 +289,23 @@ func listDevices(w io.Writer) error {
 			if os.IsNotExist(err) {
 				continue
 			}
-			fmt.Fprintf(w, "\n%s: %v\n", dir, err)
+			fmt.Fprintf(out, "\n%s: %v\n", dir, err)
 			continue
 		}
-		fmt.Fprintf(w, "\nstable paths in %s (configure these, not the nodes above):\n", dir)
+		fmt.Fprintf(out, "\nstable paths in %s (configure these, not the nodes above):\n", dir)
 		names := make([]string, 0, len(entries))
-		for _, e := range entries {
-			names = append(names, e.Name())
+		for _, entry := range entries {
+			names = append(names, entry.Name())
 		}
 		sort.Strings(names)
 		for _, name := range names {
 			full := filepath.Join(dir, name)
 			target, err := filepath.EvalSymlinks(full)
 			if err != nil {
-				fmt.Fprintf(w, "  %s -> (unresolvable: %v)\n", full, err)
+				fmt.Fprintf(out, "  %s -> (unresolvable: %v)\n", full, err)
 				continue
 			}
-			fmt.Fprintf(w, "  %s -> %s\n", full, target)
+			fmt.Fprintf(out, "  %s -> %s\n", full, target)
 		}
 	}
 	return nil

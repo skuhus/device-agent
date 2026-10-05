@@ -252,17 +252,17 @@ func (runner *runner) checkConnack(ca *paho.Connack) {
 		runner.record("connack", false, "no CONNACK properties returned")
 		return
 	}
-	p := ca.Properties
+	properties := ca.Properties
 	// paho fills these from the MQTT defaults when the server omits them, which
 	// per the specification means available, so absence and true are the same
 	// claim.
 	detail := fmt.Sprintf("retain_available=%t max_qos=%s session_expiry=%s wildcard_sub=%t shared_sub=%t sub_id=%t receive_max=%s server_keepalive=%s",
-		p.RetainAvailable, u8(p.MaximumQoS), u32(p.SessionExpiryInterval), p.WildcardSubAvailable,
-		p.SharedSubAvailable, p.SubIDAvailable, u16(p.ReceiveMaximum), u16(p.ServerKeepAlive))
+		properties.RetainAvailable, u8(properties.MaximumQoS), u32(properties.SessionExpiryInterval), properties.WildcardSubAvailable,
+		properties.SharedSubAvailable, properties.SubIDAvailable, u16(properties.ReceiveMaximum), u16(properties.ServerKeepAlive))
 
 	// The agent publishes scans and status at QoS 1 and relies on retained
 	// status, so anything less than that is a fallback decision, not a detail.
-	ok := p.RetainAvailable && (p.MaximumQoS == nil || *p.MaximumQoS >= 1)
+	ok := properties.RetainAvailable && (properties.MaximumQoS == nil || *properties.MaximumQoS >= 1)
 	runner.record("connack", ok, "%s", detail)
 }
 
@@ -672,32 +672,32 @@ func (runner *runner) checkExpiry(ctx context.Context) {
 	}
 }
 
-func responseTopic(p *paho.Publish) string {
-	if p.Properties == nil {
+func responseTopic(publish *paho.Publish) string {
+	if publish.Properties == nil {
 		return ""
 	}
-	return p.Properties.ResponseTopic
+	return publish.Properties.ResponseTopic
 }
 
-func u8(v *byte) string {
-	if v == nil {
+func u8(value *byte) string {
+	if value == nil {
 		return "unset"
 	}
-	return fmt.Sprintf("%d", *v)
+	return fmt.Sprintf("%d", *value)
 }
 
-func u16(v *uint16) string {
-	if v == nil {
+func u16(value *uint16) string {
+	if value == nil {
 		return "unset"
 	}
-	return fmt.Sprintf("%d", *v)
+	return fmt.Sprintf("%d", *value)
 }
 
-func u32(v *uint32) string {
-	if v == nil {
+func u32(value *uint32) string {
+	if value == nil {
 		return "unset"
 	}
-	return fmt.Sprintf("%d", *v)
+	return fmt.Sprintf("%d", *value)
 }
 
 type connectOptions struct {
@@ -810,14 +810,14 @@ func (client *client) subscribe(ctx context.Context, topic string, qos byte) err
 
 var errTimeout = errors.New("timed out")
 
-func (client *client) recv(d time.Duration) (*paho.Publish, error) {
-	if d <= 0 {
+func (client *client) recv(timeout time.Duration) (*paho.Publish, error) {
+	if timeout <= 0 {
 		return nil, errTimeout
 	}
 	select {
 	case msg := <-client.msgs:
 		return msg, nil
-	case <-time.After(d):
+	case <-time.After(timeout):
 		return nil, errTimeout
 	}
 }

@@ -132,8 +132,8 @@ func (file *File) shift() error {
 	if err := os.Remove(file.rotatedPath(file.keep)); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove the oldest rotated file: %w", err)
 	}
-	for i := file.keep - 1; i >= 1; i-- {
-		from, to := file.rotatedPath(i), file.rotatedPath(i+1)
+	for generation := file.keep - 1; generation >= 1; generation-- {
+		from, to := file.rotatedPath(generation), file.rotatedPath(generation+1)
 		if err := os.Rename(from, to); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("move %s to %s: %w", from, to, err)
 		}

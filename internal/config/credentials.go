@@ -24,29 +24,29 @@ type Credentials struct {
 // read, or when the file contains a key it does not recognise. A silently
 // empty password produces an authentication failure at the broker that reads
 // like a broker problem rather than a configuration one.
-func LoadCredentials(b Broker, env map[string]string) (Credentials, error) {
+func LoadCredentials(broker Broker, env map[string]string) (Credentials, error) {
 	var credentials Credentials
-	if b.CredentialsFile != "" {
-		fromFile, err := readCredentialsFile(b.CredentialsFile)
+	if broker.CredentialsFile != "" {
+		fromFile, err := readCredentialsFile(broker.CredentialsFile)
 		if err != nil {
 			return Credentials{}, err
 		}
 		credentials = fromFile
 	}
-	if v, ok := env[EnvMQTTUsername]; ok {
-		credentials.Username = v
+	if username, ok := env[EnvMQTTUsername]; ok {
+		credentials.Username = username
 	}
-	if v, ok := env[EnvMQTTPassword]; ok {
-		credentials.Password = v
+	if password, ok := env[EnvMQTTPassword]; ok {
+		credentials.Password = password
 	}
 	if credentials.Password == "" {
 		return Credentials{}, fmt.Errorf(
-			"no broker password: set it in %s or in %s", b.CredentialsFile, EnvMQTTPassword)
+			"no broker password: set it in %s or in %s", broker.CredentialsFile, EnvMQTTPassword)
 	}
 	if credentials.Username == "" {
 		return Credentials{}, fmt.Errorf(
 			"no broker username: set it in %s or in %s; section 8 requires per-station credentials, so there is no anonymous fallback",
-			b.CredentialsFile, EnvMQTTUsername)
+			broker.CredentialsFile, EnvMQTTUsername)
 	}
 	return credentials, nil
 }

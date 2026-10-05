@@ -82,8 +82,8 @@ func run(broker, username, password, topic, clientID string, qos byte, raw bool)
 			},
 		},
 		OnClientError: func(err error) { end(fmt.Errorf("connection lost: %w", err)) },
-		OnServerDisconnect: func(d *paho.Disconnect) {
-			end(fmt.Errorf("the broker disconnected, reason %d", d.ReasonCode))
+		OnServerDisconnect: func(disconnect *paho.Disconnect) {
+			end(fmt.Errorf("the broker disconnected, reason %d", disconnect.ReasonCode))
 		},
 	})
 

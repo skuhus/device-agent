@@ -65,29 +65,29 @@ func (framer *Framer) Append(src []byte) ([][]byte, []Discard) {
 	framer.buf = append(framer.buf, src...)
 
 	for {
-		i := bytes.Index(framer.buf, framer.separator)
-		if i < 0 {
+		separatorAt := bytes.Index(framer.buf, framer.separator)
+		if separatorAt < 0 {
 			break
 		}
 		switch {
 		case framer.dropping:
-			framer.dropped += i + len(framer.separator)
+			framer.dropped += separatorAt + len(framer.separator)
 			discards = append(discards, Discard{Reason: wire.DiscardResync, Bytes: framer.dropped})
 			framer.dropping, framer.dropped = false, 0
-		case i == 0:
+		case separatorAt == 0:
 			discards = append(discards, Discard{Reason: wire.DiscardEmptyFrame, Bytes: len(framer.separator)})
-		case i > framer.maxFrame:
+		case separatorAt > framer.maxFrame:
 			// The separator arrived in the same read that took the payload
 			// past the limit. The frame is over size and is dropped here; no
 			// resynchronisation is needed because the separator has been
 			// consumed and the next byte starts a fresh frame. A scanner sends
 			// a scan and its separator in one read, so this is where its
 			// oversize scans land, and the data goes with the discard.
-			discards = append(discards, Discard{Reason: wire.DiscardOversize, Bytes: i, Data: bytes.Clone(framer.buf[:i])})
+			discards = append(discards, Discard{Reason: wire.DiscardOversize, Bytes: separatorAt, Data: bytes.Clone(framer.buf[:separatorAt])})
 		default:
-			frames = append(frames, bytes.Clone(framer.buf[:i]))
+			frames = append(frames, bytes.Clone(framer.buf[:separatorAt]))
 		}
-		framer.consume(i + len(framer.separator))
+		framer.consume(separatorAt + len(framer.separator))
 	}
 
 	if framer.dropping {

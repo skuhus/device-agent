@@ -78,13 +78,13 @@ func payload(text, file, hexData string) ([]byte, error) {
 // unescape decodes the escapes a shell makes awkward to type as bytes.
 func unescape(text string) ([]byte, error) {
 	var out []byte
-	for i := 0; i < len(text); i++ {
-		if text[i] != '\\' || i+1 == len(text) {
-			out = append(out, text[i])
+	for index := 0; index < len(text); index++ {
+		if text[index] != '\\' || index+1 == len(text) {
+			out = append(out, text[index])
 			continue
 		}
-		i++
-		switch text[i] {
+		index++
+		switch text[index] {
 		case 'r':
 			out = append(out, '\r')
 		case 'n':
@@ -94,17 +94,17 @@ func unescape(text string) ([]byte, error) {
 		case '\\':
 			out = append(out, '\\')
 		case 'x':
-			if i+2 >= len(text) {
-				return nil, fmt.Errorf("\\x at %d needs two hex digits", i-1)
+			if index+2 >= len(text) {
+				return nil, fmt.Errorf("\\x at %d needs two hex digits", index-1)
 			}
-			value, err := strconv.ParseUint(text[i+1:i+3], 16, 8)
+			value, err := strconv.ParseUint(text[index+1:index+3], 16, 8)
 			if err != nil {
-				return nil, fmt.Errorf("\\x%s: %w", text[i+1:i+3], err)
+				return nil, fmt.Errorf("\\x%s: %w", text[index+1:index+3], err)
 			}
 			out = append(out, byte(value))
-			i += 2
+			index += 2
 		default:
-			return nil, fmt.Errorf("unknown escape \\%c", text[i])
+			return nil, fmt.Errorf("unknown escape \\%c", text[index])
 		}
 	}
 	return out, nil
@@ -112,14 +112,14 @@ func unescape(text string) ([]byte, error) {
 
 // newUUID makes a version 4 UUID, which every agent accepts (DESIGN-V2.md, "tx").
 func newUUID() (string, error) {
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
+	var randomBytes [16]byte
+	if _, err := rand.Read(randomBytes[:]); err != nil {
 		return "", err
 	}
-	b[6] = b[6]&0x0f | 0x40
-	b[8] = b[8]&0x3f | 0x80
-	h := hex.EncodeToString(b[:])
-	return h[0:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:32], nil
+	randomBytes[6] = randomBytes[6]&0x0f | 0x40
+	randomBytes[8] = randomBytes[8]&0x3f | 0x80
+	hexDigits := hex.EncodeToString(randomBytes[:])
+	return hexDigits[0:8] + "-" + hexDigits[8:12] + "-" + hexDigits[12:16] + "-" + hexDigits[16:20] + "-" + hexDigits[20:32], nil
 }
 
 func run(broker, username, password, topic, id, sender string, data []byte, expiry, wait time.Duration) error {

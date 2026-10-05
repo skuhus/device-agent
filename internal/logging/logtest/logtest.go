@@ -23,10 +23,10 @@ type Log struct {
 	buf bytes.Buffer
 }
 
-func (log *Log) Write(p []byte) (int, error) {
+func (log *Log) Write(data []byte) (int, error) {
 	log.mu.Lock()
 	defer log.mu.Unlock()
-	return log.buf.Write(p)
+	return log.buf.Write(data)
 }
 
 // String is everything written so far.

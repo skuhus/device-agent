@@ -146,8 +146,8 @@ var removedKeys = []struct{ path, instead string }{
 
 // decode reads YAML on top of the defaults, rejecting unknown keys and naming
 // the replacement of every removed one.
-func decode(r io.Reader) (*Config, error) {
-	body, err := io.ReadAll(r)
+func decode(reader io.Reader) (*Config, error) {
+	body, err := io.ReadAll(reader)
 	if err != nil {
 		return nil, err
 	}
@@ -245,12 +245,12 @@ func findRemovedKeys(doc *yaml.Node) ([]error, map[int]bool) {
 		}
 	}
 	root := doc.Content[0]
-	for i := 0; i+1 < len(root.Content); i += 2 {
-		section, value := root.Content[i].Value, root.Content[i+1]
+	for sectionIndex := 0; sectionIndex+1 < len(root.Content); sectionIndex += 2 {
+		section, value := root.Content[sectionIndex].Value, root.Content[sectionIndex+1]
 		switch value.Kind {
 		case yaml.MappingNode:
-			for j := 0; j+1 < len(value.Content); j += 2 {
-				key := value.Content[j]
+			for keyIndex := 0; keyIndex+1 < len(value.Content); keyIndex += 2 {
+				key := value.Content[keyIndex]
 				path := section + "." + key.Value
 				check(key, path, path)
 			}
@@ -259,8 +259,8 @@ func findRemovedKeys(doc *yaml.Node) ([]error, map[int]bool) {
 				if entry.Kind != yaml.MappingNode {
 					continue
 				}
-				for j := 0; j+1 < len(entry.Content); j += 2 {
-					key := entry.Content[j]
+				for keyIndex := 0; keyIndex+1 < len(entry.Content); keyIndex += 2 {
+					key := entry.Content[keyIndex]
 					check(key, section+"[]."+key.Value, fmt.Sprintf("%s[%d].%s", section, index, key.Value))
 				}
 			}
@@ -431,20 +431,20 @@ func applyEnv(cfg *Config, env map[string]string) error {
 	return errors.Join(problems...)
 }
 
-func applyOverrides(cfg *Config, o Overrides) {
-	assign(&cfg.Identity.Project, o.Project)
-	assign(&cfg.Identity.Site, o.Site)
-	assign(&cfg.Identity.Station, o.Station)
-	assign(&cfg.Broker.URL, o.BrokerURL)
-	assign(&cfg.Identity.Instance, o.Instance)
-	assign(&cfg.Broker.CredentialsFile, o.BrokerCredentialsFile)
-	assign(&cfg.Broker.CAFile, o.BrokerCAFile)
-	assign(&cfg.Broker.Insecure, o.BrokerInsecure)
-	assign(&cfg.Logging.Level, o.LogLevel)
-	assign(&cfg.Logging.LogPayloads, o.LogPayloads)
+func applyOverrides(cfg *Config, overrides Overrides) {
+	assign(&cfg.Identity.Project, overrides.Project)
+	assign(&cfg.Identity.Site, overrides.Site)
+	assign(&cfg.Identity.Station, overrides.Station)
+	assign(&cfg.Broker.URL, overrides.BrokerURL)
+	assign(&cfg.Identity.Instance, overrides.Instance)
+	assign(&cfg.Broker.CredentialsFile, overrides.BrokerCredentialsFile)
+	assign(&cfg.Broker.CAFile, overrides.BrokerCAFile)
+	assign(&cfg.Broker.Insecure, overrides.BrokerInsecure)
+	assign(&cfg.Logging.Level, overrides.LogLevel)
+	assign(&cfg.Logging.LogPayloads, overrides.LogPayloads)
 }
 
-func assign[T any](dst *T, src *T) {
+func assign[Value any](dst *Value, src *Value) {
 	if src != nil {
 		*dst = *src
 	}
@@ -456,33 +456,33 @@ func setString(dst *string) func(string) error {
 
 func setBool(dst *bool) func(string) error {
 	return func(value string) error {
-		b, err := strconv.ParseBool(value)
+		parsed, err := strconv.ParseBool(value)
 		if err != nil {
 			return fmt.Errorf("expected a boolean, got %q", value)
 		}
-		*dst = b
+		*dst = parsed
 		return nil
 	}
 }
 
 func setInt(dst *int) func(string) error {
 	return func(value string) error {
-		n, err := strconv.Atoi(value)
+		parsed, err := strconv.Atoi(value)
 		if err != nil {
 			return fmt.Errorf("expected an integer, got %q", value)
 		}
-		*dst = n
+		*dst = parsed
 		return nil
 	}
 }
 
 func setDuration(dst *Duration) func(string) error {
 	return func(value string) error {
-		d, err := time.ParseDuration(value)
+		parsed, err := time.ParseDuration(value)
 		if err != nil {
 			return fmt.Errorf("expected a duration such as \"30s\", got %q", value)
 		}
-		*dst = Duration(d)
+		*dst = Duration(parsed)
 		return nil
 	}
 }

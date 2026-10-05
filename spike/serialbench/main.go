@@ -127,8 +127,8 @@ func runStatus(args []string) error {
 			return err
 		}
 		wellFormed := 0
-		for n := byte(1); n <= 4; n++ {
-			reply := replies[n]
+		for statusType := byte(1); statusType <= 4; statusType++ {
+			reply := replies[statusType]
 			verdict := "no reply"
 			if len(reply) > 0 {
 				verdict = "malformed"
@@ -137,7 +137,7 @@ func runStatus(args []string) error {
 					wellFormed++
 				}
 			}
-			fmt.Printf("baud %6d  DLE EOT %d (%s status): reply % x  %s\n", baud, n, statusNames[n], reply, verdict)
+			fmt.Printf("baud %6d  DLE EOT %d (%s status): reply % x  %s\n", baud, statusType, statusNames[statusType], reply, verdict)
 		}
 		if wellFormed == 4 {
 			fmt.Printf("baud %d: every reply well-formed; these are the printer's line settings\n", baud)
@@ -163,11 +163,11 @@ func queryStatus(path string, mode *serial.Mode, wait time.Duration) (map[byte][
 		return nil, err
 	}
 	replies := map[byte][]byte{}
-	for n := byte(1); n <= 4; n++ {
-		if err := writeAll(port, append(bytes.Clone(dleEOT), n)); err != nil {
+	for statusType := byte(1); statusType <= 4; statusType++ {
+		if err := writeAll(port, append(bytes.Clone(dleEOT), statusType)); err != nil {
 			return nil, err
 		}
-		replies[n] = readFor(port, wait)
+		replies[statusType] = readFor(port, wait)
 	}
 	return replies, nil
 }
@@ -177,11 +177,11 @@ func readFor(port serial.Port, wait time.Duration) []byte {
 	buf := make([]byte, 64)
 	deadline := time.Now().Add(wait)
 	for time.Now().Before(deadline) {
-		n, err := port.Read(buf)
+		received, err := port.Read(buf)
 		if err != nil {
 			break
 		}
-		got = append(got, buf[:n]...)
+		got = append(got, buf[:received]...)
 	}
 	return got
 }
@@ -190,11 +190,11 @@ func readFor(port serial.Port, wait time.Duration) []byte {
 // "Writing: tx"): the library makes one write(2) call per Write.
 func writeAll(port serial.Port, data []byte) error {
 	for len(data) > 0 {
-		n, err := port.Write(data)
+		accepted, err := port.Write(data)
 		if err != nil {
 			return err
 		}
-		data = data[n:]
+		data = data[accepted:]
 	}
 	return nil
 }
@@ -261,13 +261,13 @@ func runPrint(args []string) error {
 	for rest := job; len(rest) > 0; {
 		part := rest[:min(size, len(rest))]
 		before := time.Now()
-		n, err := port.Write(part)
+		accepted, err := port.Write(part)
 		calls++
 		slowest = max(slowest, time.Since(before))
 		if err != nil {
 			return fmt.Errorf("write after %d of %d bytes: %w", len(job)-len(rest), len(job), err)
 		}
-		rest = rest[n:]
+		rest = rest[accepted:]
 	}
 	written := time.Since(start)
 	if err := port.Drain(); err != nil {
@@ -292,11 +292,11 @@ func runPrint(args []string) error {
 		fmt.Println("  " + line)
 	}
 
-	for n := byte(1); n <= 4; n++ {
-		if err := writeAll(port, append(bytes.Clone(dleEOT), n)); err != nil {
+	for statusType := byte(1); statusType <= 4; statusType++ {
+		if err := writeAll(port, append(bytes.Clone(dleEOT), statusType)); err != nil {
 			return err
 		}
-		fmt.Printf("after the job, DLE EOT %d (%s status): % x\n", n, statusNames[n], readFor(port, 300*time.Millisecond))
+		fmt.Printf("after the job, DLE EOT %d (%s status): % x\n", statusType, statusNames[statusType], readFor(port, 300*time.Millisecond))
 	}
 	return nil
 }
@@ -330,10 +330,10 @@ func runFlood(args []string) error {
 	for written < *total {
 		part := data[:min(*chunk, *total-written)]
 		before := time.Now()
-		n, err := port.Write(part)
+		accepted, err := port.Write(part)
 		took := time.Since(before)
-		written += n
-		fmt.Printf("%9s  write(2) %5d bytes in %9s, %6d in all\n", time.Since(start).Round(time.Millisecond), n, took.Round(time.Millisecond), written)
+		written += accepted
+		fmt.Printf("%9s  write(2) %5d bytes in %9s, %6d in all\n", time.Since(start).Round(time.Millisecond), accepted, took.Round(time.Millisecond), written)
 		if err != nil {
 			return err
 		}
@@ -373,23 +373,23 @@ func readEverything(port serial.Port, start time.Time, stop <-chan struct{}) []s
 			return lines
 		default:
 		}
-		n, err := port.Read(buf)
+		received, err := port.Read(buf)
 		if err != nil {
 			return append(lines, "read failed: "+err.Error())
 		}
-		if n == 0 {
+		if received == 0 {
 			continue
 		}
 		var names []string
-		for _, b := range buf[:n] {
-			switch b {
+		for _, value := range buf[:received] {
+			switch value {
 			case 0x11:
 				names = append(names, "XON")
 			case 0x13:
 				names = append(names, "XOFF")
 			}
 		}
-		lines = append(lines, fmt.Sprintf("%8s  % x  %s", time.Since(start).Round(time.Millisecond), buf[:n], strings.Join(names, " ")))
+		lines = append(lines, fmt.Sprintf("%8s  % x  %s", time.Since(start).Round(time.Millisecond), buf[:received], strings.Join(names, " ")))
 	}
 }
 
@@ -424,8 +424,8 @@ func buildJob(baud, lines int, cut bool) []byte {
 	var job bytes.Buffer
 	job.Write(escInit)
 	fmt.Fprintf(&job, "serialbench %s\nbaud %d, %d lines\n", time.Now().Format("2006-01-02 15:04:05"), baud, lines)
-	for i := 1; i <= lines; i++ {
-		fmt.Fprintf(&job, "%04d/%04d ABCDEFGHIJKLMNOPQRSTUVWXYZ0123\n", i, lines)
+	for line := 1; line <= lines; line++ {
+		fmt.Fprintf(&job, "%04d/%04d ABCDEFGHIJKLMNOPQRSTUVWXYZ0123\n", line, lines)
 	}
 	fmt.Fprintf(&job, "end of job, %d lines\n", lines)
 	if cut {

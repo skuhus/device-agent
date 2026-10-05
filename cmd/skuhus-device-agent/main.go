@@ -115,11 +115,11 @@ func (flagValue *boolFlag) String() string {
 }
 
 func (flagValue *boolFlag) Set(raw string) error {
-	b, err := strconv.ParseBool(raw)
+	parsed, err := strconv.ParseBool(raw)
 	if err != nil {
 		return fmt.Errorf("expected a boolean, got %q", raw)
 	}
-	flagValue.value = &b
+	flagValue.value = &parsed
 	return nil
 }
 

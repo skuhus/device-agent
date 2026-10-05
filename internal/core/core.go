@@ -150,9 +150,9 @@ func New(opts Options) (*Core, error) {
 	case opts.MissedKeepalives < 1:
 		return nil, fmt.Errorf("core: missed keepalives must be at least 1, got %d", opts.MissedKeepalives)
 	}
-	for i, dev := range opts.Devices {
+	for index, dev := range opts.Devices {
 		if dev.Reader == nil {
-			return nil, fmt.Errorf("core: device %d has no reader", i)
+			return nil, fmt.Errorf("core: device %d has no reader", index)
 		}
 		if dev.Topics.Rx() == "" {
 			return nil, fmt.Errorf("core: device %s has no topics", dev.Wire.ID)

@@ -264,16 +264,16 @@ func subscribe(cm subscriber, topics []string, timeout time.Duration, log *slog.
 			"timeout", timeout.String(), "error", err.Error())
 		return
 	}
-	for i, topic := range topics {
-		if i >= len(suback.Reasons) {
+	for index, topic := range topics {
+		if index >= len(suback.Reasons) {
 			log.Error("the broker answered fewer subscriptions than were asked for", "topic", topic, "answers", len(suback.Reasons))
 			continue
 		}
-		if code := suback.Reasons[i]; code >= reasonCodeFailure {
+		if code := suback.Reasons[index]; code >= reasonCodeFailure {
 			log.Error("subscription refused; this device will receive no tx", "topic", topic, "reason", fmt.Sprintf("0x%02x", code))
 			continue
 		}
-		log.Info("subscribed", "topic", topic, "qos", suback.Reasons[i])
+		log.Info("subscribed", "topic", topic, "qos", suback.Reasons[index])
 	}
 }
 
@@ -470,12 +470,12 @@ type logAdapter struct {
 	lines *lineGate
 }
 
-func (adapter logAdapter) Println(v ...any) {
-	adapter.emit(fmt.Sprint(v...))
+func (adapter logAdapter) Println(values ...any) {
+	adapter.emit(fmt.Sprint(values...))
 }
 
-func (adapter logAdapter) Printf(format string, v ...any) {
-	adapter.emit(fmt.Sprintf(format, v...))
+func (adapter logAdapter) Printf(format string, values ...any) {
+	adapter.emit(fmt.Sprintf(format, values...))
 }
 
 // emit writes one record with the caller of Println or Printf as its source,

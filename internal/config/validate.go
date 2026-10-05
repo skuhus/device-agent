@@ -208,8 +208,8 @@ func validateDevices(devices []Device) ([]error, []Warning) {
 
 	seen := make(map[string]int, len(devices))
 	seenPaths := make(map[string]int, len(devices))
-	for i, deviceCfg := range devices {
-		where := fmt.Sprintf("devices[%d]", i)
+	for index, deviceCfg := range devices {
+		where := fmt.Sprintf("devices[%d]", index)
 		switch {
 		case deviceCfg.ID == "":
 			problems = append(problems, fmt.Errorf("%s.id is required", where))
@@ -221,7 +221,7 @@ func validateDevices(devices []Device) ([]error, []Warning) {
 			if prev, dup := seen[deviceCfg.ID]; dup {
 				problems = append(problems, fmt.Errorf("%s.id %q duplicates devices[%d]", where, deviceCfg.ID, prev))
 			}
-			seen[deviceCfg.ID] = i
+			seen[deviceCfg.ID] = index
 			where = "devices." + deviceCfg.ID
 		}
 
@@ -246,7 +246,7 @@ func validateDevices(devices []Device) ([]error, []Warning) {
 				problems = append(problems, fmt.Errorf(
 					"%s.path %q is already used by devices[%d]; two devices cannot share one port", where, deviceCfg.Path, prev))
 			}
-			seenPaths[deviceCfg.Path] = i
+			seenPaths[deviceCfg.Path] = index
 		}
 
 		if deviceCfg.Baud <= 0 {
@@ -373,9 +373,9 @@ func validateDelivery(delivery Delivery, devices []Device) []error {
 	}
 	// A reading the agent still reports as pending after the broker has
 	// discarded it would tell the operator it failed when it had expired.
-	for i, deviceCfg := range devices {
+	for index, deviceCfg := range devices {
 		if deviceCfg.MessageExpiry > 0 && delivery.PublishTimeout > deviceCfg.MessageExpiry {
-			where := fmt.Sprintf("devices[%d]", i)
+			where := fmt.Sprintf("devices[%d]", index)
 			if deviceCfg.ID != "" {
 				where = "devices." + deviceCfg.ID
 			}

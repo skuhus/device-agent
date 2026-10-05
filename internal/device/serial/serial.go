@@ -46,8 +46,8 @@ var (
 	stopBitsNames = invert(StopBitsByName)
 )
 
-func invert[V comparable](byName map[string]V) map[V]string {
-	names := make(map[V]string, len(byName))
+func invert[Value comparable](byName map[string]Value) map[Value]string {
+	names := make(map[Value]string, len(byName))
 	for name, value := range byName {
 		names[value] = name
 	}
@@ -417,9 +417,9 @@ func (shared *sharedPort) write(ctx context.Context, data []byte, progress func(
 			return written, err
 		}
 		end := min(written+shared.chunkBytes, len(data))
-		n, err := shared.writeChunk(data[written:end])
-		written += n
-		if n > 0 && progress != nil {
+		chunkWritten, err := shared.writeChunk(data[written:end])
+		written += chunkWritten
+		if chunkWritten > 0 && progress != nil {
 			progress(written)
 		}
 		if err != nil {
@@ -439,12 +439,12 @@ func (shared *sharedPort) writeChunk(chunk []byte) (int, error) {
 	}
 	written := 0
 	for written < len(chunk) {
-		n, err := shared.port.Write(chunk[written:])
-		written += n
+		accepted, err := shared.port.Write(chunk[written:])
+		written += accepted
 		if err != nil {
 			return written, err
 		}
-		if n == 0 {
+		if accepted == 0 {
 			// write(2) returning nothing and no error would loop forever.
 			return written, errors.New("the port accepted no bytes")
 		}

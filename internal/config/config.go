@@ -271,13 +271,13 @@ type Duration time.Duration
 // UnmarshalYAML decodes a Go duration string. A bare number is rejected rather
 // than assumed to be nanoseconds or seconds.
 func (duration *Duration) UnmarshalYAML(node *yaml.Node) error {
-	var s string
-	if err := node.Decode(&s); err != nil {
+	var text string
+	if err := node.Decode(&text); err != nil {
 		return fmt.Errorf("expected a duration string such as \"200ms\" or \"30s\": %w", err)
 	}
-	parsed, err := time.ParseDuration(s)
+	parsed, err := time.ParseDuration(text)
 	if err != nil {
-		return fmt.Errorf("invalid duration %q: %w", s, err)
+		return fmt.Errorf("invalid duration %q: %w", text, err)
 	}
 	*duration = Duration(parsed)
 	return nil
