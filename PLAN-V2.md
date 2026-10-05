@@ -477,6 +477,10 @@ Depends on: T3 to T11.
 
 ### T13. Release 2.0.0
 
+Status: in progress on branch gh-18-release. The version is 2.0.0 and the
+release build was run locally; Q1 and Q2 in #18 are open, and the release
+itself waits for the merge.
+
 2.0.0 releases reading and writing together (maintainer, 2026-10-04). Phase 2
 merged to master in #31, so this task's pull request carries the release alone.
 
