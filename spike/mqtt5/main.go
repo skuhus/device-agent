@@ -44,18 +44,18 @@ import (
 )
 
 func main() {
-	fs := flag.NewFlagSet("mqtt5spike", flag.ContinueOnError)
-	broker := fs.String("broker", "", "broker address as host:port, for example 10.9.21.23:1883")
-	username := fs.String("username", "", "broker username")
-	password := fs.String("password", "", "broker password")
-	useTLS := fs.Bool("tls", false, "connect with TLS")
-	insecure := fs.Bool("insecure", false, "skip TLS certificate verification (development brokers only)")
-	prefix := fs.String("prefix", "skuhus/spike", "topic prefix; a random run id is appended")
-	timeout := fs.Duration("timeout", 10*time.Second, "how long to wait for any single expected message")
-	willQoS := fs.Uint("will-qos", 1, "QoS of the last will message; brokers have been known to retain wills at one QoS and not another")
-	peer := fs.String("peer", "", "a second node of the same cluster as host:port; enables the cross-node retained check")
+	flags := flag.NewFlagSet("mqtt5spike", flag.ContinueOnError)
+	broker := flags.String("broker", "", "broker address as host:port, for example 10.9.21.23:1883")
+	username := flags.String("username", "", "broker username")
+	password := flags.String("password", "", "broker password")
+	useTLS := flags.Bool("tls", false, "connect with TLS")
+	insecure := flags.Bool("insecure", false, "skip TLS certificate verification (development brokers only)")
+	prefix := flags.String("prefix", "skuhus/spike", "topic prefix; a random run id is appended")
+	timeout := flags.Duration("timeout", 10*time.Second, "how long to wait for any single expected message")
+	willQoS := flags.Uint("will-qos", 1, "QoS of the last will message; brokers have been known to retain wills at one QoS and not another")
+	peer := flags.String("peer", "", "a second node of the same cluster as host:port; enables the cross-node retained check")
 
-	if err := fs.Parse(os.Args[1:]); err != nil {
+	if err := flags.Parse(os.Args[1:]); err != nil {
 		os.Exit(2)
 	}
 	if *broker == "" {
@@ -247,12 +247,12 @@ func (runner *runner) checkLeftovers() {
 // round trip; it is the server's own declaration, and it is the cheapest way to
 // find out that retained messages or QoS 1 are unavailable before the tests
 // that depend on them fail confusingly.
-func (runner *runner) checkConnack(ca *paho.Connack) {
-	if ca.Properties == nil {
+func (runner *runner) checkConnack(connack *paho.Connack) {
+	if connack.Properties == nil {
 		runner.record("connack", false, "no CONNACK properties returned")
 		return
 	}
-	properties := ca.Properties
+	properties := connack.Properties
 	// paho fills these from the MQTT defaults when the server omits them, which
 	// per the specification means available, so absence and true are the same
 	// claim.
@@ -748,9 +748,9 @@ func (runner *runner) connect(ctx context.Context, name string, opts connectOpti
 		ClientID: fmt.Sprintf("spike-%s-%s", runner.runID, name),
 		Conn:     conn,
 		OnPublishReceived: []func(paho.PublishReceived) (bool, error){
-			func(pr paho.PublishReceived) (bool, error) {
+			func(received paho.PublishReceived) (bool, error) {
 				select {
-				case msgs <- pr.Packet:
+				case msgs <- received.Packet:
 				default: // A full channel means the check is not reading; losing the message is better than blocking the client's read loop.
 				}
 				return true, nil
@@ -759,7 +759,7 @@ func (runner *runner) connect(ctx context.Context, name string, opts connectOpti
 		OnClientError: func(error) {}, // Every check ends by closing a connection, so these are expected.
 	})
 
-	cp := &paho.Connect{
+	connect := &paho.Connect{
 		ClientID:       pahoClient.ClientID(),
 		KeepAlive:      30,
 		CleanStart:     opts.cleanStart,
@@ -767,40 +767,40 @@ func (runner *runner) connect(ctx context.Context, name string, opts connectOpti
 		WillProperties: opts.willProps,
 	}
 	if runner.username != "" {
-		cp.Username, cp.UsernameFlag = runner.username, true
-		cp.Password, cp.PasswordFlag = []byte(runner.password), true
+		connect.Username, connect.UsernameFlag = runner.username, true
+		connect.Password, connect.PasswordFlag = []byte(runner.password), true
 	}
 	if opts.sessionExpiry != nil {
-		cp.Properties = &paho.ConnectProperties{SessionExpiryInterval: opts.sessionExpiry}
+		connect.Properties = &paho.ConnectProperties{SessionExpiryInterval: opts.sessionExpiry}
 	}
 
-	ca, err := pahoClient.Connect(ctx, cp)
+	connack, err := pahoClient.Connect(ctx, connect)
 	if err != nil {
 		conn.Close()
 		return nil, nil, err
 	}
-	if ca.ReasonCode != 0 {
+	if connack.ReasonCode != 0 {
 		conn.Close()
-		return nil, nil, fmt.Errorf("CONNACK reason %d: %s", ca.ReasonCode, connackReason(ca))
+		return nil, nil, fmt.Errorf("CONNACK reason %d: %s", connack.ReasonCode, connackReason(connack))
 	}
-	return &client{paho: pahoClient, conn: conn, msgs: msgs}, ca, nil
+	return &client{paho: pahoClient, conn: conn, msgs: msgs}, connack, nil
 }
 
-func connackReason(ca *paho.Connack) string {
-	if ca.Properties != nil && ca.Properties.ReasonString != "" {
-		return ca.Properties.ReasonString
+func connackReason(connack *paho.Connack) string {
+	if connack.Properties != nil && connack.Properties.ReasonString != "" {
+		return connack.Properties.ReasonString
 	}
 	return "no reason string returned"
 }
 
 func (client *client) subscribe(ctx context.Context, topic string, qos byte) error {
-	sa, err := client.paho.Subscribe(ctx, &paho.Subscribe{
+	suback, err := client.paho.Subscribe(ctx, &paho.Subscribe{
 		Subscriptions: []paho.SubscribeOptions{{Topic: topic, QoS: qos}},
 	})
 	if err != nil {
 		return err
 	}
-	for _, code := range sa.Reasons {
+	for _, code := range suback.Reasons {
 		if code > 2 {
 			return fmt.Errorf("SUBACK refused %s with reason %d", topic, code)
 		}

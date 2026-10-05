@@ -449,7 +449,7 @@ func TestFailedPublishIsRecordedWithItsPayload(t *testing.T) {
 // carried, so that the two can be matched. Its data is on the record only with
 // log_payloads: as hex, and as text when it is valid UTF-8 (#23 Q13).
 func TestPublishedRxCarriesItsDataOnlyWithLogPayloads(t *testing.T) {
-	for _, tc := range []struct {
+	for _, testCase := range []struct {
 		name     string
 		payloads bool
 		frame    string
@@ -459,13 +459,13 @@ func TestPublishedRxCarriesItsDataOnlyWithLogPayloads(t *testing.T) {
 		{"set", true, "A42154587", map[string]any{"data_hex": "413432313534353837", "data_text": "A42154587"}},
 		{"set, not UTF-8", true, "\xffA1", map[string]any{"data_hex": "ff4131"}},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
+		t.Run(testCase.name, func(t *testing.T) {
 			// DEBUG, so that a copy of the data on any other line is seen.
 			log, logged := logtest.New(t, "debug")
 			transport := &fakeTransport{}
-			reader := newFakeReader("scanner-main", tc.frame)
+			reader := newFakeReader("scanner-main", testCase.frame)
 			opts := testOptions(t, transport, coreDevice(t, reader, ""))
-			opts.Logger, opts.LogPayloads = log, tc.payloads
+			opts.Logger, opts.LogPayloads = log, testCase.payloads
 			runUntil(t, newCore(t, opts), func() { <-reader.sent })
 
 			records := logged.WithMessage(t, "rx published")
@@ -478,17 +478,17 @@ func TestPublishedRxCarriesItsDataOnlyWithLogPayloads(t *testing.T) {
 				t.Errorf("record = %v, want INFO, published, id %s", record, rx[0].ID)
 			}
 			for _, key := range []string{"data_hex", "data_text"} {
-				if record[key] != tc.want[key] {
-					t.Errorf("%s = %v, want %v", key, record[key], tc.want[key])
+				if record[key] != testCase.want[key] {
+					t.Errorf("%s = %v, want %v", key, record[key], testCase.want[key])
 				}
 			}
 			// One line per reading: the data is on its record and nowhere else,
 			// and nowhere at all without log_payloads.
 			want := 0
-			if tc.payloads {
+			if testCase.payloads {
 				want = 1
 			}
-			if got := strings.Count(logged.String(), hex.EncodeToString([]byte(tc.frame))); got != want {
+			if got := strings.Count(logged.String(), hex.EncodeToString([]byte(testCase.frame))); got != want {
 				t.Errorf("the reading's data is in the log %d times, want %d:\n%s", got, want, logged.String())
 			}
 		})
@@ -630,12 +630,12 @@ func TestNewRejectsUnusableOptions(t *testing.T) {
 		{"device without topics", func(opts *Options) { opts.Devices[0].Topics = wire.DeviceTopics{} }, "has no topics"},
 		{"device remembering no tx id", func(opts *Options) { opts.Devices[0].TxRememberedIDs = 0 }, "must remember at least 1 written tx id, got 0"},
 	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
 			opts := testOptions(t, transport, coreDevice(t, reader, ""))
-			tc.mutate(&opts)
-			if _, err := New(opts); err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Errorf("error = %v, want it to mention %q", err, tc.want)
+			testCase.mutate(&opts)
+			if _, err := New(opts); err == nil || !strings.Contains(err.Error(), testCase.want) {
+				t.Errorf("error = %v, want it to mention %q", err, testCase.want)
 			}
 		})
 	}

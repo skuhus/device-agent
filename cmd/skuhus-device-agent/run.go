@@ -21,10 +21,10 @@ import (
 )
 
 func runCommand(args []string, stdout, stderr io.Writer) error {
-	fs := flag.NewFlagSet("run", flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	fs.Usage = func() {
-		fmt.Fprint(fs.Output(), "Usage: skuhus-device-agent run [flags]\n\n"+
+	flags := flag.NewFlagSet("run", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	flags.Usage = func() {
+		fmt.Fprint(flags.Output(), "Usage: skuhus-device-agent run [flags]\n\n"+
 			"Opens the configured devices, connects to the broker, publishes what each\n"+
 			"device reads, and writes to each device the tx it is sent, until stopped.\n"+
 			"SIGTERM and SIGINT drain what is already framed, publish the offline\n"+
@@ -32,29 +32,29 @@ func runCommand(args []string, stdout, stderr io.Writer) error {
 			"Broker credentials come from broker.credentials_file or from\n"+
 			"SH_DEV_AGENT_MQTT_USERNAME and SH_DEV_AGENT_MQTT_PASSWORD. There is\n"+
 			"no flag for them: ps would expose them to every user on the host.\n\n")
-		fs.PrintDefaults()
+		flags.PrintDefaults()
 	}
 
-	path := fs.String("config", "", "config file path (default "+config.DefaultPath()+")")
+	path := flags.String("config", "", "config file path (default "+config.DefaultPath()+")")
 	var project, site, station, instance stringFlag
 	var brokerURL, credentialsFile, caFile, logLevel stringFlag
 	var insecure, logPayloads boolFlag
-	fs.Var(&project, "project", "override identity.project")
-	fs.Var(&site, "site", "override identity.site")
-	fs.Var(&station, "station", "override identity.station")
-	fs.Var(&instance, "instance", "override identity.instance, the MQTT client id (default: the station id)")
-	fs.Var(&brokerURL, "broker-url", "override broker.url")
-	fs.Var(&credentialsFile, "broker-credentials-file", "override broker.credentials_file")
-	fs.Var(&caFile, "broker-ca-file", "override broker.ca_file")
-	fs.Var(&insecure, "broker-insecure", "override broker.insecure (development only)")
-	fs.Var(&logLevel, "log-level", "override logging.level")
-	fs.Var(&logPayloads, "log-payloads", "override logging.log_payloads")
+	flags.Var(&project, "project", "override identity.project")
+	flags.Var(&site, "site", "override identity.site")
+	flags.Var(&station, "station", "override identity.station")
+	flags.Var(&instance, "instance", "override identity.instance, the MQTT client id (default: the station id)")
+	flags.Var(&brokerURL, "broker-url", "override broker.url")
+	flags.Var(&credentialsFile, "broker-credentials-file", "override broker.credentials_file")
+	flags.Var(&caFile, "broker-ca-file", "override broker.ca_file")
+	flags.Var(&insecure, "broker-insecure", "override broker.insecure (development only)")
+	flags.Var(&logLevel, "log-level", "override logging.level")
+	flags.Var(&logPayloads, "log-payloads", "override logging.log_payloads")
 
-	if err := fs.Parse(args); err != nil {
+	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if fs.NArg() > 0 {
-		return fmt.Errorf("%w: run takes no positional arguments, got %q", errUsage, fs.Arg(0))
+	if flags.NArg() > 0 {
+		return fmt.Errorf("%w: run takes no positional arguments, got %q", errUsage, flags.Arg(0))
 	}
 
 	cfg, warnings, err := config.Load(config.Options{

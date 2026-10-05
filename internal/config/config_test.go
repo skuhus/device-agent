@@ -198,8 +198,8 @@ func TestLoadRefusesADeviceKeySetToZero(t *testing.T) {
 		{"    baud: 0\n", "devices.scanner-main.baud must be positive, got 0"},
 		{"    message_expiry: 0s\n", "devices.scanner-main.message_expiry"},
 	}
-	for _, tc := range cases {
-		t.Run(strings.TrimSpace(tc.setting), func(t *testing.T) {
+	for _, testCase := range cases {
+		t.Run(strings.TrimSpace(testCase.setting), func(t *testing.T) {
 			fixture := newFixture(t, `
 identity: { project: acme, site: vasby, station: pack-03 }
 broker:
@@ -209,10 +209,10 @@ devices:
   - id: scanner-main
     path: /dev/serial/by-id/usb-scanner-if00
     separator: "\r"
-`+tc.setting)
+`+testCase.setting)
 			_, _, err := load(t, fixture.path, noEnv(), Overrides{})
-			if err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Errorf("err = %v, want it to contain %q", err, tc.want)
+			if err == nil || !strings.Contains(err.Error(), testCase.want) {
+				t.Errorf("err = %v, want it to contain %q", err, testCase.want)
 			}
 		})
 	}
@@ -516,10 +516,10 @@ func TestRedactedURL(t *testing.T) {
 		{"password", "tls://pack-03:hunter2@mq.internal:8883", "tls://pack-03:xxxxx@mq.internal:8883"},
 		{"unparseable", "://nope", "://nope"},
 	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := (Broker{URL: tc.url}).RedactedURL(); got != tc.want {
-				t.Errorf("RedactedURL() = %q, want %q", got, tc.want)
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := (Broker{URL: testCase.url}).RedactedURL(); got != testCase.want {
+				t.Errorf("RedactedURL() = %q, want %q", got, testCase.want)
 			}
 		})
 	}
@@ -636,15 +636,15 @@ func TestValidateBrokerScheme(t *testing.T) {
 		{"ftp://mq.internal:21", false, true},
 		{"tls://", false, true},
 	}
-	for _, tc := range cases {
-		name := tc.url
-		if tc.insecure {
+	for _, testCase := range cases {
+		name := testCase.url
+		if testCase.insecure {
 			name += " insecure"
 		}
 		t.Run(name, func(t *testing.T) {
-			problems, _ := validateBroker(defaultBroker(tc.url, tc.insecure), map[string]string{EnvMQTTPassword: "x"})
-			if gotErr := len(problems) > 0; gotErr != tc.wantErr {
-				t.Errorf("error = %t, want %t (%v)", gotErr, tc.wantErr, problems)
+			problems, _ := validateBroker(defaultBroker(testCase.url, testCase.insecure), map[string]string{EnvMQTTPassword: "x"})
+			if gotErr := len(problems) > 0; gotErr != testCase.wantErr {
+				t.Errorf("error = %t, want %t (%v)", gotErr, testCase.wantErr, problems)
 			}
 		})
 	}

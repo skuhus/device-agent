@@ -13,36 +13,36 @@ import (
 )
 
 func validateCommand(args []string, stdout, stderr io.Writer) error {
-	fs := flag.NewFlagSet("validate", flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	fs.Usage = func() {
-		fmt.Fprint(fs.Output(), "Usage: skuhus-device-agent validate [flags]\n\n"+
+	flags := flag.NewFlagSet("validate", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	flags.Usage = func() {
+		fmt.Fprint(flags.Output(), "Usage: skuhus-device-agent validate [flags]\n\n"+
 			"Loads the configuration, applies environment and flag overrides, and\n"+
 			"reports every problem found. Exits 0 only when the configuration is\n"+
 			"usable. Warnings do not affect the exit code.\n\n")
-		fs.PrintDefaults()
+		flags.PrintDefaults()
 	}
 
-	path := fs.String("config", "", "config file path (default "+config.DefaultPath()+")")
+	path := flags.String("config", "", "config file path (default "+config.DefaultPath()+")")
 	var project, site, station, instance stringFlag
 	var brokerURL, credentialsFile, caFile, logLevel stringFlag
 	var insecure, logPayloads boolFlag
-	fs.Var(&project, "project", "override identity.project")
-	fs.Var(&site, "site", "override identity.site")
-	fs.Var(&station, "station", "override identity.station")
-	fs.Var(&instance, "instance", "override identity.instance, the MQTT client id (default: the station id)")
-	fs.Var(&brokerURL, "broker-url", "override broker.url")
-	fs.Var(&credentialsFile, "broker-credentials-file", "override broker.credentials_file")
-	fs.Var(&caFile, "broker-ca-file", "override broker.ca_file")
-	fs.Var(&insecure, "broker-insecure", "override broker.insecure (development only)")
-	fs.Var(&logLevel, "log-level", "override logging.level")
-	fs.Var(&logPayloads, "log-payloads", "override logging.log_payloads")
+	flags.Var(&project, "project", "override identity.project")
+	flags.Var(&site, "site", "override identity.site")
+	flags.Var(&station, "station", "override identity.station")
+	flags.Var(&instance, "instance", "override identity.instance, the MQTT client id (default: the station id)")
+	flags.Var(&brokerURL, "broker-url", "override broker.url")
+	flags.Var(&credentialsFile, "broker-credentials-file", "override broker.credentials_file")
+	flags.Var(&caFile, "broker-ca-file", "override broker.ca_file")
+	flags.Var(&insecure, "broker-insecure", "override broker.insecure (development only)")
+	flags.Var(&logLevel, "log-level", "override logging.level")
+	flags.Var(&logPayloads, "log-payloads", "override logging.log_payloads")
 
-	if err := fs.Parse(args); err != nil {
+	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if fs.NArg() > 0 {
-		return fmt.Errorf("%w: validate takes no positional arguments, got %q", errUsage, fs.Arg(0))
+	if flags.NArg() > 0 {
+		return fmt.Errorf("%w: validate takes no positional arguments, got %q", errUsage, flags.Arg(0))
 	}
 
 	cfg, warnings, err := config.Load(config.Options{

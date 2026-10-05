@@ -30,9 +30,9 @@ func TestMessageExpiryIntervalRoundsUp(t *testing.T) {
 		{0, 0},
 		{-time.Second, 0},
 	}
-	for _, tc := range tests {
-		if got := messageExpiryInterval(tc.in); got != tc.want {
-			t.Errorf("messageExpiryInterval(%s) = %d, want %d", tc.in, got, tc.want)
+	for _, testCase := range tests {
+		if got := messageExpiryInterval(testCase.in); got != testCase.want {
+			t.Errorf("messageExpiryInterval(%s) = %d, want %d", testCase.in, got, testCase.want)
 		}
 	}
 }
@@ -46,9 +46,9 @@ func TestKeepaliveSeconds(t *testing.T) {
 		{500 * time.Millisecond, 1},       // Sub-second still has to keep alive.
 		{100 * time.Hour, math.MaxUint16}, // Clamped rather than overflowed.
 	}
-	for _, tc := range tests {
-		if got := keepaliveSeconds(tc.in); got != tc.want {
-			t.Errorf("keepaliveSeconds(%s) = %d, want %d", tc.in, got, tc.want)
+	for _, testCase := range tests {
+		if got := keepaliveSeconds(testCase.in); got != testCase.want {
+			t.Errorf("keepaliveSeconds(%s) = %d, want %d", testCase.in, got, testCase.want)
 		}
 	}
 }
@@ -130,18 +130,18 @@ func TestDialRejectsUnusableOptions(t *testing.T) {
 		{"will without a topic", func(opts *Options) { opts.Will = func() ([]byte, error) { return []byte("{}"), nil } }, "a will needs both"},
 		{"will topic without a payload", func(opts *Options) { opts.WillTopic = "t" }, "a will needs both"},
 	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			opts := usable
-			tc.change(&opts)
+			testCase.change(&opts)
 			_, err := Dial(ctx, opts)
 			if err == nil {
 				t.Fatal("expected an error")
 			}
-			if !strings.Contains(err.Error(), tc.want) {
-				t.Errorf("error = %v, want it to mention %q", err, tc.want)
+			if !strings.Contains(err.Error(), testCase.want) {
+				t.Errorf("error = %v, want it to mention %q", err, testCase.want)
 			}
 		})
 	}

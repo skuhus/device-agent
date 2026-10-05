@@ -24,11 +24,11 @@ func TestOpenUsesTheConfiguredLineFormat(t *testing.T) {
 		{"7E2", 7, goserial.EvenParity, goserial.TwoStopBits, goserial.Mode{BaudRate: 9600, DataBits: 7, Parity: goserial.EvenParity, StopBits: goserial.TwoStopBits}},
 		{"5 bits, odd", 5, goserial.OddParity, goserial.OneStopBit, goserial.Mode{BaudRate: 9600, DataBits: 5, Parity: goserial.OddParity, StopBits: goserial.OneStopBit}},
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
 			opened := make(chan goserial.Mode, 1)
 			opts := serialOpts("format", "/dev/fake", "\r")
-			opts.DataBits, opts.Parity, opts.StopBits = tc.dataBits, tc.parity, tc.stopBits
+			opts.DataBits, opts.Parity, opts.StopBits = testCase.dataBits, testCase.parity, testCase.stopBits
 			opts.Open = func(_ string, mode *goserial.Mode) (goserial.Port, error) {
 				select {
 				case opened <- *mode:
@@ -39,8 +39,8 @@ func TestOpenUsesTheConfiguredLineFormat(t *testing.T) {
 			runDevice(t, opts, 1)
 			select {
 			case got := <-opened:
-				if got != tc.want {
-					t.Errorf("opened with %+v, want %+v", got, tc.want)
+				if got != testCase.want {
+					t.Errorf("opened with %+v, want %+v", got, testCase.want)
 				}
 			case <-time.After(3 * time.Second):
 				t.Fatal("the device never opened the port")

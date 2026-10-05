@@ -24,13 +24,13 @@ import (
 )
 
 func main() {
-	fs := flag.NewFlagSet("brokerinfo", flag.ContinueOnError)
-	mqttAddr := fs.String("mqtt", "", "MQTT address as host:port")
-	amqpAddr := fs.String("amqp", "", "AMQP 0-9-1 address as host:port, which reports the product and version")
-	clientID := fs.String("client-id", "brokerinfo-probe", "client id sent in the CONNECT")
-	timeout := fs.Duration("timeout", 8*time.Second, "dial and read timeout")
+	flags := flag.NewFlagSet("brokerinfo", flag.ContinueOnError)
+	mqttAddr := flags.String("mqtt", "", "MQTT address as host:port")
+	amqpAddr := flags.String("amqp", "", "AMQP 0-9-1 address as host:port, which reports the product and version")
+	clientID := flags.String("client-id", "brokerinfo-probe", "client id sent in the CONNECT")
+	timeout := flags.Duration("timeout", 8*time.Second, "dial and read timeout")
 
-	if err := fs.Parse(os.Args[1:]); err != nil {
+	if err := flags.Parse(os.Args[1:]); err != nil {
 		os.Exit(2)
 	}
 	if *mqttAddr == "" && *amqpAddr == "" {

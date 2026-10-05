@@ -255,9 +255,9 @@ func TestPayload(t *testing.T) {
 		{[]byte("]C1\x1d01"), []any{"data_hex", "5d43311d3031", "data_text", "]C1\x1d01"}},
 		{[]byte{0xff, 0x0d}, []any{"data_hex", "ff0d"}},
 	}
-	for _, tc := range cases {
-		if got := Payload(tc.data); !reflect.DeepEqual(got, tc.want) {
-			t.Errorf("Payload(%q) = %v, want %v", tc.data, got, tc.want)
+	for _, testCase := range cases {
+		if got := Payload(testCase.data); !reflect.DeepEqual(got, testCase.want) {
+			t.Errorf("Payload(%q) = %v, want %v", testCase.data, got, testCase.want)
 		}
 	}
 }

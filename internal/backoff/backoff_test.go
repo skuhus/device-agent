@@ -29,12 +29,12 @@ func TestWaitGrowsAndIsBounded(t *testing.T) {
 		{8 * time.Second, []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second, 8 * time.Second}},
 		{5 * time.Second, []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 5 * time.Second, 5 * time.Second}},
 	}
-	for _, tc := range cases {
-		policy := Policy{Interval: time.Second, Grow: true, Max: tc.ceiling}
-		for index, expected := range tc.want {
+	for _, testCase := range cases {
+		policy := Policy{Interval: time.Second, Grow: true, Max: testCase.ceiling}
+		for index, expected := range testCase.want {
 			retry := index + 1
 			if wait := policy.Wait(retry); wait != expected {
-				t.Errorf("max %s: retry %d waits %s, want %s", tc.ceiling, retry, wait, expected)
+				t.Errorf("max %s: retry %d waits %s, want %s", testCase.ceiling, retry, wait, expected)
 			}
 		}
 	}
@@ -70,14 +70,14 @@ func TestValidate(t *testing.T) {
 		{"jitter above 1", Policy{Interval: time.Second, Grow: true, Max: time.Minute, Jitter: 1.5}, "jitter must be between 0 and 1"},
 		{"max and jitter unused when not growing", Policy{Interval: time.Second, Max: time.Millisecond, Jitter: 2}, ""},
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			err := tc.policy.Validate()
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			err := testCase.policy.Validate()
 			switch {
-			case tc.want == "" && err != nil:
+			case testCase.want == "" && err != nil:
 				t.Errorf("rejected: %v", err)
-			case tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want)):
-				t.Errorf("error = %v, want it to contain %q", err, tc.want)
+			case testCase.want != "" && (err == nil || !strings.Contains(err.Error(), testCase.want)):
+				t.Errorf("error = %v, want it to contain %q", err, testCase.want)
 			}
 		})
 	}

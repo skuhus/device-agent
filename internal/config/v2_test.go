@@ -128,16 +128,16 @@ func TestDeviceRejections(t *testing.T) {
 		{"device type with a newline", func(device *Device) { device.DeviceType = "a\nb" },
 			`devices.d.device_type "a\nb" contains a control character`},
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
 			device := validDevice("/dev/serial/by-id/usb-x-if00")
-			tc.change(&device)
+			testCase.change(&device)
 			_, err := ValidateDevice(device)
 			if err == nil {
-				t.Fatalf("accepted, want %q", tc.want)
+				t.Fatalf("accepted, want %q", testCase.want)
 			}
-			if !strings.Contains(err.Error(), tc.want) {
-				t.Errorf("error = %v\nwant it to contain %q", err, tc.want)
+			if !strings.Contains(err.Error(), testCase.want) {
+				t.Errorf("error = %v\nwant it to contain %q", err, testCase.want)
 			}
 		})
 	}
@@ -206,10 +206,10 @@ func TestStatusRejections(t *testing.T) {
 		{Status{KeepaliveInterval: Duration(15 * time.Second), MissedKeepalives: 3, EventBufferSize: 0},
 			`status.event_buffer_size must be at least 1, got 0`},
 	}
-	for _, tc := range cases {
-		problems := validateStatus(tc.status)
-		if len(problems) != 1 || problems[0].Error() != tc.want {
-			t.Errorf("%+v: problems = %v, want exactly %q", tc.status, problems, tc.want)
+	for _, testCase := range cases {
+		problems := validateStatus(testCase.status)
+		if len(problems) != 1 || problems[0].Error() != testCase.want {
+			t.Errorf("%+v: problems = %v, want exactly %q", testCase.status, problems, testCase.want)
 		}
 	}
 	if problems := validateStatus(Status{KeepaliveInterval: Duration(time.Second), MissedKeepalives: 1, EventBufferSize: 1}); len(problems) > 0 {
@@ -231,12 +231,12 @@ func TestLoggingRejections(t *testing.T) {
 		{func(logSettings *Logging) { logSettings.MaxSizeMB = 0 }, `logging.max_size_mb must be at least 1, got 0`},
 		{func(logSettings *Logging) { logSettings.Keep = -1 }, `logging.keep must not be negative, got -1`},
 	}
-	for _, tc := range cases {
+	for _, testCase := range cases {
 		logging := base()
-		tc.change(&logging)
+		testCase.change(&logging)
 		problems := validateLogging(logging)
-		if len(problems) != 1 || !strings.HasPrefix(problems[0].Error(), tc.want) {
-			t.Errorf("%+v: problems = %v, want one starting %q", logging, problems, tc.want)
+		if len(problems) != 1 || !strings.HasPrefix(problems[0].Error(), testCase.want) {
+			t.Errorf("%+v: problems = %v, want one starting %q", logging, problems, testCase.want)
 		}
 	}
 }
@@ -330,15 +330,15 @@ func TestReconnectSettingsAreValidated(t *testing.T) {
 			"broker.reconnect_interval and broker.reconnect_backoff: jitter must be between 0 and 1, got 1.5"},
 		{"backoff off ignores max and jitter", "  reconnect_interval: 5s\n  reconnect_backoff: { enabled: false, max: 1s, jitter: 1.5 }\n", ""},
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			body := strings.Replace(validConfig, "  reconnect_interval: 1s\n", tc.settings, 1)
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			body := strings.Replace(validConfig, "  reconnect_interval: 1s\n", testCase.settings, 1)
 			_, _, err := load(t, newFixture(t, body).path, noEnv(), Overrides{})
 			switch {
-			case tc.want == "" && err != nil:
+			case testCase.want == "" && err != nil:
 				t.Errorf("rejected: %v", err)
-			case tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want)):
-				t.Errorf("error = %v, want it to contain %q", err, tc.want)
+			case testCase.want != "" && (err == nil || !strings.Contains(err.Error(), testCase.want)):
+				t.Errorf("error = %v, want it to contain %q", err, testCase.want)
 			}
 		})
 	}
@@ -420,11 +420,11 @@ func TestReopenSettings(t *testing.T) {
 		{"    reopen_backoff: { enabled: true, jitter: -0.1 }\n",
 			"devices.scanner-main.reopen_interval and devices.scanner-main.reopen_backoff: jitter must be between 0 and 1, got -0.1"},
 	}
-	for _, tc := range cases {
-		body := strings.Replace(validConfig, "    message_expiry: 30s\n", "    message_expiry: 30s\n"+tc.settings, 1)
+	for _, testCase := range cases {
+		body := strings.Replace(validConfig, "    message_expiry: 30s\n", "    message_expiry: 30s\n"+testCase.settings, 1)
 		_, _, err := load(t, newFixture(t, body).path, noEnv(), Overrides{})
-		if err == nil || !strings.Contains(err.Error(), tc.want) {
-			t.Errorf("%q: error = %v, want %q", strings.TrimSpace(tc.settings), err, tc.want)
+		if err == nil || !strings.Contains(err.Error(), testCase.want) {
+			t.Errorf("%q: error = %v, want %q", strings.TrimSpace(testCase.settings), err, testCase.want)
 		}
 	}
 }

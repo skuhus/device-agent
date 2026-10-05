@@ -19,10 +19,10 @@ func TestRepeatedKeys(t *testing.T) {
 		{`{"a":{"b":1,"b":2},"c":[{"d":1,"d":1},{"d":2}]}`, []string{"a.b", "c.d"}},
 		{`{"a":{"x":1},"b":{"x":1}}`, nil},
 	}
-	for _, tc := range cases {
-		got, err := RepeatedKeys([]byte(tc.line))
-		if err != nil || !reflect.DeepEqual(got, tc.want) {
-			t.Errorf("RepeatedKeys(%s) = %v, %v; want %v", tc.line, got, err, tc.want)
+	for _, testCase := range cases {
+		got, err := RepeatedKeys([]byte(testCase.line))
+		if err != nil || !reflect.DeepEqual(got, testCase.want) {
+			t.Errorf("RepeatedKeys(%s) = %v, %v; want %v", testCase.line, got, err, testCase.want)
 		}
 	}
 	for _, bad := range []string{`[1]`, `not json`, `{"a":1}{"b":2}`, `{"a":`} {

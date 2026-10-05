@@ -143,11 +143,11 @@ func TestFileWritesRecordLargerThanLimit(t *testing.T) {
 func TestFileConcurrentWrites(t *testing.T) {
 	file, path := openFile(t, 8, 2)
 	const writers, each = 8, 200
-	var wg sync.WaitGroup
+	var group sync.WaitGroup
 	for writer := 0; writer < writers; writer++ {
-		wg.Add(1)
+		group.Add(1)
 		go func(writer int) {
-			defer wg.Done()
+			defer group.Done()
 			for index := 0; index < each; index++ {
 				if _, err := file.Write([]byte(fmt.Sprintf("w%d-r%d\n", writer, index))); err != nil {
 					t.Errorf("Write: %v", err)
@@ -156,7 +156,7 @@ func TestFileConcurrentWrites(t *testing.T) {
 			}
 		}(writer)
 	}
-	wg.Wait()
+	group.Wait()
 	if err := file.Sync(); err != nil {
 		t.Fatalf("Sync: %v", err)
 	}
@@ -177,9 +177,9 @@ func TestOpenFileRejectsBadArguments(t *testing.T) {
 		{"negative keep", filepath.Join(dir, "a.log"), 1, -1},
 		{"missing directory", filepath.Join(dir, "nope", "a.log"), 1, 1},
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if _, err := OpenFile(tc.path, tc.maxSizeMB, tc.keep); err == nil {
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			if _, err := OpenFile(testCase.path, testCase.maxSizeMB, testCase.keep); err == nil {
 				t.Error("expected an error")
 			}
 		})

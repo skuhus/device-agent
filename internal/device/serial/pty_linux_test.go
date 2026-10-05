@@ -147,8 +147,8 @@ func waitForOpen(t *testing.T, present <-chan bool) {
 // tests were written against: opened is present, lost is absent. A failed open
 // is neither, because a port that never opened was never present.
 func presenceChan() (chan bool, func(device.Event)) {
-	ch := make(chan bool, 16)
-	return ch, func(event device.Event) {
+	changes := make(chan bool, 16)
+	return changes, func(event device.Event) {
 		var present bool
 		switch event.Kind {
 		case device.PortOpened:
@@ -159,7 +159,7 @@ func presenceChan() (chan bool, func(device.Event)) {
 			return
 		}
 		select {
-		case ch <- present:
+		case changes <- present:
 		default:
 		}
 	}
@@ -188,23 +188,23 @@ func TestPTYReplayCaptures(t *testing.T) {
 			[]byte("A001100133391"),
 		}},
 	}
-	for _, tc := range cases {
-		t.Run(tc.file, func(t *testing.T) {
-			capture, err := os.ReadFile(filepath.Join("testdata", tc.file))
+	for _, testCase := range cases {
+		t.Run(testCase.file, func(t *testing.T) {
+			capture, err := os.ReadFile(filepath.Join("testdata", testCase.file))
 			if err != nil {
 				t.Fatalf("read capture: %v", err)
 			}
 			master, slave := newPTY(t)
 			present, onPresence := presenceChan()
 
-			opts := serialOpts("replay", slave, tc.separator)
+			opts := serialOpts("replay", slave, testCase.separator)
 			frames, _ := runDeviceReporting(t, opts, 8, onPresence)
 			waitForOpen(t, present)
 
 			if _, err := master.Write(capture); err != nil {
 				t.Fatalf("replay write: %v", err)
 			}
-			for index, want := range tc.want {
+			for index, want := range testCase.want {
 				got := recvFrame(t, frames)
 				if string(got.Raw) != string(want) {
 					t.Errorf("frame %d = %q, want %q", index, got.Raw, want)

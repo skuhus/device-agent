@@ -543,9 +543,9 @@ func classify(err error) wire.ErrorClass {
 	case errors.Is(err, syscall.EBUSY):
 		return wire.ErrorBusy
 	}
-	var pe *goserial.PortError
-	if errors.As(err, &pe) {
-		switch pe.Code() {
+	var portErr *goserial.PortError
+	if errors.As(err, &portErr) {
+		switch portErr.Code() {
 		case goserial.PortClosed:
 			// The library also returns this when a read finds the port in the
 			// zero-length-readable state a disconnect leaves behind.

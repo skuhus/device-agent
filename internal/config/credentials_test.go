@@ -103,15 +103,15 @@ func TestLoadCredentialsRejections(t *testing.T) {
 			want: "no broker username",
 		},
 	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			path := writeCredentials(t, tc.body)
-			_, err := LoadCredentials(Broker{CredentialsFile: path}, tc.env)
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			path := writeCredentials(t, testCase.body)
+			_, err := LoadCredentials(Broker{CredentialsFile: path}, testCase.env)
 			if err == nil {
 				t.Fatal("expected an error")
 			}
-			if !strings.Contains(err.Error(), tc.want) {
-				t.Errorf("error = %v, want it to mention %q", err, tc.want)
+			if !strings.Contains(err.Error(), testCase.want) {
+				t.Errorf("error = %v, want it to mention %q", err, testCase.want)
 			}
 		})
 	}

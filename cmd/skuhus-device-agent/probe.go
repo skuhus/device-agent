@@ -26,10 +26,10 @@ import (
 )
 
 func probeCommand(args []string, stdout, stderr io.Writer) error {
-	fs := flag.NewFlagSet("probe", flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	fs.Usage = func() {
-		fmt.Fprint(fs.Output(), "Usage: skuhus-device-agent probe [flags]\n\n"+
+	flags := flag.NewFlagSet("probe", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	flags.Usage = func() {
+		fmt.Fprint(flags.Output(), "Usage: skuhus-device-agent probe [flags]\n\n"+
 			"With --list, enumerates candidate serial devices and the stable paths\n"+
 			"that point at them. Otherwise opens one device and prints every framed\n"+
 			"payload to stdout until interrupted.\n\n"+
@@ -38,30 +38,30 @@ func probeCommand(args []string, stdout, stderr io.Writer) error {
 			"structured log to stderr, so the two can be redirected separately.\n\n"+
 			"probe prints payload contents by design; logging.log_payloads does not\n"+
 			"apply to it.\n\n")
-		fs.PrintDefaults()
+		flags.PrintDefaults()
 	}
 
-	list := fs.Bool("list", false, "enumerate candidate devices and exit")
-	cfgPath := fs.String("config", "", "config file path (default "+config.DefaultPath()+")")
-	deviceID := fs.String("device", "", "take settings from this device id in the config file")
-	path := fs.String("path", "", "device path, when not using --device")
-	baud := fs.Int("baud", config.DefaultBaud, "baud rate (ignored by USB-CDC devices)")
-	dataBits := fs.Int("data-bits", config.DefaultDataBits, "data bits, 5 to 8 (ignored by USB-CDC devices)")
-	parity := fs.String("parity", string(config.DefaultParity), "parity: none, odd, even, mark or space (ignored by USB-CDC devices)")
-	stopBits := fs.String("stop-bits", string(config.DefaultStopBits), "stop bits, 1 or 2 (ignored by USB-CDC devices)")
-	separator := fs.String("separator", "", "frame separator, backslash escapes decoded, such as \\r or \\r\\n; required with --path")
-	maxFrame := fs.Int("max-frame-bytes", config.DefaultMaxFrameBytes, "discard a partial frame longer than this")
-	interChar := fs.Duration("inter-char-timeout", config.DefaultInterCharTimeout, "discard a partial frame idle for longer than this")
-	asJSON := fs.Bool("json", false, "print the rx message that would be published")
-	duration := fs.Duration("duration", 0, "stop after this long (0 means run until interrupted)")
-	logLevel := fs.String("log-level", config.DefaultLogLevel, "log level for the structured log on stderr")
-	logPayloads := fs.Bool("log-payloads", false, "put discarded bytes on each discard's log line, as hex and as text when valid UTF-8; use this when a device frames nothing and the separator is unknown")
+	list := flags.Bool("list", false, "enumerate candidate devices and exit")
+	cfgPath := flags.String("config", "", "config file path (default "+config.DefaultPath()+")")
+	deviceID := flags.String("device", "", "take settings from this device id in the config file")
+	path := flags.String("path", "", "device path, when not using --device")
+	baud := flags.Int("baud", config.DefaultBaud, "baud rate (ignored by USB-CDC devices)")
+	dataBits := flags.Int("data-bits", config.DefaultDataBits, "data bits, 5 to 8 (ignored by USB-CDC devices)")
+	parity := flags.String("parity", string(config.DefaultParity), "parity: none, odd, even, mark or space (ignored by USB-CDC devices)")
+	stopBits := flags.String("stop-bits", string(config.DefaultStopBits), "stop bits, 1 or 2 (ignored by USB-CDC devices)")
+	separator := flags.String("separator", "", "frame separator, backslash escapes decoded, such as \\r or \\r\\n; required with --path")
+	maxFrame := flags.Int("max-frame-bytes", config.DefaultMaxFrameBytes, "discard a partial frame longer than this")
+	interChar := flags.Duration("inter-char-timeout", config.DefaultInterCharTimeout, "discard a partial frame idle for longer than this")
+	asJSON := flags.Bool("json", false, "print the rx message that would be published")
+	duration := flags.Duration("duration", 0, "stop after this long (0 means run until interrupted)")
+	logLevel := flags.String("log-level", config.DefaultLogLevel, "log level for the structured log on stderr")
+	logPayloads := flags.Bool("log-payloads", false, "put discarded bytes on each discard's log line, as hex and as text when valid UTF-8; use this when a device frames nothing and the separator is unknown")
 
-	if err := fs.Parse(args); err != nil {
+	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if fs.NArg() > 0 {
-		return fmt.Errorf("%w: probe takes no positional arguments, got %q", errUsage, fs.Arg(0))
+	if flags.NArg() > 0 {
+		return fmt.Errorf("%w: probe takes no positional arguments, got %q", errUsage, flags.Arg(0))
 	}
 	if *list {
 		return listDevices(stdout)
@@ -69,7 +69,7 @@ func probeCommand(args []string, stdout, stderr io.Writer) error {
 	if (*deviceID == "") == (*path == "") {
 		return fmt.Errorf("%w: pass exactly one of --device (with a config file) or --path", errUsage)
 	}
-	if err := checkProbeSources(fs, *deviceID != "", *separator); err != nil {
+	if err := checkProbeSources(flags, *deviceID != "", *separator); err != nil {
 		return err
 	}
 
@@ -140,7 +140,7 @@ func probeCommand(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	sd, err := newSerialReader(dev, *logPayloads, log)
+	reader, err := newSerialReader(dev, *logPayloads, log)
 	if err != nil {
 		return err
 	}
@@ -156,7 +156,7 @@ func probeCommand(args []string, stdout, stderr io.Writer) error {
 	presence := &presenceLog{log: log.With("device_id", dev.ID, "device_path", dev.Path)}
 	frames := make(chan device.Frame, config.DefaultBufferSize)
 	done := make(chan error, 1)
-	go func() { done <- sd.Run(ctx, frames, presence.report) }()
+	go func() { done <- reader.Run(ctx, frames, presence.report) }()
 
 	builder := wire.NewBuilder(identity, nil)
 	wireDevice := wire.Device{ID: dev.ID, Type: dev.DeviceType, Expiry: dev.MessageExpiry.Duration()}
@@ -192,9 +192,9 @@ var deviceSettingFlags = map[string]bool{
 // separator is per model and a wrong one corrupts readings without failing
 // (DESIGN-V2.md, "A CR/CRLF mismatch is the one wrong separator that is not
 // loud"), so it has no default.
-func checkProbeSources(fs *flag.FlagSet, fromConfig bool, separator string) error {
+func checkProbeSources(flags *flag.FlagSet, fromConfig bool, separator string) error {
 	var ignored []string
-	fs.Visit(func(set *flag.Flag) {
+	flags.Visit(func(set *flag.Flag) {
 		if (fromConfig && deviceSettingFlags[set.Name]) || (!fromConfig && set.Name == "config") {
 			ignored = append(ignored, "--"+set.Name)
 		}

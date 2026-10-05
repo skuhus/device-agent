@@ -149,32 +149,32 @@ func TestLogPayloadsGatesContent(t *testing.T) {
 	const payload = "SKU-98765"
 	wrongSeparator := payload + "\n" // the device sends LF where CR is configured
 	asHex := hex.EncodeToString([]byte(wrongSeparator))
-	for _, tc := range []struct {
+	for _, testCase := range []struct {
 		payloads bool
 		want     map[string]any
 	}{
 		{false, map[string]any{}},
 		{true, map[string]any{"data_hex": asHex, "data_text": wrongSeparator}},
 	} {
-		logged := captureLogs(t, tc.payloads, wrongSeparator)
+		logged := captureLogs(t, testCase.payloads, wrongSeparator)
 		discards := logged.WithMessage(t, "discarded partial frame")
 		if len(discards) != 1 {
-			t.Fatalf("log_payloads %v: %d discard lines, want 1:\n%s", tc.payloads, len(discards), logged.String())
+			t.Fatalf("log_payloads %v: %d discard lines, want 1:\n%s", testCase.payloads, len(discards), logged.String())
 		}
 		discard := discards[0]
 		if discard["level"] != "WARN" || discard["reason"] != "inter_char_timeout" || discard["bytes"] != float64(len(wrongSeparator)) {
-			t.Errorf("log_payloads %v: discard = %v, want WARN, inter_char_timeout, %d bytes", tc.payloads, discard, len(wrongSeparator))
+			t.Errorf("log_payloads %v: discard = %v, want WARN, inter_char_timeout, %d bytes", testCase.payloads, discard, len(wrongSeparator))
 		}
 		for _, key := range []string{"data_hex", "data_text"} {
-			if discard[key] != tc.want[key] {
-				t.Errorf("log_payloads %v: %s = %v, want %v", tc.payloads, key, discard[key], tc.want[key])
+			if discard[key] != testCase.want[key] {
+				t.Errorf("log_payloads %v: %s = %v, want %v", testCase.payloads, key, discard[key], testCase.want[key])
 			}
 		}
 		lines := strings.Count(logged.String(), hex.EncodeToString([]byte(payload)))
-		if !tc.payloads && lines != 0 {
+		if !testCase.payloads && lines != 0 {
 			t.Errorf("payload content reached the log with log_payloads off:\n%s", logged.String())
 		}
-		if tc.payloads && lines != 1 {
+		if testCase.payloads && lines != 1 {
 			t.Errorf("the discarded data is on %d lines, want only the discard's:\n%s", lines, logged.String())
 		}
 	}
@@ -220,10 +220,10 @@ func TestClassify(t *testing.T) {
 		{"wrapped", fmt.Errorf("open /dev/scanner: %w", syscall.EACCES), "permission_denied"},
 		{"unrecognised", errors.New("something else"), "unknown"},
 	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := classify(tc.err); got != tc.want {
-				t.Errorf("classify(%v) = %q, want %q", tc.err, got, tc.want)
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := classify(testCase.err); got != testCase.want {
+				t.Errorf("classify(%v) = %q, want %q", testCase.err, got, testCase.want)
 			}
 		})
 	}

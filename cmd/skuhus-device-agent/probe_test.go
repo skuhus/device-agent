@@ -134,17 +134,17 @@ func TestParseSeparator(t *testing.T) {
 		{"", nil, true},
 		{`\q`, nil, true},
 	}
-	for _, tc := range cases {
-		t.Run(tc.in, func(t *testing.T) {
-			got, err := parseSeparator(tc.in)
-			if gotErr := err != nil; gotErr != tc.wantErr {
-				t.Fatalf("error = %v, want error = %t", err, tc.wantErr)
+	for _, testCase := range cases {
+		t.Run(testCase.in, func(t *testing.T) {
+			got, err := parseSeparator(testCase.in)
+			if gotErr := err != nil; gotErr != testCase.wantErr {
+				t.Fatalf("error = %v, want error = %t", err, testCase.wantErr)
 			}
-			if tc.wantErr {
+			if testCase.wantErr {
 				return
 			}
-			if !bytes.Equal(got, tc.want) {
-				t.Errorf("parseSeparator(%q) = % x, want % x", tc.in, got, tc.want)
+			if !bytes.Equal(got, testCase.want) {
+				t.Errorf("parseSeparator(%q) = % x, want % x", testCase.in, got, testCase.want)
 			}
 		})
 	}
@@ -173,12 +173,12 @@ func TestRunProbeRefusesFlagsItWouldIgnore(t *testing.T) {
 		{[]string{"--config", configFile, "--path", "/dev/serial/by-id/usb-x-if00", "--separator", `\r`},
 			"--config is read only with --device"},
 	}
-	for _, tc := range cases {
+	for _, testCase := range cases {
 		// A probe that took the flags would run until --duration, and fail
 		// this test at once rather than at the test's timeout.
-		_, _, err := probe(t, append(tc.args, "--duration", "100ms")...)
-		if err == nil || !errors.Is(err, errUsage) || !strings.Contains(err.Error(), tc.want) {
-			t.Errorf("probe %v: err = %v, want a usage error containing %q", tc.args, err, tc.want)
+		_, _, err := probe(t, append(testCase.args, "--duration", "100ms")...)
+		if err == nil || !errors.Is(err, errUsage) || !strings.Contains(err.Error(), testCase.want) {
+			t.Errorf("probe %v: err = %v, want a usage error containing %q", testCase.args, err, testCase.want)
 		}
 	}
 }

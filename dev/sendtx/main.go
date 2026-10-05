@@ -25,19 +25,19 @@ import (
 )
 
 func main() {
-	fs := flag.NewFlagSet("sendtx", flag.ContinueOnError)
-	broker := fs.String("broker", "skuhus-dev-rabbitmq:1883", "broker address as host:port")
-	username := fs.String("username", "ingest", "broker username")
-	password := fs.String("password", "ingest-dev", "broker password")
-	topic := fs.String("topic", "", "the device's tx topic, skuhus/<project>/<site>/<station>/<device>/tx")
-	text := fs.String("text", "", `bytes to write, with \r, \n, \t, \\ and \xNN decoded`)
-	file := fs.String("file", "", "write the bytes of this file instead")
-	hexData := fs.String("hex", "", "write these bytes, given as hex, instead")
-	id := fs.String("id", "", "the tx id; a new UUID by default. Reuse one to see in_progress or a resend")
-	sender := fs.String("sender", "make-send-tx", "the tx's sender")
-	expiry := fs.Duration("expiry", 30*time.Second, "the tx's MQTT message expiry; 0 sends none")
-	wait := fs.Duration("wait", 15*time.Second, "how long to wait for the tx's final result")
-	if err := fs.Parse(os.Args[1:]); err != nil {
+	flags := flag.NewFlagSet("sendtx", flag.ContinueOnError)
+	broker := flags.String("broker", "skuhus-dev-rabbitmq:1883", "broker address as host:port")
+	username := flags.String("username", "ingest", "broker username")
+	password := flags.String("password", "ingest-dev", "broker password")
+	topic := flags.String("topic", "", "the device's tx topic, skuhus/<project>/<site>/<station>/<device>/tx")
+	text := flags.String("text", "", `bytes to write, with \r, \n, \t, \\ and \xNN decoded`)
+	file := flags.String("file", "", "write the bytes of this file instead")
+	hexData := flags.String("hex", "", "write these bytes, given as hex, instead")
+	id := flags.String("id", "", "the tx id; a new UUID by default. Reuse one to see in_progress or a resend")
+	sender := flags.String("sender", "make-send-tx", "the tx's sender")
+	expiry := flags.Duration("expiry", 30*time.Second, "the tx's MQTT message expiry; 0 sends none")
+	wait := flags.Duration("wait", 15*time.Second, "how long to wait for the tx's final result")
+	if err := flags.Parse(os.Args[1:]); err != nil {
 		os.Exit(2)
 	}
 	data, err := payload(*text, *file, *hexData)

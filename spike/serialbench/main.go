@@ -70,21 +70,21 @@ type lineFlags struct {
 	stopBits *int
 }
 
-func addLineFlags(fs *flag.FlagSet) lineFlags {
+func addLineFlags(flags *flag.FlagSet) lineFlags {
 	return lineFlags{
-		path:     fs.String("path", "", "serial device, such as /dev/cu.usbserial-111420"),
-		dataBits: fs.Int("data-bits", 8, "data bits"),
-		parity:   fs.String("parity", "none", "none, odd or even"),
-		stopBits: fs.Int("stop-bits", 1, "1 or 2"),
+		path:     flags.String("path", "", "serial device, such as /dev/cu.usbserial-111420"),
+		dataBits: flags.Int("data-bits", 8, "data bits"),
+		parity:   flags.String("parity", "none", "none, odd or even"),
+		stopBits: flags.Int("stop-bits", 1, "1 or 2"),
 	}
 }
 
-func (lf lineFlags) mode(baud int) (*serial.Mode, error) {
-	if *lf.path == "" {
+func (lineSettings lineFlags) mode(baud int) (*serial.Mode, error) {
+	if *lineSettings.path == "" {
 		return nil, errors.New("--path is required")
 	}
-	mode := &serial.Mode{BaudRate: baud, DataBits: *lf.dataBits}
-	switch *lf.parity {
+	mode := &serial.Mode{BaudRate: baud, DataBits: *lineSettings.dataBits}
+	switch *lineSettings.parity {
 	case "none":
 		mode.Parity = serial.NoParity
 	case "odd":
@@ -92,25 +92,25 @@ func (lf lineFlags) mode(baud int) (*serial.Mode, error) {
 	case "even":
 		mode.Parity = serial.EvenParity
 	default:
-		return nil, fmt.Errorf("--parity %q: expected none, odd or even", *lf.parity)
+		return nil, fmt.Errorf("--parity %q: expected none, odd or even", *lineSettings.parity)
 	}
-	switch *lf.stopBits {
+	switch *lineSettings.stopBits {
 	case 1:
 		mode.StopBits = serial.OneStopBit
 	case 2:
 		mode.StopBits = serial.TwoStopBits
 	default:
-		return nil, fmt.Errorf("--stop-bits %d: expected 1 or 2", *lf.stopBits)
+		return nil, fmt.Errorf("--stop-bits %d: expected 1 or 2", *lineSettings.stopBits)
 	}
 	return mode, nil
 }
 
 func runStatus(args []string) error {
-	fs := flag.NewFlagSet("status", flag.ContinueOnError)
-	lf := addLineFlags(fs)
-	bauds := fs.String("bauds", "9600,19200,38400,57600,115200", "baud rates to try, in order")
-	wait := fs.Duration("wait", 500*time.Millisecond, "how long to wait for each reply")
-	if err := fs.Parse(args); err != nil {
+	flags := flag.NewFlagSet("status", flag.ContinueOnError)
+	lineSettings := addLineFlags(flags)
+	bauds := flags.String("bauds", "9600,19200,38400,57600,115200", "baud rates to try, in order")
+	wait := flags.Duration("wait", 500*time.Millisecond, "how long to wait for each reply")
+	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	for _, field := range strings.Split(*bauds, ",") {
@@ -118,11 +118,11 @@ func runStatus(args []string) error {
 		if err != nil {
 			return fmt.Errorf("--bauds %q: %w", field, err)
 		}
-		mode, err := lf.mode(baud)
+		mode, err := lineSettings.mode(baud)
 		if err != nil {
 			return err
 		}
-		replies, err := queryStatus(*lf.path, mode, *wait)
+		replies, err := queryStatus(*lineSettings.path, mode, *wait)
 		if err != nil {
 			return err
 		}
@@ -200,29 +200,29 @@ func writeAll(port serial.Port, data []byte) error {
 }
 
 func runPrint(args []string) error {
-	fs := flag.NewFlagSet("print", flag.ContinueOnError)
-	lf := addLineFlags(fs)
-	baud := fs.Int("baud", 0, "baud rate, as status found it")
-	lines := fs.Int("lines", 20, "numbered lines to print")
-	chunk := fs.Int("chunk", 0, "bytes per Write call; 0 writes the whole job in one call")
-	cut := fs.Bool("cut", true, "feed and cut at the end")
-	waitFeed := fs.Bool("wait-feed", false, "start when the printer's FEED button has been pressed and released")
-	watch := fs.Duration("watch", 0, "how long to keep watching after the job is written; 0 is the line time plus 15 s")
-	if err := fs.Parse(args); err != nil {
+	flags := flag.NewFlagSet("print", flag.ContinueOnError)
+	lineSettings := addLineFlags(flags)
+	baud := flags.Int("baud", 0, "baud rate, as status found it")
+	lines := flags.Int("lines", 20, "numbered lines to print")
+	chunk := flags.Int("chunk", 0, "bytes per Write call; 0 writes the whole job in one call")
+	cut := flags.Bool("cut", true, "feed and cut at the end")
+	waitFeed := flags.Bool("wait-feed", false, "start when the printer's FEED button has been pressed and released")
+	watch := flags.Duration("watch", 0, "how long to keep watching after the job is written; 0 is the line time plus 15 s")
+	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if *baud <= 0 {
 		return errors.New("--baud is required")
 	}
-	mode, err := lf.mode(*baud)
+	mode, err := lineSettings.mode(*baud)
 	if err != nil {
 		return err
 	}
 	job := buildJob(*baud, *lines, *cut)
 
-	port, err := serial.Open(*lf.path, mode)
+	port, err := serial.Open(*lineSettings.path, mode)
 	if err != nil {
-		return fmt.Errorf("open %s: %w", *lf.path, err)
+		return fmt.Errorf("open %s: %w", *lineSettings.path, err)
 	}
 	defer port.Close()
 
@@ -302,24 +302,24 @@ func runPrint(args []string) error {
 }
 
 func runFlood(args []string) error {
-	fs := flag.NewFlagSet("flood", flag.ContinueOnError)
-	lf := addLineFlags(fs)
-	baud := fs.Int("baud", 0, "baud rate, as status found it")
-	total := fs.Int("bytes", 61440, "NUL bytes to write")
-	chunk := fs.Int("chunk", 1024, "bytes per Write call")
-	if err := fs.Parse(args); err != nil {
+	flags := flag.NewFlagSet("flood", flag.ContinueOnError)
+	lineSettings := addLineFlags(flags)
+	baud := flags.Int("baud", 0, "baud rate, as status found it")
+	total := flags.Int("bytes", 61440, "NUL bytes to write")
+	chunk := flags.Int("chunk", 1024, "bytes per Write call")
+	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if *baud <= 0 || *chunk <= 0 {
 		return errors.New("--baud and a positive --chunk are required")
 	}
-	mode, err := lf.mode(*baud)
+	mode, err := lineSettings.mode(*baud)
 	if err != nil {
 		return err
 	}
-	port, err := serial.Open(*lf.path, mode)
+	port, err := serial.Open(*lineSettings.path, mode)
 	if err != nil {
-		return fmt.Errorf("open %s: %w", *lf.path, err)
+		return fmt.Errorf("open %s: %w", *lineSettings.path, err)
 	}
 	defer port.Close()
 	data := make([]byte, *chunk)

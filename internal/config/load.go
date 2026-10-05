@@ -329,8 +329,8 @@ func EnvMap(environ []string) map[string]string { return envMap(environ) }
 
 func envMap(environ []string) map[string]string {
 	out := make(map[string]string, len(environ))
-	for _, kv := range environ {
-		name, value, ok := strings.Cut(kv, "=")
+	for _, entry := range environ {
+		name, value, ok := strings.Cut(entry, "=")
 		if ok && strings.HasPrefix(name, EnvPrefix) {
 			out[name] = value
 		}

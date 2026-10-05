@@ -102,8 +102,8 @@ type Message struct {
 
 // Client is the agent's connection to the broker.
 type Client struct {
-	cm  *autopaho.ConnectionManager
-	log *slog.Logger
+	manager *autopaho.ConnectionManager
+	log     *slog.Logger
 	// lines closes once the connection is closed; paho's lines after it are
 	// discarded (see logAdapter).
 	lines *lineGate
@@ -156,11 +156,11 @@ func Dial(ctx context.Context, opts Options) (*Client, error) {
 		"reconnect_backoff_max", opts.Reconnect.Max.String(), "reconnect_backoff_jitter", opts.Reconnect.Jitter,
 		"subscriptions", opts.Subscriptions, "will_topic", opts.WillTopic)
 	lines := &lineGate{}
-	cm, err := autopaho.NewConnection(ctx, clientConfig(opts, brokerURL, tlsCfg, log, lines))
+	manager, err := autopaho.NewConnection(ctx, clientConfig(opts, brokerURL, tlsCfg, log, lines))
 	if err != nil {
 		return nil, fmt.Errorf("mqtt: %w", err)
 	}
-	return &Client{cm: cm, log: log, lines: lines}, nil
+	return &Client{manager: manager, log: log, lines: lines}, nil
 }
 
 // clientConfig is the connection's whole configuration, built apart from Dial
@@ -182,12 +182,12 @@ func clientConfig(opts Options, brokerURL *url.URL, tlsCfg *tls.Config, log *slo
 		// disconnected is accepted and sent later, which is exactly the
 		// offline replay section 6 forbids. Nil makes it fail immediately.
 		Queue: nil,
-		OnConnectionUp: func(cm *autopaho.ConnectionManager, connack *paho.Connack) {
+		OnConnectionUp: func(manager *autopaho.ConnectionManager, connack *paho.Connack) {
 			log.Info("broker connected", "session_present", connack.SessionPresent)
 			if len(opts.Subscriptions) > 0 {
 				// Subscribing waits for the broker's answer, and this must
 				// not block the connection manager.
-				go subscribe(cm, opts.Subscriptions, opts.ConnectTimeout, log)
+				go subscribe(manager, opts.Subscriptions, opts.ConnectTimeout, log)
 			}
 			if opts.OnUp != nil {
 				opts.OnUp()
@@ -251,14 +251,14 @@ type subscriber interface {
 // answer, and logs what the broker answered. A refused topic is an ERROR: its
 // device will never receive a tx, and the usual cause, the station's topic
 // permission, is the operator's to fix.
-func subscribe(cm subscriber, topics []string, timeout time.Duration, log *slog.Logger) {
+func subscribe(manager subscriber, topics []string, timeout time.Duration, log *slog.Logger) {
 	subscriptions := make([]paho.SubscribeOptions, 0, len(topics))
 	for _, topic := range topics {
 		subscriptions = append(subscriptions, paho.SubscribeOptions{Topic: topic, QoS: qosAtLeastOnce})
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	suback, err := cm.Subscribe(ctx, &paho.Subscribe{Subscriptions: subscriptions})
+	suback, err := manager.Subscribe(ctx, &paho.Subscribe{Subscriptions: subscriptions})
 	if err != nil {
 		log.Error("subscribing failed; no tx will arrive until the next connection", "topics", topics,
 			"timeout", timeout.String(), "error", err.Error())
@@ -289,7 +289,7 @@ func messageFromPublish(packet *paho.Publish, received time.Time) Message {
 
 // AwaitConnection blocks until the connection is up or ctx ends.
 func (client *Client) AwaitConnection(ctx context.Context) error {
-	return client.cm.AwaitConnection(ctx)
+	return client.manager.AwaitConnection(ctx)
 }
 
 // PublishRx publishes one reading at QoS 1, with the device's message expiry.
@@ -350,7 +350,7 @@ func (client *Client) PublishOffline(ctx context.Context, topic string, payload 
 // Close publishes nothing. The caller publishes its offline message first, then
 // calls this, so that the broker sees a clean DISCONNECT and discards the will.
 func (client *Client) Close(ctx context.Context) error {
-	err := client.cm.Disconnect(ctx)
+	err := client.manager.Disconnect(ctx)
 	client.lines.close()
 	if err != nil {
 		return fmt.Errorf("mqtt: disconnect: %w", err)
@@ -363,7 +363,7 @@ func (client *Client) Close(ctx context.Context) error {
 // PUBACK carries a reason code, and a code of 0x80 or above is a refusal, most
 // often a topic the station's credentials do not authorise.
 func (client *Client) publish(ctx context.Context, packet *paho.Publish) error {
-	resp, err := client.cm.Publish(ctx, packet)
+	resp, err := client.manager.Publish(ctx, packet)
 	if err != nil {
 		if errors.Is(err, autopaho.ConnectionDownError) {
 			return fmt.Errorf("publish to %s: broker connection is down", packet.Topic)

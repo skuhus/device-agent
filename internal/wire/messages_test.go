@@ -252,13 +252,13 @@ func TestReadTx(t *testing.T) {
 		{"id in braces", strings.Replace(good, id, "{"+id+"}", 1), TxCodeInvalidID, TxRef{ID: "{" + id + "}", Sender: "label-service"}},
 		{"id as bare hex", strings.Replace(good, id, strings.ReplaceAll(id, "-", ""), 1), TxCodeInvalidID, TxRef{ID: strings.ReplaceAll(id, "-", ""), Sender: "label-service"}},
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			ref, raw, problem := ReadTx([]byte(tc.payload))
-			if ref != tc.wantRef {
-				t.Errorf("ref = %+v, want %+v", ref, tc.wantRef)
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			ref, raw, problem := ReadTx([]byte(testCase.payload))
+			if ref != testCase.wantRef {
+				t.Errorf("ref = %+v, want %+v", ref, testCase.wantRef)
 			}
-			if tc.code == "" {
+			if testCase.code == "" {
 				if problem != nil {
 					t.Fatalf("rejected: %+v", problem)
 				}
@@ -270,8 +270,8 @@ func TestReadTx(t *testing.T) {
 			if problem == nil {
 				t.Fatalf("accepted, with %q", raw)
 			}
-			if problem.Code != tc.code || problem.Text == "" {
-				t.Errorf("problem = %+v, want code %s with a text", problem, tc.code)
+			if problem.Code != testCase.code || problem.Text == "" {
+				t.Errorf("problem = %+v, want code %s with a text", problem, testCase.code)
 			}
 			if raw != nil {
 				t.Errorf("raw = %q for a tx that cannot be taken", raw)

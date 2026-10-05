@@ -28,16 +28,16 @@ import (
 )
 
 func main() {
-	fs := flag.NewFlagSet("consumer", flag.ContinueOnError)
-	broker := fs.String("broker", "skuhus-dev-rabbitmq:1883", "broker address as host:port")
-	username := fs.String("username", "ingest", "broker username")
-	password := fs.String("password", "ingest-dev", "broker password")
-	topic := fs.String("topic", "skuhus/#", "topic filter to subscribe to")
-	qos := fs.Uint("qos", 1, "subscription QoS")
-	clientID := fs.String("client-id", "", "client id; defaults to consumer-<pid>")
-	raw := fs.Bool("raw", false, "print payloads exactly as received, without formatting JSON")
+	flags := flag.NewFlagSet("consumer", flag.ContinueOnError)
+	broker := flags.String("broker", "skuhus-dev-rabbitmq:1883", "broker address as host:port")
+	username := flags.String("username", "ingest", "broker username")
+	password := flags.String("password", "ingest-dev", "broker password")
+	topic := flags.String("topic", "skuhus/#", "topic filter to subscribe to")
+	qos := flags.Uint("qos", 1, "subscription QoS")
+	clientID := flags.String("client-id", "", "client id; defaults to consumer-<pid>")
+	raw := flags.Bool("raw", false, "print payloads exactly as received, without formatting JSON")
 
-	if err := fs.Parse(os.Args[1:]); err != nil {
+	if err := flags.Parse(os.Args[1:]); err != nil {
 		os.Exit(2)
 	}
 	if *clientID == "" {
@@ -76,8 +76,8 @@ func run(broker, username, password, topic, clientID string, qos byte, raw bool)
 		ClientID: clientID,
 		Conn:     conn,
 		OnPublishReceived: []func(paho.PublishReceived) (bool, error){
-			func(pr paho.PublishReceived) (bool, error) {
-				print(pr.Packet, raw)
+			func(received paho.PublishReceived) (bool, error) {
+				print(received.Packet, raw)
 				return true, nil
 			},
 		},
@@ -87,30 +87,30 @@ func run(broker, username, password, topic, clientID string, qos byte, raw bool)
 		},
 	})
 
-	cp := &paho.Connect{
+	connect := &paho.Connect{
 		ClientID:   clientID,
 		KeepAlive:  30,
 		CleanStart: true,
 	}
 	if username != "" {
-		cp.Username, cp.UsernameFlag = username, true
-		cp.Password, cp.PasswordFlag = []byte(password), true
+		connect.Username, connect.UsernameFlag = username, true
+		connect.Password, connect.PasswordFlag = []byte(password), true
 	}
-	ca, err := mqttClient.Connect(ctx, cp)
+	connack, err := mqttClient.Connect(ctx, connect)
 	if err != nil {
 		return fmt.Errorf("MQTT connect: %w", err)
 	}
-	if ca.ReasonCode != 0 {
-		return fmt.Errorf("MQTT connect refused with reason %d", ca.ReasonCode)
+	if connack.ReasonCode != 0 {
+		return fmt.Errorf("MQTT connect refused with reason %d", connack.ReasonCode)
 	}
 
-	sa, err := mqttClient.Subscribe(ctx, &paho.Subscribe{
+	suback, err := mqttClient.Subscribe(ctx, &paho.Subscribe{
 		Subscriptions: []paho.SubscribeOptions{{Topic: topic, QoS: qos}},
 	})
 	if err != nil {
 		return fmt.Errorf("subscribe to %s: %w", topic, err)
 	}
-	for _, code := range sa.Reasons {
+	for _, code := range suback.Reasons {
 		if code > 2 {
 			return fmt.Errorf("subscription to %s refused with reason %d; check the user's topic permissions", topic, code)
 		}
