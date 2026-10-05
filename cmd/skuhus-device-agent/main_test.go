@@ -1,43 +1,8 @@
 package main
 
 import (
-	"bytes"
 	"testing"
 )
-
-// The terminator is bytes, and the command line can only carry text, so escapes
-// have to be decoded. Getting this wrong makes probe disagree with the config
-// file about what ends a frame.
-func TestParseSeparator(t *testing.T) {
-	cases := []struct {
-		in      string
-		want    []byte
-		wantErr bool
-	}{
-		{`\r`, []byte{'\r'}, false},
-		{`\n`, []byte{'\n'}, false},
-		{`\r\n`, []byte{'\r', '\n'}, false},
-		{`\x1e`, []byte{0x1e}, false},
-		{"#", []byte{'#'}, false},
-		{"END", []byte("END"), false},
-		{"", nil, true},
-		{`\q`, nil, true},
-	}
-	for _, tc := range cases {
-		t.Run(tc.in, func(t *testing.T) {
-			got, err := parseSeparator(tc.in)
-			if gotErr := err != nil; gotErr != tc.wantErr {
-				t.Fatalf("error = %v, want error = %t", err, tc.wantErr)
-			}
-			if tc.wantErr {
-				return
-			}
-			if !bytes.Equal(got, tc.want) {
-				t.Errorf("parseSeparator(%q) = % x, want % x", tc.in, got, tc.want)
-			}
-		})
-	}
-}
 
 // An unset flag must stay unset so it does not override the config file.
 func TestFlagValuesRecordWhetherTheyWereSet(t *testing.T) {

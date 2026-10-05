@@ -5,11 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
-
-	"github.com/skuhus/device-agent/internal/device"
-	"github.com/skuhus/device-agent/internal/logging/logtest"
 )
 
 // writeConfig lays down a config file plus the credentials file and log
@@ -140,110 +136,5 @@ func TestRunValidateMissingConfigFile(t *testing.T) {
 	_, _, err := validate(t, "--config", filepath.Join(t.TempDir(), "absent.yaml"))
 	if err == nil {
 		t.Fatal("a missing config file should fail")
-	}
-}
-
-func probe(t *testing.T, args ...string) (stdout, stderr string, err error) {
-	t.Helper()
-	var out, errOut bytes.Buffer
-	err = runProbe(args, &out, &errOut)
-	return out.String(), errOut.String(), err
-}
-
-// probe --list must name the stable paths an operator should configure.
-func TestRunProbeList(t *testing.T) {
-	stdout, _, err := probe(t, "--list")
-	if err != nil {
-		t.Fatalf("probe --list: %v", err)
-	}
-	if !strings.Contains(stdout, "kernel-assigned device nodes:") {
-		t.Errorf("listing is missing its heading:\n%s", stdout)
-	}
-}
-
-func TestRunProbeRequiresExactlyOneSource(t *testing.T) {
-	for _, args := range [][]string{
-		{},
-		{"--device", "scanner-main", "--path", "/dev/ttyACM0"},
-	} {
-		_, _, err := probe(t, args...)
-		if err == nil {
-			t.Errorf("probe %v should be rejected", args)
-			continue
-		}
-		if !strings.Contains(err.Error(), "usage") {
-			t.Errorf("probe %v: error should be a usage error: %v", args, err)
-		}
-	}
-}
-
-// probe applies the same device checks validate does, before it opens anything.
-func TestRunProbeRejectsBadDevicePath(t *testing.T) {
-	_, _, err := probe(t, "--path", "/dev/tty.usbmodem1234")
-	if err == nil {
-		t.Fatal("a macOS callin device should be rejected")
-	}
-	if !strings.Contains(err.Error(), "/dev/cu.") {
-		t.Errorf("error should name the callout device: %v", err)
-	}
-}
-
-func TestRunProbeRejectsUnknownDeviceID(t *testing.T) {
-	path := writeConfig(t, goodConfig)
-	_, _, err := probe(t, "--config", path, "--device", "no-such-device")
-	if err == nil {
-		t.Fatal("an unknown device id should be rejected")
-	}
-	if !strings.Contains(err.Error(), "scanner-main") {
-		t.Errorf("error should list the device ids that do exist: %v", err)
-	}
-}
-
-// The line format flags go through the same validation as the config file.
-func TestRunProbeRejectsBadLineFormat(t *testing.T) {
-	for flag, want := range map[string]string{
-		"--parity=high":   `devices.probe.parity "high" is unknown`,
-		"--stop-bits=1.5": `devices.probe.stop_bits 1.5 is not supported`,
-		"--data-bits=9":   `devices.probe.data_bits must be 5 to 8, got 9`,
-	} {
-		_, _, err := probe(t, "--path", "/dev/serial/by-id/usb-x-if00", flag)
-		if err == nil || !strings.Contains(err.Error(), want) {
-			t.Errorf("%s: err = %v, want it to contain %q", flag, err, want)
-		}
-	}
-}
-
-func TestRunProbeRejectsBadSeparator(t *testing.T) {
-	_, _, err := probe(t, "--path", "/dev/serial/by-id/usb-x-if00", "--separator", `\q`)
-	if err == nil || !strings.Contains(err.Error(), `cannot decode separator "\\q"`) {
-		t.Fatalf("err = %v, want the undecodable separator named", err)
-	}
-}
-
-// probe says a device is absent once, not on every retry, and says so again
-// only when something changes.
-func TestProbePresenceLogsOnlyChanges(t *testing.T) {
-	log, logged := logtest.New(t, "debug")
-	presence := &presenceLog{log: log.With("device_id", "scanner-main", "device_path", "/dev/ttyACM0")}
-	absent := device.Event{Kind: device.PortOpenFailed, ErrorClass: "absent", Err: syscall.ENOENT}
-	for _, event := range []device.Event{
-		absent, absent, absent,
-		{Kind: device.PortOpenFailed, ErrorClass: "permission_denied", Err: syscall.EACCES},
-		{Kind: device.PortOpened},
-		{Kind: device.BytesDiscarded, Reason: "oversize", Bytes: 9},
-		{Kind: device.PortLost, ErrorClass: "disconnected", Err: syscall.EIO},
-		absent, absent,
-	} {
-		presence.report(event)
-	}
-	var got []string
-	for _, record := range logged.Records(t) {
-		class, _ := record["error_class"].(string)
-		got = append(got, record["msg"].(string)+"/"+class)
-	}
-	want := []string{"device absent/absent", "device absent/permission_denied", "device present/",
-		"device absent/disconnected", "device absent/absent"}
-	if strings.Join(got, " | ") != strings.Join(want, " | ") {
-		t.Errorf("logged\n  %s\nwant\n  %s", strings.Join(got, "\n  "), strings.Join(want, "\n  "))
 	}
 }

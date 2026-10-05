@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"os"
 	"strconv"
-	"strings"
 
 	buildinfo "github.com/skuhus/device-agent/internal/version"
 )
@@ -125,20 +124,3 @@ func (flagValue *boolFlag) Set(raw string) error {
 }
 
 func (flagValue *boolFlag) IsBoolFlag() bool { return true }
-
-// parseSeparator decodes a separator written on the command line, so that
-// --separator '\r' means a carriage return rather than two characters. A value
-// with no backslash is taken literally.
-func parseSeparator(raw string) ([]byte, error) {
-	if raw == "" {
-		return nil, errors.New("separator must not be empty")
-	}
-	if !strings.Contains(raw, `\`) {
-		return []byte(raw), nil
-	}
-	unquoted, err := strconv.Unquote(`"` + raw + `"`)
-	if err != nil {
-		return nil, fmt.Errorf("cannot decode separator %q: %w (write it as \\r, \\n, \\r\\n or \\x1e)", raw, err)
-	}
-	return []byte(unquoted), nil
-}

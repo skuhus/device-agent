@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -47,12 +49,12 @@ func runProbe(args []string, stdout, stderr io.Writer) error {
 	dataBits := fs.Int("data-bits", config.DefaultDataBits, "data bits, 5 to 8 (ignored by USB-CDC devices)")
 	parity := fs.String("parity", string(config.DefaultParity), "parity: none, odd, even, mark or space (ignored by USB-CDC devices)")
 	stopBits := fs.String("stop-bits", string(config.DefaultStopBits), "stop bits, 1 or 2 (ignored by USB-CDC devices)")
-	separator := fs.String("separator", `\r`, "frame separator, backslash escapes decoded")
+	separator := fs.String("separator", "", "frame separator, backslash escapes decoded, such as \\r or \\r\\n; required with --path")
 	maxFrame := fs.Int("max-frame-bytes", config.DefaultMaxFrameBytes, "discard a partial frame longer than this")
 	interChar := fs.Duration("inter-char-timeout", config.DefaultInterCharTimeout, "discard a partial frame idle for longer than this")
 	asJSON := fs.Bool("json", false, "print the rx message that would be published")
 	duration := fs.Duration("duration", 0, "stop after this long (0 means run until interrupted)")
-	logLevel := fs.String("log-level", "info", "log level for the structured log on stderr")
+	logLevel := fs.String("log-level", config.DefaultLogLevel, "log level for the structured log on stderr")
 	logPayloads := fs.Bool("log-payloads", false, "put discarded bytes on each discard's log line, as hex and as text when valid UTF-8; use this when a device frames nothing and the separator is unknown")
 
 	if err := fs.Parse(args); err != nil {
@@ -66,6 +68,9 @@ func runProbe(args []string, stdout, stderr io.Writer) error {
 	}
 	if (*deviceID == "") == (*path == "") {
 		return fmt.Errorf("%w: pass exactly one of --device (with a config file) or --path", errUsage)
+	}
+	if err := checkProbeSources(fs, *deviceID != "", *separator); err != nil {
+		return err
 	}
 
 	// The identity is filled from the config below when --device names one, so
@@ -149,7 +154,7 @@ func runProbe(args []string, stdout, stderr io.Writer) error {
 	}
 
 	presence := &presenceLog{log: log.With("device_id", dev.ID, "device_path", dev.Path)}
-	frames := make(chan device.Frame, 16)
+	frames := make(chan device.Frame, config.DefaultBufferSize)
 	done := make(chan error, 1)
 	go func() { done <- sd.Run(ctx, frames, presence.report) }()
 
@@ -172,6 +177,37 @@ func runProbe(args []string, stdout, stderr io.Writer) error {
 			}
 		}
 	}
+}
+
+// deviceSettingFlags are the flags that set what a config file's device entry
+// sets. With --device the entry is used, and none of them is.
+var deviceSettingFlags = map[string]bool{
+	"baud": true, "data-bits": true, "parity": true, "stop-bits": true,
+	"separator": true, "max-frame-bytes": true, "inter-char-timeout": true,
+}
+
+// checkProbeSources refuses a flag the chosen source would ignore: a device
+// setting with --device, which takes the config file's, and --config with
+// --path, which reads no file. It requires --separator with --path, because a
+// separator is per model and a wrong one corrupts readings without failing
+// (DESIGN-V2.md, "A CR/CRLF mismatch is the one wrong terminator that is not
+// loud"), so it has no default.
+func checkProbeSources(fs *flag.FlagSet, fromConfig bool, separator string) error {
+	var ignored []string
+	fs.Visit(func(set *flag.Flag) {
+		if (fromConfig && deviceSettingFlags[set.Name]) || (!fromConfig && set.Name == "config") {
+			ignored = append(ignored, "--"+set.Name)
+		}
+	})
+	switch {
+	case len(ignored) > 0 && fromConfig:
+		return fmt.Errorf("%w: with --device the settings come from the config file; remove %s", errUsage, strings.Join(ignored, ", "))
+	case len(ignored) > 0:
+		return fmt.Errorf("%w: --config is read only with --device; remove it, or name the device with --device", errUsage)
+	case !fromConfig && separator == "":
+		return fmt.Errorf("%w: --separator is required with --path, such as '\\r' or '\\r\\n'; it must match the device", errUsage)
+	}
+	return nil
 }
 
 // presenceLog says whether the probed device is there, once per change. The
@@ -273,4 +309,21 @@ func listDevices(w io.Writer) error {
 		}
 	}
 	return nil
+}
+
+// parseSeparator decodes a separator written on the command line, so that
+// --separator '\r' means a carriage return rather than two characters. A value
+// with no backslash is taken literally.
+func parseSeparator(raw string) ([]byte, error) {
+	if raw == "" {
+		return nil, errors.New("separator must not be empty")
+	}
+	if !strings.Contains(raw, `\`) {
+		return []byte(raw), nil
+	}
+	unquoted, err := strconv.Unquote(`"` + raw + `"`)
+	if err != nil {
+		return nil, fmt.Errorf("cannot decode separator %q: %w (write it as \\r, \\n, \\r\\n or \\x1e)", raw, err)
+	}
+	return []byte(unquoted), nil
 }

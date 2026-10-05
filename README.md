@@ -438,7 +438,9 @@ skuhus-device-agent probe --path /dev/serial/by-id/usb-Honeywell_1470g-if00 --se
 
 Opens one device, with the settings of `--device` in the config file or those
 given as flags, and prints every frame as hex and as text, saying whether it is
-valid UTF-8. Add `--json` to print the rx message that would be published, and
+valid UTF-8. With `--path`, `--separator` is required, as it is in the config
+file, and a flag left out takes the config file's default; with `--device`, a
+flag for a device setting is refused rather than ignored. Add `--json` to print the rx message that would be published, and
 `--duration` to stop after a time. Diagnostic output goes to stdout and the
 structured log to stderr, so the two can be redirected separately.
 
