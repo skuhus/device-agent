@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/skuhus/device-agent/internal/backoff"
+	"github.com/skuhus/device-agent/internal/wire"
 	"gopkg.in/yaml.v3"
 )
 
@@ -174,6 +175,37 @@ type Device struct {
 	// being written again (#11 Q6a). The oldest is forgotten first, and a
 	// restart forgets them all.
 	TxRememberedIDs int `yaml:"tx_remembered_ids"`
+	// BroadcastGroups are the broadcast groups the device is in. A tx on a
+	// group's topic reaches every device in the group (DESIGN-V2.md,
+	// "Broadcast groups").
+	BroadcastGroups BroadcastGroups `yaml:"broadcast_groups"`
+}
+
+// BroadcastGroups lists a device's broadcast groups by scope. A group's tx
+// topic is under the project, the site or the station, so the same name at two
+// scopes is two groups.
+type BroadcastGroups struct {
+	Project []string `yaml:"project"`
+	Site    []string `yaml:"site"`
+	Station []string `yaml:"station"`
+}
+
+// ScopedGroups is one scope's broadcast groups. The scope is also the group
+// list's key under broadcast_groups.
+type ScopedGroups struct {
+	Scope  wire.TxScope
+	Groups []string
+}
+
+// ByScope lists the device's broadcast groups by scope: the project's first,
+// then the site's and the station's, the order the agent subscribes to them
+// and the keepalive lists them in.
+func (groups BroadcastGroups) ByScope() []ScopedGroups {
+	return []ScopedGroups{
+		{wire.ScopeProject, groups.Project},
+		{wire.ScopeSite, groups.Site},
+		{wire.ScopeStation, groups.Station},
+	}
 }
 
 // ReopenPolicy is the wait before each attempt to open the port again.

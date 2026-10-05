@@ -13,6 +13,7 @@ import (
 	"unicode"
 
 	"github.com/skuhus/device-agent/internal/logging"
+	"github.com/skuhus/device-agent/internal/wire"
 )
 
 // Warning is a non-fatal configuration problem. Warnings do not stop the agent;
@@ -91,6 +92,11 @@ func validateIdentity(identity Identity) []error {
 		case !topicSegment.MatchString(field.value):
 			problems = append(problems, fmt.Errorf("%s %q must match [a-z0-9-]+; it is used verbatim as an MQTT topic segment", field.name, field.value))
 		}
+	}
+	if identity.Station == wire.GroupLevel {
+		problems = append(problems, fmt.Errorf(
+			"identity.station %q is reserved: the site's broadcast group topics, skuhus/<project>/<site>/group/<group>/tx, would be this station's device tx topics",
+			identity.Station))
 	}
 	// The instance is a level of the agent's status topic, so it follows the
 	// same rule. v1 allowed [A-Za-z0-9._-] because there it was only the MQTT
@@ -215,7 +221,7 @@ func validateDevices(devices []Device) ([]error, []Warning) {
 			problems = append(problems, fmt.Errorf("%s.id is required", where))
 		case !topicSegment.MatchString(deviceCfg.ID):
 			problems = append(problems, fmt.Errorf("%s.id %q must match [a-z0-9-]+; it is a level of the device's topics", where, deviceCfg.ID))
-		case deviceCfg.ID == reservedDeviceID:
+		case deviceCfg.ID == wire.AgentLevel:
 			problems = append(problems, fmt.Errorf("%s.id %q is reserved for the agent's own topics", where, deviceCfg.ID))
 		default:
 			if prev, dup := seen[deviceCfg.ID]; dup {
@@ -298,13 +304,32 @@ func validateDevices(devices []Device) ([]error, []Warning) {
 			problems = append(problems, fmt.Errorf("%s.reopen_interval and %s.reopen_backoff: %w", where, where, err))
 		}
 		problems = append(problems, validateDeviceType(where, deviceCfg.DeviceType)...)
+		problems = append(problems, validateBroadcastGroups(where, deviceCfg.BroadcastGroups)...)
 	}
 	return problems, warnings
 }
 
-// reservedDeviceID is the topic level of the agent's own status, which no
-// device may take (DESIGN-V2.md, "Topics").
-const reservedDeviceID = "agent"
+// validateBroadcastGroups requires each group to be named as a topic level,
+// since its name is one in the group's tx topic, and to be listed once in its
+// scope.
+func validateBroadcastGroups(where string, groups BroadcastGroups) []error {
+	var problems []error
+	for _, scoped := range groups.ByScope() {
+		field := where + ".broadcast_groups." + string(scoped.Scope)
+		seen := make(map[string]int, len(scoped.Groups))
+		for index, group := range scoped.Groups {
+			if !topicSegment.MatchString(group) {
+				problems = append(problems, fmt.Errorf("%s[%d] %q must match [a-z0-9-]+; it is a level of the group's tx topic", field, index, group))
+				continue
+			}
+			if prev, dup := seen[group]; dup {
+				problems = append(problems, fmt.Errorf("%s[%d] %q duplicates %s[%d]", field, index, group, field, prev))
+			}
+			seen[group] = index
+		}
+	}
+	return problems
+}
 
 // validateDeviceType accepts any short text without control characters. It is
 // published in every message about the device, where a newline or an escape

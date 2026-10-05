@@ -67,6 +67,7 @@ func TestRunValidateAcceptsGoodConfig(t *testing.T) {
 		`separator="\r" max_frame_bytes=4096 inter_char_timeout=200ms message_expiry=30s device_type=""`,
 		"reopen_interval=100ms reopen_backoff={enabled: true, max: 30s, jitter: 0.3}",
 		"tx_open_attempts=3 tx_open_interval=1s tx_chunk_bytes=1024 tx_remembered_ids=1024",
+		"broadcast_groups={project: [], site: [], station: []}",
 		"      topics rx skuhus/acme/vasby/pack-03/scanner-main/rx status skuhus/acme/vasby/pack-03/scanner-main/status tx skuhus/acme/vasby/pack-03/scanner-main/tx",
 		"delivery       publish_timeout=2s buffer_size=64 drain_timeout=5s tx_intake_size=256",
 		"status         keepalive_interval=15s missed_keepalives=3 event_buffer_size=64",
@@ -79,6 +80,23 @@ func TestRunValidateAcceptsGoodConfig(t *testing.T) {
 	}
 	if stderr != "" {
 		t.Errorf("unexpected stderr:\n%s", stderr)
+	}
+}
+
+// Each broadcast group's tx topic is shown under its device, from the same
+// builder run subscribes with.
+func TestRunValidateShowsBroadcastGroupTopics(t *testing.T) {
+	path := writeConfig(t, strings.Replace(goodConfig, "    separator: \"\\r\"\n",
+		"    separator: \"\\r\"\n    broadcast_groups: { project: [scales], station: [front, scales] }\n", 1))
+	stdout, _, err := validate(t, "--config", path)
+	if err != nil {
+		t.Fatalf("validateCommand: %v", err)
+	}
+	want := "      broadcast group project scales tx skuhus/acme/group/scales/tx\n" +
+		"      broadcast group station front tx skuhus/acme/vasby/pack-03/group/front/tx\n" +
+		"      broadcast group station scales tx skuhus/acme/vasby/pack-03/group/scales/tx\n"
+	if !strings.Contains(stdout, "broadcast_groups={project: [scales], site: [], station: [front scales]}") || !strings.Contains(stdout, want) {
+		t.Errorf("stdout does not show the groups and, in order, their topics:\n%s", stdout)
 	}
 }
 

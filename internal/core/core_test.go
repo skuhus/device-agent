@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"maps"
 	"strings"
 	"sync"
 	"syscall"
@@ -59,6 +60,15 @@ type fakeTransport struct {
 	// down, when non-nil, keeps AwaitConnection waiting until it is closed, as
 	// a broker connection that is not up yet does.
 	down chan struct{}
+	// answers are the broker's answers to the subscriptions, as
+	// SubscribeAnswers returns them.
+	answers map[string]byte
+}
+
+func (fake *fakeTransport) SubscribeAnswers() map[string]byte {
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	return maps.Clone(fake.answers)
 }
 
 func (fake *fakeTransport) AwaitConnection(ctx context.Context) error {

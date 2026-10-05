@@ -35,6 +35,10 @@ type Transport interface {
 	PublishKeepalive(ctx context.Context, topic string, payload []byte, expiry time.Duration) error
 	PublishOffline(ctx context.Context, topic string, payload []byte) error
 	Close(ctx context.Context) error
+	// SubscribeAnswers is the broker's SUBACK reason code for each topic
+	// filter subscribed to on the current connection, keyed by the filter as
+	// it went into the SUBSCRIBE packet. A filter not answered is absent.
+	SubscribeAnswers() map[string]byte
 }
 
 // Device is one configured device as the core runs it.
@@ -52,6 +56,16 @@ type Device struct {
 	// that a resend of one is answered already_written rather than written
 	// again; the oldest is forgotten first.
 	TxRememberedIDs int
+	// BroadcastGroups are the tx topics of the broadcast groups the device is
+	// in. A tx on one reaches every device in the group, as if sent to each on
+	// its own topic (DESIGN-V2.md, "Broadcast groups").
+	BroadcastGroups []wire.TxRoute
+}
+
+// txRoutes are the topics that reach the device's tx: its own first, then its
+// broadcast groups'.
+func (dev Device) txRoutes() []wire.TxRoute {
+	return append([]wire.TxRoute{dev.Topics.TxRoute()}, dev.BroadcastGroups...)
 }
 
 // Options configures the core. Configuration rules are the configuration
@@ -94,8 +108,8 @@ type Options struct {
 	// from. It defaults to when New is called.
 	Started time.Time
 
-	// TxIn delivers the tx that arrive on the devices' tx topics. Nil means
-	// no tx is taken.
+	// TxIn delivers the tx that arrive on the devices' tx topics and their
+	// broadcast groups'. Nil means no tx is taken.
 	TxIn <-chan TxMessage
 
 	// LogPayloads puts each published reading's data on its record, and each
@@ -194,10 +208,11 @@ func New(opts Options) (*Core, error) {
 // instead, reporting a crash where there was an orderly stop.
 func (core *Core) Run(ctx context.Context) error {
 	pipelines := make([]*pipeline, 0, len(core.opts.Devices))
-	byTxTopic := make(map[string]*pipeline, len(core.opts.Devices))
+	byTxTopic := make(map[string]*txTarget, len(core.opts.Devices))
 	for _, dev := range core.opts.Devices {
 		line := &pipeline{
 			device:   dev,
+			txRoutes: dev.txRoutes(),
 			frames:   make(chan device.Frame, core.opts.BufferSize),
 			status:   newStatusQueue(core.opts.EventBufferSize),
 			tx:       newWaitingQueue[*txJob](),
@@ -206,7 +221,14 @@ func (core *Core) Run(ctx context.Context) error {
 			written:  newWrittenIDs(dev.TxRememberedIDs),
 		}
 		pipelines = append(pipelines, line)
-		byTxTopic[dev.Topics.Tx()] = line
+		for _, route := range line.txRoutes {
+			target, known := byTxTopic[route.Topic]
+			if !known {
+				target = &txTarget{route: route}
+				byTxTopic[route.Topic] = target
+			}
+			target.lines = append(target.lines, line)
+		}
 	}
 
 	// drained ends the event publishers' wait for the connection when the
@@ -239,8 +261,12 @@ func (core *Core) Run(ctx context.Context) error {
 		go func(line *pipeline) {
 			defer readers.Done()
 			reader := line.device.Reader
+			txTopics := make([]string, 0, len(line.txRoutes))
+			for _, route := range line.txRoutes {
+				txTopics = append(txTopics, route.Topic)
+			}
 			core.log.Info("device starting", "device_id", reader.ID(), "device_kind", reader.Kind(), "device_path", reader.Path(),
-				"rx_topic", line.device.Topics.Rx(), "status_topic", line.device.Topics.Status(), "tx_topic", line.device.Topics.Tx(),
+				"rx_topic", line.device.Topics.Rx(), "status_topic", line.device.Topics.Status(), "tx_topics", txTopics,
 				"message_expiry", line.device.Wire.Expiry.String(),
 				"tx_open_attempts", line.device.TxOpenAttempts, "tx_open_interval", line.device.TxOpenInterval.String(),
 				"tx_remembered_ids", line.device.TxRememberedIDs)

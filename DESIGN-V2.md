@@ -112,6 +112,9 @@ receives nothing from a v2 agent, which is one reason the release is 2.0.0.
 A consumer takes every device at a station with a single-level wildcard:
 `skuhus/<project>/<site>/<station>/+/rx`.
 
+A tx can also reach every device in a broadcast group, on the group's own topic
+("Broadcast groups", #35).
+
 `[Decided]` Status at two levels. Source: maintainer, 2026-09-29.
 
     skuhus/<project>/<site>/<station>/agent/<instance>/status   will, keepalive, counters
@@ -390,6 +393,91 @@ write(2) call without continuing after a partial write (serial_unix.go:112-118).
 The agent's port type holds one lock across `Write` and `Close`, and loops until
 every byte is written. Source: maintainer, 2026-09-29 (#23 Q20).
 
+## Broadcast groups
+
+`[Decided]` A device can be in broadcast groups at three scopes, its project,
+its site and its station, and one tx on a group's topic reaches every device in
+the group. Each device declares its groups, one list per scope. Source:
+maintainer, 2026-10-06 (#35 Q1, Q2, Q1b).
+
+```yaml
+devices:
+  - id: scales-a
+    broadcast_groups:
+      project: [scales]
+      site: [scales]
+      station: []
+```
+
+| Scope | Topic | Levels |
+|---|---|---|
+| project | `skuhus/<project>/group/<group>/tx` | 5 |
+| site | `skuhus/<project>/<site>/group/<group>/tx` | 6 |
+| station | `skuhus/<project>/<site>/<station>/group/<group>/tx` | 7 |
+
+A group name is a topic level, so it follows `[a-z0-9-]+`, as a device id does
+("Topics"). The site topic has the shape of a device's tx topic, so `group` is
+reserved as a station id, as `agent` is reserved as a device id (#35 Q1b). No
+other topic has the project topic's five levels. The station topic has the
+seven of the agent's status topic, and differs from it in its fifth level,
+`group` where that has `agent`, and in its last.
+
+`[Decided]` A group is not a `device_type`, which does not identify a model.
+What describes a device, a `device_info` with its model, description, serial
+number and part number, is decided on #36. Source: maintainer, 2026-10-06
+(#35 Q1, Q1a).
+
+A tx on a group's topic reaches the devices in the group whose agents are
+connected; one published while an agent is disconnected is lost to that
+agent's devices, as any tx is ("The tx contract"). The agent subscribes to a
+group's topic once, however many of its devices are in the group, and hands a
+tx on it to each of them (cmd/skuhus-device-agent/run.go,
+buildDevices; internal/core/tx.go, admitTx). Tx ids are kept per device
+(internal/core/pipeline.go:28-33). Each device therefore takes the tx once and
+publishes its own results on its own status topic, all with the same `tx_id`. A
+resend is answered per device, as "The tx contract" describes, and so is the
+same tx reaching a device through two of its groups. The log records each tx on
+a group's topic with the devices it went to, and each device's admission with
+the topic it came on.
+
+`[Decided]` Each device's entry in the keepalive lists every group the device
+is in, with its scope, and every tx topic that reaches the device: its own and
+each group's. A topic is reported as the filter that went into the SUBSCRIBE
+packet, with the broker's SUBACK answer to it, both recorded when the agent
+subscribes. The value used to subscribe is the value reported, so the keepalive
+cannot drift from what was subscribed. Source: maintainer, 2026-10-06 (#35 Q3,
+Q3a, Q3b). The field is `tx_topics` ("Agent keepalive"). The integration test
+compares it with the SUBSCRIBE and SUBACK packets that went over the wire
+(test/integration, TestBroadcastGroupTxReachesEveryDeviceInTheGroup).
+
+MQTT gives a client no way to read the broker's bindings. The other option was
+reading them from RabbitMQ's management API, and it was not chosen: it needs an
+HTTP credential with the `management` tag on every station, and works with
+RabbitMQ only (#35 Q3a).
+
+A station's agent needs read permission on its project and site group topics
+before it subscribes to them; dev/rabbitmq/definitions.json has an example.
+Measured on 2026-10-06 against RabbitMQ 4.3.5 (#35):
+- mosquitto_sub 2.1.2, subscribing as a station: with one topic in a SUBSCRIBE
+  refused, the broker closed the connection after the SUBACK, and the client
+  received 0 of 10 tx sent to its own device. With every topic permitted, it
+  received 10 of 10.
+- The agent, with a site group its station may not read: it connected 482
+  times in 5 s. Each time it logged the group's topic as refused, reason 0x87,
+  the broker closed the connection over it (`subscribe_error`), and the agent
+  reconnected at once, since the first attempt after a lost connection does not
+  wait ("Reconnecting to the broker"). With the permission in place it
+  connected once.
+
+A group subscription the broker refuses therefore takes the whole agent off the
+broker, and makes it reconnect without a pause; the permissions come before the
+configuration. The agent logs each refused topic as `subscription refused; no
+tx will arrive on this topic`, with the reason code
+(internal/transport/mqtt/client.go, subscribe). paho hands the SUBACK over
+together with an error when a topic is refused (paho/client.go, Subscribe, in
+paho.golang v0.23.0); the agent reads the SUBACK, and logs that subscribing
+failed only when there is none.
+
 ## Status channel
 
 `[Decided]` The agent publishes keepalives on the status channel, so that every
@@ -579,8 +667,8 @@ one of the events that waits (measured in #13).
 
 ### tx
 
-On `<device>/tx`, published by senders. The agent subscribes to it (PLAN-V2.md,
-T14).
+On `<device>/tx`, or on a broadcast group's tx topic ("Broadcast groups"),
+published by senders. The agent subscribes to both (PLAN-V2.md, T14; #35).
 
 ```json tx
 {
@@ -753,6 +841,14 @@ rather than a number of its own. Source: maintainer, 2026-09-29 (#11 Q7).
       "device_type": "symbol-05e0-1701",
       "device_open": true,
       "message_expiry_s": 30,
+      "tx_topics": [
+        {
+          "topic": "skuhus/acme/vasby/pack-03/scanner-1/tx",
+          "scope": "device",
+          "group": null,
+          "suback": 1
+        }
+      ],
       "rx_frames": 1042,
       "rx_bytes": 15656,
       "discards": {
@@ -780,6 +876,20 @@ rather than a number of its own. Source: maintainer, 2026-09-29 (#11 Q7).
       "device_type": "zebra-zt410",
       "device_open": false,
       "message_expiry_s": 30,
+      "tx_topics": [
+        {
+          "topic": "skuhus/acme/vasby/pack-03/printer-1/tx",
+          "scope": "device",
+          "group": null,
+          "suback": 1
+        },
+        {
+          "topic": "skuhus/acme/vasby/group/printers/tx",
+          "scope": "site",
+          "group": "printers",
+          "suback": 1
+        }
+      ],
       "rx_frames": 0,
       "rx_bytes": 0,
       "discards": {
@@ -814,7 +924,18 @@ rather than a number of its own. Source: maintainer, 2026-09-29 (#11 Q7).
 | devices | array | no | One entry per configured device, in configuration order; `[]` with none. |
 
 Each entry carries `device_id`, `device_type`, `device_open` and `message_expiry_s` as a
-device event does, and the device's counters since the process started, the
+device event does. `tx_topics` lists every topic that reaches the device's tx,
+its own first, then its broadcast groups' in the order project, site, station
+("Broadcast groups", #35 Q3, Q3a, Q3b):
+
+| Field | Type | Null | Meaning |
+|---|---|---|---|
+| topic | string | no | The topic filter as it went into the SUBSCRIBE packet. |
+| scope | string | no | `device` for the device's own topic; `project`, `site` or `station` for a broadcast group's. |
+| group | string | yes | The broadcast group's name; null for the device's own topic. |
+| suback | integer | yes | The broker's SUBACK reason code for the topic on the current connection: 0 to 2 grant that QoS, 128 and above refuse it. Null until the broker has answered on this connection. |
+
+The entry also carries the device's counters since the process started, the
 list in "Status channel" (#23 Q9):
 
 | Counter | Counts |
@@ -834,7 +955,9 @@ unmatched separator ("Reading: rx") shows as `discards.inter_char_timeout` and
 
 Besides every interval, a keepalive goes out as soon as the broker connection
 comes up. The first one does not wait an interval, and a consumer that saw a
-will learns within a moment that the agent is back.
+will learns within a moment that the agent is back. It goes once the broker has
+answered the agent's subscriptions, or subscribing has failed, so that its
+`tx_topics` carry the answers.
 
 ### Agent offline
 
@@ -877,7 +1000,7 @@ channel").
 | event, tx result | `<device>/status` | 1 | no | the device's |
 | keepalive | `agent/<instance>/status` | 0 | no | `gone_after_s`: a keepalive older than that says nothing true. v1 used four intervals (internal/transport/mqtt/client.go:24-27). |
 | offline | `agent/<instance>/status` | 1 | no | none |
-| tx | `<device>/tx` | 1, by senders | no | set by the sender (#23 Q19) |
+| tx | `<device>/tx`, or a broadcast group's | 1, by senders | no | set by the sender (#23 Q19) |
 
 `[Decided]` Nothing is retained. v1 retains its status and its will
 (internal/transport/mqtt/client.go:141-149, 182-192), and three measurements

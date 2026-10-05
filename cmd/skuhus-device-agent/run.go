@@ -133,7 +133,7 @@ func runAgent(ctx context.Context, cfg *config.Config, warnings []config.Warning
 		AgentVersion: buildinfo.Version(),
 	}, nil)
 
-	devices, txTopics, err := buildDevices(cfg, station, log)
+	devices, subscriptions, err := buildDevices(cfg, station, log)
 	if err != nil {
 		return err
 	}
@@ -172,7 +172,7 @@ func runAgent(ctx context.Context, cfg *config.Config, warnings []config.Warning
 		Keepalive:      cfg.Broker.Keepalive.Duration(),
 		ConnectTimeout: cfg.Broker.ConnectTimeout.Duration(),
 		Reconnect:      cfg.Broker.ReconnectPolicy(),
-		Subscriptions:  txTopics,
+		Subscriptions:  subscriptions,
 		OnMessage:      onMessage,
 		WillTopic:      agentTopics.Status(),
 		Will:           will,
@@ -260,13 +260,26 @@ func openLog(cfg *config.Config, stdout io.Writer) (log *slog.Logger, closeLog f
 }
 
 // buildDevices builds each configured device as the core runs it, with its
-// reader and topics, and lists the devices' tx topics, which the connection
-// subscribes to.
+// reader, its topics and its broadcast groups' topics, and lists the topics the
+// connection subscribes to: every device's tx topic, and each group's once,
+// however many devices are in the group. The same values go to the core and to
+// the subscription, so the keepalive reports the topics as subscribed.
 func buildDevices(cfg *config.Config, station wire.StationTopics, log *slog.Logger) ([]core.Device, []string, error) {
 	devices := make([]core.Device, 0, len(cfg.Devices))
-	txTopics := make([]string, 0, len(cfg.Devices))
+	subscriptions := make([]string, 0, len(cfg.Devices))
+	subscribed := make(map[string]bool, len(cfg.Devices))
+	subscribe := func(topic string) {
+		if !subscribed[topic] {
+			subscribed[topic] = true
+			subscriptions = append(subscriptions, topic)
+		}
+	}
 	for _, deviceCfg := range cfg.Devices {
 		topics, err := station.Device(deviceCfg.ID)
+		if err != nil {
+			return nil, nil, err
+		}
+		groups, err := broadcastGroupRoutes(station, deviceCfg.BroadcastGroups)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -281,10 +294,14 @@ func buildDevices(cfg *config.Config, station wire.StationTopics, log *slog.Logg
 			TxOpenAttempts:  deviceCfg.TxOpenAttempts,
 			TxOpenInterval:  deviceCfg.TxOpenInterval.Duration(),
 			TxRememberedIDs: deviceCfg.TxRememberedIDs,
+			BroadcastGroups: groups,
 		})
-		txTopics = append(txTopics, topics.Tx())
+		subscribe(topics.Tx())
+		for _, route := range groups {
+			subscribe(route.Topic)
+		}
 	}
-	return devices, txTopics, nil
+	return devices, subscriptions, nil
 }
 
 // newTxIntake returns the channel that carries each tx from paho's goroutine

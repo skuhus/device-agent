@@ -31,10 +31,21 @@ skuhus/<project>/<site>/<station>/<device>/tx               bytes for the port, 
 skuhus/<project>/<site>/<station>/agent/<instance>/status   the agent's keepalive and offline message
 ```
 
+A tx can also go to every device in a broadcast group, on the group's topic
+("Writing to a device"):
+
+```
+skuhus/<project>/group/<group>/tx                           every device in the project's group
+skuhus/<project>/<site>/group/<group>/tx                    every device in the site's group
+skuhus/<project>/<site>/<station>/group/<group>/tx          every device in the station's group
+```
+
 `<project>`, `<site>` and `<station>` are the configuration's `identity`,
-`<device>` is the device's `id`, and `<instance>` is `identity.instance`, which
-defaults to the station. Each is a topic level, so each is `[a-z0-9-]+`. `agent`
-is reserved, so no device can be configured into the agent's topics.
+`<device>` is the device's `id`, `<group>` a group in its `broadcast_groups`,
+and `<instance>` is `identity.instance`, which defaults to the station. Each is a
+topic level, so each is `[a-z0-9-]+`. `agent` is reserved, so no device can be
+configured into the agent's topics, and `group` is reserved as a station, whose
+device topics would be the site's group topics.
 
 Every message is one JSON object, `schema` 2, that names the station, the
 instance and the agent's version. Nothing is retained.
@@ -44,7 +55,7 @@ instance and the agent's version. Nothing is retained.
 | `rx` | `<device>/rx` | 1 | the device's `message_expiry` | the whole frame, separator excluded, as `raw_b64`, and as `text` when it is valid UTF-8; `seq` counts the device's frames from 1 |
 | `event` | `<device>/status` | 1 | the device's | `port_opened`, `port_closed`, `port_lost`, `port_open_failed` or `bytes_discarded`, with the error class or the discard reason |
 | `tx_result` | `<device>/status` | 1 | the device's | what became of a tx: `accepted`, then `written` or `failed`, or `rejected` for a resend of a tx still in hand; a code, and the bytes written |
-| `keepalive` | `agent/<instance>/status` | 0 | `gone_after_s` | every device's state and counters, every `status.keepalive_interval` and whenever the connection comes up |
+| `keepalive` | `agent/<instance>/status` | 0 | `gone_after_s` | every device's state and counters, and every topic that reaches its tx with the broker's answer to the subscription, every `status.keepalive_interval` and whenever the connection comes up |
 | `offline` | `agent/<instance>/status` | 1 | none | `reason` `shutdown` when the agent stops cleanly, or `will`, published by the broker when the connection is lost |
 
 A consumer treats an agent as gone after `gone_after_s` without a keepalive:
@@ -105,6 +116,26 @@ in hand, which on the bench adapter took up to 16 s more; one still queued is
 not started. A tx published while the agent is disconnected is lost and gets no
 result, and a sender treats a tx that got no result as not written.
 DESIGN-V2.md, "The tx contract", has the rest.
+
+A device can be in broadcast groups, under `broadcast_groups` in its entry, at
+the project, the site or the station:
+
+```yaml
+broadcast_groups: { project: [], site: [scales], station: [] }
+```
+
+A tx on a group's topic is taken by every device in the group whose agent is
+connected, as if it had been sent to each on its own topic: each writes it and answers on its own
+status topic, all under the tx's id, and a resend is answered by each for
+itself. The agent subscribes to each group's topic once, and each keepalive
+lists every topic that reaches a device, as subscribed, with the broker's
+answer. `validate` shows each group's topic.
+
+The station's broker user must be allowed to read its project's and its site's
+group topics before a station joins a group there. RabbitMQ 4.3.5 closes the
+connection of a client whose subscription it refuses, and the agent then
+reconnects at once and is refused again, without a pause: measured, 482
+connections in 5 s. DESIGN-V2.md, "Broadcast groups", has the rest.
 
 ## Build and test
 
@@ -174,12 +205,13 @@ and never from a repository.
 
 Anonymous MQTT is refused, which is the fleet broker's current behaviour and the
 reason this file sets it explicitly. `station-pack-03` is confined by topic
-permission to `skuhus.acme.vasby.pack-03.*`: it cannot publish or subscribe
-outside its own station, which is what device-agent-spec.md, section 8, asks
-per-station credentials to buy. `ingest` reads every station's topics and
-writes only device tx topics, `skuhus/<project>/<site>/<station>/<device>/tx`,
-so it cannot pass anything off as a reading or a status. Adding a station means
-adding a user and a topic permission to `definitions.json`.
+permission to `skuhus.acme.vasby.pack-03.*`: it cannot publish outside its own
+station, which is what device-agent-spec.md, section 8, asks per-station
+credentials to buy, and outside it may read only its project's and its site's
+broadcast group tx topics. `ingest` reads every station's topics and writes only
+tx topics, a device's or a broadcast group's, so it cannot pass anything off as
+a reading or a status. Adding a station means adding a user and a topic
+permission to `definitions.json`.
 
 The definitions are imported at boot, so a running broker takes a change at its
 next restart, `make broker-down broker-up`, which keeps the volume. `make
@@ -210,10 +242,13 @@ the results the agent publishes for it.
 ```
 make send-tx TX_TOPIC=skuhus/acme/vasby/pack-03/printer-1/tx FLAGS="--file dist/job.bin"
 make send-tx TX_TOPIC=skuhus/acme/vasby/pack-03/printer-1/tx FLAGS="--hex 1b40"
+make send-tx TX_TOPIC=skuhus/acme/vasby/group/scales/tx FLAGS="--hex 05"
 ```
 
-`--file` takes a path from the repository root. `--id` sends a chosen id, to
-see a resend rejected while the first is still being written.
+Sent to a broadcast group, it prints every device's results, with the station
+and the device, until `--wait` ends, 15 s by default. `--file` takes a path from
+the repository root. `--id` sends a chosen id, to see a resend rejected while
+the first is still being written.
 
 Each message prints its topic, QoS, retained flag and message expiry, a response
 topic or correlation data when it carries one, then the payload with JSON
@@ -508,6 +543,13 @@ flat.
 
 `probe` prints payload contents by design; `logging.log_payloads` does not apply
 to it.
+
+An agent whose log repeats `broker connected`, `subscription refused; no tx will
+arrive on this topic` and `broker connection lost, reconnecting`, many times a
+second, subscribes to a topic its broker user may not read, usually a broadcast
+group's; the refused record names the topic. RabbitMQ 4.3.5 closes the
+connection over it, and the agent reconnects at once. Grant the read permission,
+or take the group out of `broadcast_groups` ("Writing to a device").
 
 ## Environment hazards on Linux
 

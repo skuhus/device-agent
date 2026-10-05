@@ -252,8 +252,8 @@ type TxResult struct {
 	Detail map[string]any `json:"detail"`
 }
 
-// Tx is what a sender publishes on a device's tx topic, for the agent to write
-// to the device.
+// Tx is what a sender publishes on a device's tx topic, or on a broadcast
+// group's, for the agent to write to the device, or to each in the group.
 type Tx struct {
 	Schema int    `json:"schema"`
 	ID     string `json:"id"`
@@ -419,13 +419,45 @@ type DeviceState struct {
 	Device   Device
 	Open     bool
 	Counters DeviceCounters
+	// TxRoutes are the topics that reach the device's tx, its own first, each
+	// with the broker's answer to its subscription.
+	TxRoutes []TxRouteState
+}
+
+// TxRouteState is a topic that reaches a device's tx, as the agent subscribed
+// to it, with the broker's answer on the current connection.
+type TxRouteState struct {
+	Route  TxRoute
+	Answer SubscribeAnswer
+}
+
+// SubscribeAnswer is the broker's SUBACK reason code for one topic filter.
+// Answered is false until the broker has answered on the current connection.
+type SubscribeAnswer struct {
+	Code     byte
+	Answered bool
+}
+
+// TxTopic is one topic in a keepalive that reaches the device's tx: the topic
+// filter as it went into the SUBSCRIBE packet, what it reaches, and the
+// broker's answer (DESIGN-V2.md, "Broadcast groups").
+type TxTopic struct {
+	Topic string  `json:"topic"`
+	Scope TxScope `json:"scope"`
+	// Group is the broadcast group's name, null for the device's own topic.
+	Group *string `json:"group"`
+	// Suback is the broker's SUBACK reason code for the topic on the current
+	// connection: 0 to 2 grant that QoS, 128 and above refuse it. Null until
+	// the broker has answered.
+	Suback *int `json:"suback"`
 }
 
 // KeepaliveDevice is one device's entry in a keepalive.
 type KeepaliveDevice struct {
 	deviceHeader
-	DeviceOpen     bool  `json:"device_open"`
-	MessageExpiryS int64 `json:"message_expiry_s"`
+	DeviceOpen     bool      `json:"device_open"`
+	MessageExpiryS int64     `json:"message_expiry_s"`
+	TxTopics       []TxTopic `json:"tx_topics"`
 	DeviceCounters
 }
 
@@ -626,10 +658,20 @@ func (builder *Builder) txResult(device Device, deviceOpen bool, tx TxRef, code 
 func (builder *Builder) Keepalive(started, at time.Time, interval time.Duration, missed int, devices []DeviceState) Keepalive {
 	entries := make([]KeepaliveDevice, 0, len(devices))
 	for _, state := range devices {
+		txTopics := make([]TxTopic, 0, len(state.TxRoutes))
+		for _, routeState := range state.TxRoutes {
+			txTopic := TxTopic{Topic: routeState.Route.Topic, Scope: routeState.Route.Scope, Group: nilIfEmpty(routeState.Route.Group)}
+			if routeState.Answer.Answered {
+				code := int(routeState.Answer.Code)
+				txTopic.Suback = &code
+			}
+			txTopics = append(txTopics, txTopic)
+		}
 		entries = append(entries, KeepaliveDevice{
 			deviceHeader:   deviceHeaderOf(state.Device),
 			DeviceOpen:     state.Open,
 			MessageExpiryS: messageExpirySeconds(state.Device.Expiry),
+			TxTopics:       txTopics,
 			DeviceCounters: state.Counters,
 		})
 	}

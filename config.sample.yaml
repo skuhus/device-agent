@@ -158,6 +158,23 @@ devices:
     # oldest is forgotten first, and a restart forgets them all.
     tx_remembered_ids: 1024
 
+    # Optional. The broadcast groups this device is in, by scope. A tx on a
+    # group's topic reaches every device in the group, and each device answers
+    # on its own status topic:
+    #
+    #   project  skuhus/<project>/group/<group>/tx
+    #   site     skuhus/<project>/<site>/group/<group>/tx
+    #   station  skuhus/<project>/<site>/<station>/group/<group>/tx
+    #
+    # A group's name is a topic level, [a-z0-9-]+, listed once per scope. The
+    # broker must let this station's user read its project and site group
+    # topics: RabbitMQ 4.3.5 closes the connection of an agent whose
+    # subscription it refuses, and the agent reconnects at once and is refused
+    # again, which keeps it off the broker. For example:
+    #
+    #   broadcast_groups: { project: [], site: [scales], station: [] }
+    broadcast_groups: { project: [], site: [], station: [] }
+
     # There is no symbology setting. The agent publishes the complete frame
     # with only the separator removed, so any code identifier the scanner
     # prefixes stays in the payload for the upstream side to decode. See

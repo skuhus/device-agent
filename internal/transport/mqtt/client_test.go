@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"math"
 	"net/url"
 	"os"
@@ -163,7 +164,7 @@ func TestConnectionConfiguration(t *testing.T) {
 			composed++
 			return []byte(fmt.Sprintf(`{"kind":"offline","reason":"will","attempt":%d}`, composed)), nil
 		},
-	}, brokerURL, nil, slog.New(slog.DiscardHandler), &lineGate{})
+	}, brokerURL, nil, slog.New(slog.DiscardHandler), &lineGate{}, &subscribeAnswers{})
 
 	if cfg.WillMessage == nil || cfg.WillProperties == nil || cfg.ConnectPacketBuilder == nil {
 		t.Fatal("no will registered")
@@ -197,12 +198,12 @@ func TestConnectionConfiguration(t *testing.T) {
 	}
 
 	failing := clientConfig(Options{ClientID: "pack-03", WillTopic: "t", Will: func() ([]byte, error) { return nil, errors.New("encoder broke") }},
-		brokerURL, nil, slog.New(slog.DiscardHandler), &lineGate{})
+		brokerURL, nil, slog.New(slog.DiscardHandler), &lineGate{}, &subscribeAnswers{})
 	if _, err := failing.ConnectPacketBuilder(&paho.Connect{WillMessage: failing.WillMessage}, brokerURL); err == nil || !strings.Contains(err.Error(), "compose will: encoder broke") {
 		t.Errorf("a will that cannot be composed: err = %v, want the connection attempt to fail naming it", err)
 	}
 
-	if withoutWill := clientConfig(Options{ClientID: "pack-03"}, brokerURL, nil, slog.New(slog.DiscardHandler), &lineGate{}); withoutWill.WillMessage != nil || withoutWill.ConnectPacketBuilder != nil {
+	if withoutWill := clientConfig(Options{ClientID: "pack-03"}, brokerURL, nil, slog.New(slog.DiscardHandler), &lineGate{}, &subscribeAnswers{}); withoutWill.WillMessage != nil || withoutWill.ConnectPacketBuilder != nil {
 		t.Error("a will was registered without one being asked for")
 	}
 }
@@ -239,7 +240,7 @@ func TestPahoLinesNameTheirCaller(t *testing.T) {
 func TestConnectionLinesReportEachTransition(t *testing.T) {
 	log, logged := logtest.New(t, "debug")
 	brokerURL, _ := url.Parse("tcp://broker:1883")
-	cfg := clientConfig(Options{ClientID: "pack-03"}, brokerURL, nil, log.With("broker", brokerURL.Redacted(), "client_id", "pack-03"), &lineGate{})
+	cfg := clientConfig(Options{ClientID: "pack-03"}, brokerURL, nil, log.With("broker", brokerURL.Redacted(), "client_id", "pack-03"), &lineGate{}, &subscribeAnswers{})
 	cfg.OnConnectionUp(nil, &paho.Connack{})
 	cfg.OnConnectionDown()
 	cfg.OnConnectError(errors.New("connection refused"))
@@ -278,7 +279,7 @@ func TestReceivedPublishesReachOnMessage(t *testing.T) {
 	brokerURL, _ := url.Parse("tcp://skuhus-dev-rabbitmq:1883")
 	var got []Message
 	cfg := clientConfig(Options{ClientID: "pack-03", OnMessage: func(message Message) { got = append(got, message) }},
-		brokerURL, nil, slog.New(slog.DiscardHandler), &lineGate{})
+		brokerURL, nil, slog.New(slog.DiscardHandler), &lineGate{}, &subscribeAnswers{})
 	if len(cfg.OnPublishReceived) != 1 {
 		t.Fatalf("%d publish handlers, want 1", len(cfg.OnPublishReceived))
 	}
@@ -289,7 +290,7 @@ func TestReceivedPublishesReachOnMessage(t *testing.T) {
 	if len(got) != 1 || got[0].Topic != "a/tx" || string(got[0].Payload) != "job" {
 		t.Errorf("OnMessage got %+v", got)
 	}
-	none := clientConfig(Options{ClientID: "pack-03"}, brokerURL, nil, slog.New(slog.DiscardHandler), &lineGate{})
+	none := clientConfig(Options{ClientID: "pack-03"}, brokerURL, nil, slog.New(slog.DiscardHandler), &lineGate{}, &subscribeAnswers{})
 	if len(none.OnPublishReceived) != 0 {
 		t.Errorf("a connection without OnMessage has %d publish handlers", len(none.OnPublishReceived))
 	}
@@ -312,14 +313,24 @@ func (fake *fakeSubscriber) Subscribe(ctx context.Context, packet *paho.Subscrib
 	return fake.answer, fake.err
 }
 
+// errSubscriptionRefused is what paho returns, with the SUBACK, when the broker
+// refused one of several topics (paho/client.go, Subscribe, in paho.golang
+// v0.23.0).
+var errSubscriptionRefused = errors.New("at least one requested subscription failed")
+
 // Every tx topic is asked for at QoS 1 within the connect timeout. What the
 // broker grants is INFO; a refused topic, or no answer at all, is an ERROR,
-// because that device will receive no tx.
+// because no tx arrives on it. Each answer is returned under the topic as it
+// went into the packet, refusals included. A refusal comes as paho gives it:
+// the SUBACK with an error.
 func TestSubscribeAsksForEachTopicAndLogsTheAnswer(t *testing.T) {
-	topics := []string{"skuhus/acme/vasby/pack-03/printer-1/tx", "skuhus/acme/vasby/pack-03/printer-2/tx"}
+	topics := []string{"skuhus/acme/vasby/pack-03/printer-1/tx", "skuhus/acme/vasby/group/printers/tx"}
 	logger, log := logtest.New(t, "debug")
-	broker := &fakeSubscriber{answer: &paho.Suback{Reasons: []byte{1, 0x87}}}
-	subscribe(broker, topics, 7*time.Second, logger)
+	broker := &fakeSubscriber{answer: &paho.Suback{Reasons: []byte{1, 0x87}}, err: errSubscriptionRefused}
+	answered := subscribe(broker, topics, 7*time.Second, logger)
+	if want := map[string]byte{topics[0]: 1, topics[1]: 0x87}; !maps.Equal(answered, want) {
+		t.Errorf("answers = %v, want %v", answered, want)
+	}
 
 	if broker.deadline <= 6*time.Second || broker.deadline > 7*time.Second {
 		t.Errorf("subscribing was given %s, want the 7s connect timeout", broker.deadline)
@@ -336,15 +347,82 @@ func TestSubscribeAsksForEachTopicAndLogsTheAnswer(t *testing.T) {
 	if len(granted) != 1 || granted[0]["topic"] != topics[0] || granted[0]["level"] != "INFO" {
 		t.Errorf("subscribed records = %v, want one INFO for %s", granted, topics[0])
 	}
-	refused := log.WithMessage(t, "subscription refused; this device will receive no tx")
+	refused := log.WithMessage(t, "subscription refused; no tx will arrive on this topic")
 	if len(refused) != 1 || refused[0]["topic"] != topics[1] || refused[0]["reason"] != "0x87" || refused[0]["level"] != "ERROR" {
 		t.Errorf("refused records = %v, want one ERROR for %s with reason 0x87", refused, topics[1])
 	}
+	if failed := log.WithMessage(t, "subscribing failed; no tx will arrive until the next connection"); len(failed) != 0 {
+		t.Errorf("a SUBACK with a refusal was logged as a failure to subscribe: %v", failed)
+	}
 
 	failingLogger, failingLog := logtest.New(t, "debug")
-	subscribe(&fakeSubscriber{err: context.DeadlineExceeded}, topics, 7*time.Second, failingLogger)
+	if answered := subscribe(&fakeSubscriber{err: context.DeadlineExceeded}, topics, 7*time.Second, failingLogger); len(answered) != 0 {
+		t.Errorf("answers without a SUBACK = %v, want none", answered)
+	}
 	failed := failingLog.WithMessage(t, "subscribing failed; no tx will arrive until the next connection")
 	if len(failed) != 1 || failed[0]["level"] != "ERROR" || failed[0]["timeout"] != "7s" {
 		t.Errorf("failure records = %v, want one ERROR with the 7s timeout", failed)
+	}
+
+	shortLogger, shortLog := logtest.New(t, "debug")
+	short := subscribe(&fakeSubscriber{answer: &paho.Suback{Reasons: []byte{1}}}, topics, 7*time.Second, shortLogger)
+	if want := map[string]byte{topics[0]: 1}; !maps.Equal(short, want) {
+		t.Errorf("answers to a short SUBACK = %v, want %v: the unanswered topic is absent", short, want)
+	}
+	if missing := shortLog.WithMessage(t, "the broker answered fewer subscriptions than were asked for"); len(missing) != 1 || missing[0]["topic"] != topics[1] {
+		t.Errorf("short SUBACK records = %v, want one ERROR for %s", missing, topics[1])
+	}
+}
+
+// A connection that comes up is reported up only once the broker has answered
+// its subscriptions, and its answers are recorded by then: the keepalive that
+// goes out at once reports them.
+func TestConnectionIsReportedUpAfterTheAnswers(t *testing.T) {
+	topics := []string{"skuhus/acme/vasby/pack-03/printer-1/tx", "skuhus/acme/vasby/group/printers/tx"}
+	answers := &subscribeAnswers{}
+	var atUp map[string]byte
+	opts := Options{Subscriptions: topics, ConnectTimeout: time.Second, OnUp: func() { atUp = answers.snapshot() }}
+	connection := answers.begin()
+	connectionUp(&fakeSubscriber{answer: &paho.Suback{Reasons: []byte{1, 1}}}, opts, answers, connection, slog.New(slog.DiscardHandler))
+	if want := map[string]byte{topics[0]: 1, topics[1]: 1}; !maps.Equal(atUp, want) {
+		t.Errorf("answers when the connection was reported up = %v, want %v", atUp, want)
+	}
+
+	upCalled := false
+	opts = Options{ConnectTimeout: time.Second, OnUp: func() { upCalled = true }}
+	idle := &fakeSubscriber{}
+	connectionUp(idle, opts, answers, answers.begin(), slog.New(slog.DiscardHandler))
+	if !upCalled || idle.packet != nil {
+		t.Errorf("a connection with nothing to subscribe to: reported up %t, SUBSCRIBE sent %t; want up, and none sent", upCalled, idle.packet != nil)
+	}
+}
+
+// Each connection starts with no answers, and a SUBACK that arrives for an
+// earlier connection after a newer one came up is not recorded: the session is
+// clean, so the newer connection has subscribed afresh.
+func TestSubscribeAnswersBelongToTheirConnection(t *testing.T) {
+	logger, log := logtest.New(t, "debug")
+	answers := &subscribeAnswers{}
+	first := answers.begin()
+	if !answers.record(first, "a/tx", 1) {
+		t.Fatal("the current connection's answer was not recorded")
+	}
+	second := answers.begin()
+	if got := answers.snapshot(); len(got) != 0 {
+		t.Errorf("answers after a new connection = %v, want none", got)
+	}
+	opts := Options{Subscriptions: []string{"b/tx"}, ConnectTimeout: time.Second}
+	connectionUp(&fakeSubscriber{answer: &paho.Suback{Reasons: []byte{1}}}, opts, answers, first, logger)
+	if got := answers.snapshot(); len(got) != 0 {
+		t.Errorf("answers after a stale SUBACK = %v, want none", got)
+	}
+	if stale := log.WithMessage(t, "subscription answer not recorded: a newer connection has come up"); len(stale) != 1 || stale[0]["topic"] != "b/tx" {
+		t.Errorf("stale answer records = %v, want one for b/tx", stale)
+	}
+	answers.record(second, "b/tx", 0x87)
+	snapshot := answers.snapshot()
+	snapshot["b/tx"] = 1
+	if got := answers.snapshot(); got["b/tx"] != 0x87 {
+		t.Errorf("changing a snapshot changed the answers to %v", got)
 	}
 }

@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -377,6 +378,20 @@ func (run *run) subscribe(t *testing.T) {
 	}
 }
 
+// observe has the observer subscribe to filter as well.
+func (run *run) observe(t *testing.T, filter string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	subscription, err := run.observer.Subscribe(ctx, &paho.Subscribe{Subscriptions: []paho.SubscribeOptions{{Topic: filter, QoS: 1}}})
+	if err != nil {
+		t.Fatalf("subscribe to %s: %v", filter, err)
+	}
+	if len(subscription.Reasons) != 1 || subscription.Reasons[0] > 1 {
+		t.Fatalf("subscribe to %s refused: %v", filter, subscription.Reasons)
+	}
+}
+
 // message is one publish the observer received.
 type message struct {
 	topic  string
@@ -455,8 +470,26 @@ func (run *run) waitForCount(t *testing.T, what string, count int, match func(me
 	return run.matching(match)
 }
 
-// start writes the agent's configuration and runs it.
+// start writes the agent's configuration, with the run's device, and runs it.
 func (run *run) start(t *testing.T) *agentProcess {
+	t.Helper()
+	return run.startWith(t, deviceConfig(run.device, run.slave, ""))
+}
+
+// deviceConfig is one entry of the configuration's devices; extra is more of
+// the entry's keys, each line indented as the entry's own.
+func deviceConfig(id, path, extra string) string {
+	return fmt.Sprintf(`  - id: %s
+    path: %s
+    separator: "\r\n"
+    message_expiry: 30s
+    device_type: symbol-05e0-1701
+%s`, id, path, extra)
+}
+
+// startWith writes the agent's configuration with devices as its devices
+// section, and runs it.
+func (run *run) startWith(t *testing.T, devices string) *agentProcess {
 	t.Helper()
 	config := fmt.Sprintf(`identity: { project: acme, site: vasby, station: pack-03, instance: %s }
 broker:
@@ -464,19 +497,14 @@ broker:
   insecure: true
   reconnect_interval: 100ms
 devices:
-  - id: %s
-    path: %s
-    separator: "\r\n"
-    message_expiry: 30s
-    device_type: symbol-05e0-1701
-status:
+%sstatus:
   keepalive_interval: 1s
   missed_keepalives: 3
 logging:
   level: debug
   file: %s
   stdout: true
-`, run.instance, run.relay.addr(), run.device, run.slave, filepath.Join(run.dir, "agent.log"))
+`, run.instance, run.relay.addr(), devices, filepath.Join(run.dir, "agent.log"))
 	configPath := filepath.Join(run.dir, "agent.yaml")
 	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -577,6 +605,9 @@ type relay struct {
 	target   string
 	mu       sync.Mutex
 	conns    []net.Conn
+	// sessions are the MQTT packets of each connection, one session per
+	// connection in the order they were accepted, as they went over the wire.
+	sessions []*session
 	// isCut is set by cut. A connection accepted just before the cut, still
 	// dialling the broker while cut closed the others, checks it and closes
 	// itself, so that no connection outlives the cut.
@@ -615,17 +646,19 @@ func (relay *relay) accept() {
 			broker.Close()
 			return
 		}
+		captured := &session{}
 		relay.conns = append(relay.conns, client, broker)
+		relay.sessions = append(relay.sessions, captured)
 		relay.mu.Unlock()
 		// Either side closing closes both, so that the broker sees an agent
 		// killed by SIGKILL drop without a DISCONNECT, as it would directly.
 		go func() {
-			_, _ = io.Copy(broker, client)
+			_, _ = io.Copy(broker, io.TeeReader(client, &captured.toBroker))
 			client.Close()
 			broker.Close()
 		}()
 		go func() {
-			_, _ = io.Copy(client, broker)
+			_, _ = io.Copy(client, io.TeeReader(broker, &captured.toAgent))
 			client.Close()
 			broker.Close()
 		}()
@@ -722,4 +755,232 @@ func (buffer *syncBuffer) String() string {
 	buffer.mu.Lock()
 	defer buffer.mu.Unlock()
 	return buffer.buf.String()
+}
+
+// session is one relayed connection's MQTT packets, each way.
+type session struct {
+	toBroker, toAgent packetLog
+}
+
+// packetLog splits one direction of a relayed connection into MQTT packets: a
+// type byte, the remaining length as a variable byte integer, and that many
+// bytes.
+type packetLog struct {
+	mu      sync.Mutex
+	pending []byte
+	packets [][]byte
+}
+
+func (stream *packetLog) Write(data []byte) (int, error) {
+	stream.mu.Lock()
+	defer stream.mu.Unlock()
+	stream.pending = append(stream.pending, data...)
+	for len(stream.pending) >= 2 {
+		remaining, size, complete := readVarint(stream.pending[1:])
+		if !complete || len(stream.pending) < 1+size+remaining {
+			break
+		}
+		total := 1 + size + remaining
+		stream.packets = append(stream.packets, bytes.Clone(stream.pending[:total]))
+		stream.pending = stream.pending[total:]
+	}
+	return len(data), nil
+}
+
+func (stream *packetLog) all() [][]byte {
+	stream.mu.Lock()
+	defer stream.mu.Unlock()
+	return append([][]byte(nil), stream.packets...)
+}
+
+// readVarint reads an MQTT variable byte integer, and says whether data held
+// all of it.
+func readVarint(data []byte) (value, size int, complete bool) {
+	multiplier := 1
+	for index := 0; index < 4 && index < len(data); index++ {
+		value += int(data[index]&0x7f) * multiplier
+		if data[index]&0x80 == 0 {
+			return value, index + 1, true
+		}
+		multiplier *= 128
+	}
+	return 0, 0, false
+}
+
+// MQTT packet types (MQTT 5.0, section 2.1.2).
+const (
+	packetSubscribe = 8
+	packetSuback    = 9
+)
+
+// packetBody is a packet's type and what follows its fixed header.
+func packetBody(packet []byte) (byte, []byte) {
+	_, size, _ := readVarint(packet[1:])
+	return packet[0] >> 4, packet[1+size:]
+}
+
+// afterProperties is what follows an MQTT 5 variable header's packet id and
+// properties.
+func afterProperties(body []byte) []byte {
+	length, size, _ := readVarint(body[2:])
+	return body[2+size+length:]
+}
+
+// subscriptions is what the agent's latest connection subscribed to, as it
+// went over the wire: each topic filter in its SUBSCRIBE packets, with the
+// reason code the broker's SUBACK of the same packet id gave it.
+func (relay *relay) subscriptions(t *testing.T) map[string]int {
+	t.Helper()
+	relay.mu.Lock()
+	if len(relay.sessions) == 0 {
+		relay.mu.Unlock()
+		t.Fatal("no connection went through the relay")
+	}
+	latest := relay.sessions[len(relay.sessions)-1]
+	relay.mu.Unlock()
+	filters := map[uint16][]string{}
+	for _, packet := range latest.toBroker.all() {
+		if kind, body := packetBody(packet); kind == packetSubscribe {
+			var asked []string
+			for rest := afterProperties(body); len(rest) >= 2; {
+				length := int(binary.BigEndian.Uint16(rest))
+				asked = append(asked, string(rest[2:2+length]))
+				rest = rest[2+length+1:]
+			}
+			filters[binary.BigEndian.Uint16(body)] = asked
+		}
+	}
+	answered := map[string]int{}
+	for _, packet := range latest.toAgent.all() {
+		if kind, body := packetBody(packet); kind == packetSuback {
+			codes := afterProperties(body)
+			for index, filter := range filters[binary.BigEndian.Uint16(body)] {
+				if index < len(codes) {
+					answered[filter] = int(codes[index])
+				}
+			}
+		}
+	}
+	return answered
+}
+
+// A tx on a broadcast group's topic reaches every device in the group, at each
+// scope, and no other: each writes it to its port and answers on its own
+// status topic. The keepalive lists every topic that reaches each device with
+// the broker's answer, and those are the topic filters and reason codes that
+// went over the wire (#35 Q3a).
+//
+// It needs the group permissions in dev/rabbitmq/definitions.json: a broker
+// started before them refuses the station's project and site group topics.
+// make broker-down broker-up loads them.
+func TestBroadcastGroupTxReachesEveryDeviceInTheGroup(t *testing.T) {
+	run := newRun(t)
+	second := run.device + "-b"
+	secondMaster, secondSlave := newPTY(t)
+	run.observe(t, "skuhus/acme/vasby/pack-03/"+second+"/+")
+	group := "e2e-" + run.id
+	topics := map[string]string{
+		"project": "skuhus/acme/group/" + group + "/tx",
+		"site":    "skuhus/acme/vasby/group/" + group + "/tx",
+		"station": "skuhus/acme/vasby/pack-03/group/" + group + "/tx",
+	}
+	agent := run.startWith(t,
+		deviceConfig(run.device, run.slave, fmt.Sprintf("    broadcast_groups: { project: [%s], site: [%s] }\n", group, group))+
+			deviceConfig(second, secondSlave, fmt.Sprintf("    broadcast_groups: { site: [%s], station: [%s] }\n", group, group)))
+	for _, device := range []string{run.device, second} {
+		run.waitFor(t, device+"'s port_opened", func(received message) bool { return received.isEvent(device, "port_opened") })
+	}
+
+	keepalive := run.waitFor(t, "a keepalive with every tx topic answered", func(received message) bool {
+		devices, _ := received.body["devices"].([]any)
+		if received.str("kind") != "keepalive" || len(devices) != 2 {
+			return false
+		}
+		for _, entry := range devices {
+			txTopics, _ := entry.(map[string]any)["tx_topics"].([]any)
+			for _, txTopic := range txTopics {
+				if txTopic.(map[string]any)["suback"] == nil {
+					return false
+				}
+			}
+		}
+		return true
+	})
+	want := map[string][]string{
+		run.device: {"skuhus/acme/vasby/pack-03/" + run.device + "/tx device", topics["project"] + " project " + group, topics["site"] + " site " + group},
+		second:     {"skuhus/acme/vasby/pack-03/" + second + "/tx device", topics["site"] + " site " + group, topics["station"] + " station " + group},
+	}
+	reported := map[string]int{}
+	for _, entry := range keepalive.body["devices"].([]any) {
+		device := entry.(map[string]any)
+		var listed []string
+		for _, value := range device["tx_topics"].([]any) {
+			txTopic := value.(map[string]any)
+			line := fmt.Sprintf("%s %s", txTopic["topic"], txTopic["scope"])
+			if txTopic["group"] != nil {
+				line += fmt.Sprintf(" %s", txTopic["group"])
+			}
+			listed = append(listed, line)
+			reported[txTopic["topic"].(string)] = int(txTopic["suback"].(float64))
+		}
+		if id := device["device_id"].(string); strings.Join(listed, "\n") != strings.Join(want[id], "\n") {
+			t.Errorf("%s tx_topics:\n  %s\nwant\n  %s", id, strings.Join(listed, "\n  "), strings.Join(want[id], "\n  "))
+		}
+	}
+	onTheWire := run.relay.subscriptions(t)
+	if fmt.Sprint(reported) != fmt.Sprint(onTheWire) || len(onTheWire) != 5 {
+		t.Errorf("the keepalive reports %v; the agent subscribed, and the broker answered, %v", reported, onTheWire)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	expiry := uint32(30)
+	sent := map[string][]byte{}
+	ids := map[string]string{
+		"site":    "1c9e7a52-3b4d-4f60-8a71-92b3c4d5e6f7",
+		"project": "2d0f8b63-4c5e-4a71-9b82-a3c4d5e6f708",
+		"station": "3e1a9c74-5d6f-4b82-8c93-b4d5e6f70819",
+	}
+	for _, scope := range []string{"site", "project", "station"} {
+		sent[scope] = []byte("\x05" + scope + " " + run.id + "\n")
+		payload, _ := json.Marshal(map[string]any{"schema": 2, "id": ids[scope], "sender": "e2e", "raw_b64": base64.StdEncoding.EncodeToString(sent[scope])})
+		if _, err := run.observer.Publish(ctx, &paho.Publish{Topic: topics[scope], QoS: 1, Payload: payload,
+			Properties: &paho.PublishProperties{MessageExpiry: &expiry}}); err != nil {
+			t.Fatalf("publish the %s group's tx: %v", scope, err)
+		}
+	}
+
+	for device, scopes := range map[string][]string{run.device: {"site", "project"}, second: {"site", "station"}} {
+		master := run.master
+		if device == second {
+			master = secondMaster
+		}
+		var expected []byte
+		for _, scope := range scopes {
+			expected = append(expected, sent[scope]...)
+		}
+		if got := readExactly(t, master, len(expected), 10*time.Second); !bytes.Equal(got, expected) {
+			t.Errorf("%s's port got %q, want %q", device, got, expected)
+		}
+		if more := readFor(t, master, time.Second); len(more) > 0 {
+			t.Errorf("%s's port got %q more, from a group it is not in", device, more)
+		}
+		for _, scope := range scopes {
+			results := run.waitForCount(t, device+"'s results for the "+scope+" group's tx", 2, func(received message) bool {
+				return received.topic == "skuhus/acme/vasby/pack-03/"+device+"/status" && received.str("tx_id") == ids[scope]
+			})
+			if results[0].str("state") != "accepted" || results[1].str("state") != "written" {
+				t.Errorf("%s's results for the %s group's tx = %s, %s; want accepted, then written", device, scope,
+					results[0].str("state"), results[1].str("state"))
+			}
+		}
+	}
+
+	agent.signal(t, syscall.SIGTERM)
+	if code := agent.wait(t, 15*time.Second); code != 0 {
+		t.Errorf("the agent exited %d on SIGTERM, want 0", code)
+	}
+	if fanned := agent.records(t, "tx on a broadcast group's topic; each device in the group takes it"); len(fanned) != 3 {
+		t.Errorf("%d fan-out records in the log, want one for each group's tx", len(fanned))
+	}
 }
