@@ -477,19 +477,28 @@ Depends on: T3 to T11.
 
 ### T13. Release 2.0.0
 
-2.0.0 releases reading and writing together (maintainer, 2026-10-04), so this
-task comes after phase 2.
+2.0.0 releases reading and writing together (maintainer, 2026-10-04). Phase 2
+merged to master in #31, so this task's pull request carries the release alone.
 
 Work.
-- Set the version constant to 2.0.0 in the pull request that completes phase 2.
-- The release pushes the image to GHCR, as decided; check that it does, under
-  the new name.
-- Check that the release assets carry the new binary name.
+- Set the version constant to 2.0.0, with the sentence in DESIGN-V2.md,
+  "Version: 2.0.0, and 1.0.0 is never used", that names the constant.
+- Before the merge, run the release workflow's build step locally and check
+  what it makes: six tarballs and six bare binaries named
+  `skuhus-device-agent-2.0.0-<os>-<arch>`, each tarball holding the binary,
+  config.sample.yaml, README.md and LICENSE, and checksums.txt over the twelve.
+- After the merge, check the release: the tag v2.0.0 on the merge commit, the
+  twelve assets and checksums.txt, a downloaded binary that matches
+  checksums.txt and reports 2.0.0, and the image
+  `ghcr.io/skuhus/skuhus-device-agent` at 2.0.0 and latest on GHCR, reporting
+  2.0.0. The release pushes the image to GHCR, as decided.
+- What the release notes say to a 0.3.0 station, and who can pull the image,
+  are open: #18 Q1 and Q2.
 
 Intended result. The merge creates tag v2.0.0 and a release with six tarballs,
 six bare binaries and checksums.txt, and the image appears on GHCR.
 
-Depends on: T2 to T12, T14, T16.
+Depends on: T2 to T12, T14, T16, all merged in #31.
 
 ## Phase 2: writing
 
