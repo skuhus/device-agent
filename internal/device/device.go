@@ -11,6 +11,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"github.com/skuhus/device-agent/internal/wire"
 )
 
 // Direction says which way data flows for a device kind. Scanners are Inbound.
@@ -48,11 +50,11 @@ type Event struct {
 	Kind     EventKind
 	At       time.Time
 	// ErrorClass and Err say why, for PortLost and PortOpenFailed.
-	ErrorClass string
+	ErrorClass wire.ErrorClass
 	Err        error
-	// Reason says what was thrown away, for BytesDiscarded. Bytes is how many
-	// bytes were thrown away, for BytesDiscarded, or read, for BytesRead.
-	Reason string
+	// Reason says why bytes were thrown away, for BytesDiscarded. Bytes is how
+	// many bytes were thrown away, for BytesDiscarded, or read, for BytesRead.
+	Reason wire.DiscardReason
 	Bytes  int
 }
 
@@ -111,7 +113,7 @@ type Writer interface {
 // PortError is a failure of the port, with the class the reader gives the
 // same failure in its events.
 type PortError struct {
-	Class string
+	Class wire.ErrorClass
 	Err   error
 }
 

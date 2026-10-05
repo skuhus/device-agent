@@ -448,8 +448,7 @@ func (core *Core) payloadIf(data []byte) []any {
 func classOf(err error) (wire.ErrorClass, string) {
 	var portErr *device.PortError
 	if errors.As(err, &portErr) {
-		class, _ := errorClass(portErr.Class)
-		return class, err.Error()
+		return portErr.Class, err.Error()
 	}
 	return wire.ErrorUnknown, err.Error()
 }

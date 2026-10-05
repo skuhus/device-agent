@@ -229,7 +229,7 @@ func (dev *Device) Run(ctx context.Context, sink chan<- device.Frame, report fun
 		retry++
 		wait := policy.Wait(retry)
 		dev.log.Warn("device unavailable, reopening after backoff",
-			"error", errText(err), "error_class", classify(err),
+			"error", err.Error(), "error_class", string(classify(err)),
 			"backoff", wait.String(), "retry", retry, "session_worked", worked,
 			"session_duration", lasted.String(), "stable_after", stableAfter.String())
 
@@ -249,7 +249,7 @@ func (dev *Device) Run(ctx context.Context, sink chan<- device.Frame, report fun
 func (dev *Device) session(ctx context.Context, sink chan<- device.Frame, report func(device.Event)) (worked bool, err error) {
 	port, err := dev.open(dev.opts.Path, dev.mode)
 	if err != nil {
-		dev.log.Debug("device open failed", "error", err.Error(), "error_class", classify(err))
+		dev.log.Debug("device open failed", "error", err.Error(), "error_class", string(classify(err)))
 		report(dev.event(device.PortOpenFailed, func(event *device.Event) {
 			event.ErrorClass, event.Err = classify(err), err
 		}))
@@ -496,14 +496,14 @@ func (dev *Device) logModemStatus(port goserial.Port) {
 // each can be counted.
 func (dev *Device) logDiscard(discard Discard, report func(device.Event)) {
 	report(dev.event(device.BytesDiscarded, func(event *device.Event) {
-		event.Reason, event.Bytes = string(discard.Reason), discard.Bytes
+		event.Reason, event.Bytes = discard.Reason, discard.Bytes
 	}))
 	attrs := []any{"reason", string(discard.Reason), "bytes", discard.Bytes}
 	if dev.opts.LogPayloads && len(discard.Data) > 0 {
 		attrs = append(attrs, logging.Payload(discard.Data)...)
 	}
 	switch discard.Reason {
-	case DiscardOversize, DiscardTimeout:
+	case wire.DiscardOversize, wire.DiscardInterCharTimeout:
 		dev.log.Warn("discarded partial frame", attrs...)
 	default:
 		dev.log.Debug("discarded bytes", attrs...)
@@ -520,27 +520,25 @@ func (dev *Device) event(kind device.EventKind, fill func(*device.Event)) device
 	return event
 }
 
-// classify names the failure so a log reader can tell a missing device from a
-// permissions problem from a device that was pulled out mid-read. The names are
-// internal/wire's error classes, which every event and keepalive carries.
-func classify(err error) string {
-	if err == nil {
-		return "none"
-	}
+// classify names a failure, err, so that a log reader can tell a missing
+// device from a permissions problem from a device that was pulled out
+// mid-read. The names are internal/wire's error classes, which every event
+// and keepalive carries.
+func classify(err error) wire.ErrorClass {
 	switch {
 	case errors.Is(err, syscall.EIO), errors.Is(err, syscall.ENODEV), errors.Is(err, syscall.ENXIO):
-		return string(wire.ErrorDisconnected)
+		return wire.ErrorDisconnected
 	case errors.Is(err, syscall.ENOENT):
-		return string(wire.ErrorAbsent)
+		return wire.ErrorAbsent
 	case errors.Is(err, syscall.EACCES), errors.Is(err, syscall.EPERM):
-		return string(wire.ErrorPermissionDenied)
+		return wire.ErrorPermissionDenied
 	case errors.Is(err, syscall.EROFS):
 		// Seen when a device node is bind-mounted read-only into a container.
 		// The port is opened read-write because a scanner may need commands
 		// sent to it, so a read-only mount fails at open.
-		return string(wire.ErrorReadOnly)
+		return wire.ErrorReadOnly
 	case errors.Is(err, syscall.EBUSY):
-		return string(wire.ErrorBusy)
+		return wire.ErrorBusy
 	}
 	var pe *goserial.PortError
 	if errors.As(err, &pe) {
@@ -548,23 +546,16 @@ func classify(err error) string {
 		case goserial.PortClosed:
 			// The library also returns this when a read finds the port in the
 			// zero-length-readable state a disconnect leaves behind.
-			return string(wire.ErrorDisconnected)
+			return wire.ErrorDisconnected
 		case goserial.PortNotFound:
-			return string(wire.ErrorAbsent)
+			return wire.ErrorAbsent
 		case goserial.PermissionDenied:
-			return string(wire.ErrorPermissionDenied)
+			return wire.ErrorPermissionDenied
 		case goserial.PortBusy:
-			return string(wire.ErrorBusy)
+			return wire.ErrorBusy
 		default:
-			return string(wire.ErrorPortError)
+			return wire.ErrorPortError
 		}
 	}
-	return string(wire.ErrorUnknown)
-}
-
-func errText(err error) string {
-	if err == nil {
-		return ""
-	}
-	return err.Error()
+	return wire.ErrorUnknown
 }

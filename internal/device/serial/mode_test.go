@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/skuhus/device-agent/internal/logging/logtest"
+	"github.com/skuhus/device-agent/internal/wire"
 	goserial "go.bug.st/serial"
 )
 
@@ -207,9 +208,8 @@ func TestClassify(t *testing.T) {
 	tests := []struct {
 		name string
 		err  error
-		want string
+		want wire.ErrorClass
 	}{
-		{"nil", nil, "none"},
 		{"unplugged mid-read", syscall.EIO, "disconnected"},
 		{"node gone", syscall.ENODEV, "disconnected"},
 		{"never appeared", syscall.ENOENT, "absent"},

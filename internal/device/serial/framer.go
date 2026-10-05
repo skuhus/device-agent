@@ -4,27 +4,13 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-)
 
-// DiscardReason says why a run of bytes was thrown away.
-type DiscardReason string
-
-const (
-	// DiscardOversize means max_frame_bytes was reached with no terminator.
-	DiscardOversize DiscardReason = "oversize"
-	// DiscardTimeout means the inter-character timeout expired with a partial
-	// frame buffered.
-	DiscardTimeout DiscardReason = "inter_char_timeout"
-	// DiscardResync means bytes were dropped while recovering to the next
-	// terminator after an earlier discard.
-	DiscardResync DiscardReason = "resync"
-	// DiscardEmpty means two terminators arrived back to back.
-	DiscardEmpty DiscardReason = "empty_frame"
+	"github.com/skuhus/device-agent/internal/wire"
 )
 
 // Discard reports bytes that did not become a frame.
 type Discard struct {
-	Reason DiscardReason
+	Reason wire.DiscardReason
 	Bytes  int
 	// Data holds the discarded bytes when the framer still had them, which is
 	// the case for oversize and timeout discards. Whether it reaches a log is
@@ -86,10 +72,10 @@ func (framer *Framer) Append(src []byte) ([][]byte, []Discard) {
 		switch {
 		case framer.dropping:
 			framer.dropped += i + len(framer.term)
-			discards = append(discards, Discard{Reason: DiscardResync, Bytes: framer.dropped})
+			discards = append(discards, Discard{Reason: wire.DiscardResync, Bytes: framer.dropped})
 			framer.dropping, framer.dropped = false, 0
 		case i == 0:
-			discards = append(discards, Discard{Reason: DiscardEmpty, Bytes: len(framer.term)})
+			discards = append(discards, Discard{Reason: wire.DiscardEmptyFrame, Bytes: len(framer.term)})
 		case i > framer.maxFrame:
 			// The terminator arrived in the same read that took the payload
 			// past the limit. The frame is over size and is dropped here; no
@@ -97,7 +83,7 @@ func (framer *Framer) Append(src []byte) ([][]byte, []Discard) {
 			// consumed and the next byte starts a fresh frame. A scanner sends
 			// a scan and its separator in one read, so this is where its
 			// oversize scans land, and the data goes with the discard.
-			discards = append(discards, Discard{Reason: DiscardOversize, Bytes: i, Data: bytes.Clone(framer.buf[:i])})
+			discards = append(discards, Discard{Reason: wire.DiscardOversize, Bytes: i, Data: bytes.Clone(framer.buf[:i])})
 		default:
 			frames = append(frames, bytes.Clone(framer.buf[:i]))
 		}
@@ -116,7 +102,7 @@ func (framer *Framer) Append(src []byte) ([][]byte, []Discard) {
 		data := bytes.Clone(framer.buf)
 		framer.dropping = true
 		framer.dropped = framer.trimTo(framer.carry())
-		discards = append(discards, Discard{Reason: DiscardOversize, Bytes: pending, Data: data})
+		discards = append(discards, Discard{Reason: wire.DiscardOversize, Bytes: pending, Data: data})
 	}
 
 	return frames, discards
@@ -135,7 +121,7 @@ func (framer *Framer) Timeout() (Discard, bool) {
 		if consumed == 0 {
 			return Discard{}, false
 		}
-		return Discard{Reason: DiscardResync, Bytes: consumed}, true
+		return Discard{Reason: wire.DiscardResync, Bytes: consumed}, true
 	}
 	if len(framer.buf) == 0 {
 		return Discard{}, false
@@ -144,7 +130,7 @@ func (framer *Framer) Timeout() (Discard, bool) {
 	data := bytes.Clone(framer.buf)
 	framer.buf = framer.buf[:0]
 	framer.dropping, framer.dropped = true, 0
-	return Discard{Reason: DiscardTimeout, Bytes: consumed, Data: data}, true
+	return Discard{Reason: wire.DiscardInterCharTimeout, Bytes: consumed, Data: data}, true
 }
 
 // Pending is the number of buffered bytes not yet part of a frame.

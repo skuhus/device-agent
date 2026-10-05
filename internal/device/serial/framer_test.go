@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/skuhus/device-agent/internal/wire"
 )
 
 // feed drives the framer with a sequence of reads and collects everything it
@@ -42,7 +44,7 @@ func wantFrames(t *testing.T, got [][]byte, want ...string) {
 	}
 }
 
-func wantDiscards(t *testing.T, got []Discard, want ...DiscardReason) {
+func wantDiscards(t *testing.T, got []Discard, want ...wire.DiscardReason) {
 	t.Helper()
 	if len(got) != len(want) {
 		t.Fatalf("got %d discards %v, want %d %v", len(got), got, len(want), want)
@@ -111,7 +113,7 @@ func TestFramerEmptyFrameIsDiscarded(t *testing.T) {
 	framer := newFramer(t, "\r", 4096)
 	frames, discards := feed(t, framer, "AAA\r\r\rBBB\r")
 	wantFrames(t, frames, "AAA", "BBB")
-	wantDiscards(t, discards, DiscardEmpty, DiscardEmpty)
+	wantDiscards(t, discards, wire.DiscardEmptyFrame, wire.DiscardEmptyFrame)
 }
 
 // GS1-128 payloads carry 0x1D group separators. They must survive framing as
@@ -145,7 +147,7 @@ func TestFramerOversizeFrameWithTerminatorInSameRead(t *testing.T) {
 	framer := newFramer(t, "\r", 8)
 	frames, discards := feed(t, framer, strings.Repeat("X", 20)+"\rGOOD\r")
 	wantFrames(t, frames, "GOOD")
-	wantDiscards(t, discards, DiscardOversize)
+	wantDiscards(t, discards, wire.DiscardOversize)
 	if discards[0].Bytes != 20 {
 		t.Errorf("oversize discard reported %d bytes, want 20", discards[0].Bytes)
 	}
@@ -157,7 +159,7 @@ func TestFramerOversizeResyncsToNextTerminator(t *testing.T) {
 	framer := newFramer(t, "\r", 8)
 	frames, discards := feed(t, framer, strings.Repeat("X", 20), "TAIL\r", "GOOD\r")
 	wantFrames(t, frames, "GOOD")
-	wantDiscards(t, discards, DiscardOversize, DiscardResync)
+	wantDiscards(t, discards, wire.DiscardOversize, wire.DiscardResync)
 }
 
 // A terminator split across two reads must still end the resynchronisation.
@@ -165,7 +167,7 @@ func TestFramerResyncFindsSplitTerminator(t *testing.T) {
 	framer := newFramer(t, "\r\n", 8)
 	frames, discards := feed(t, framer, strings.Repeat("X", 30), "TAIL\r", "\nGOOD\r\n")
 	wantFrames(t, frames, "GOOD")
-	wantDiscards(t, discards, DiscardOversize, DiscardResync)
+	wantDiscards(t, discards, wire.DiscardOversize, wire.DiscardResync)
 }
 
 // A payload of exactly max_frame_bytes is legal, including when only part of
@@ -184,7 +186,7 @@ func TestFramerRejectsOneByteOverMaxFrameBytes(t *testing.T) {
 	framer := newFramer(t, "\r", 8)
 	frames, discards := feed(t, framer, "123456789\r")
 	wantFrames(t, frames)
-	wantDiscards(t, discards, DiscardOversize)
+	wantDiscards(t, discards, wire.DiscardOversize)
 }
 
 // A device that sends without ever terminating must not grow the buffer.
@@ -209,7 +211,7 @@ func TestFramerTimeoutDiscardsPartialFrame(t *testing.T) {
 	if !ok {
 		t.Fatal("Timeout() reported nothing to discard")
 	}
-	if discard.Reason != DiscardTimeout || discard.Bytes != 7 {
+	if discard.Reason != wire.DiscardInterCharTimeout || discard.Bytes != 7 {
 		t.Errorf("discard = %v, want inter_char_timeout (7 bytes)", discard)
 	}
 	if framer.Pending() != 0 {
@@ -238,7 +240,7 @@ func TestFramerTimeoutResyncsBeforeNextFrame(t *testing.T) {
 	}
 	frames, discards := feed(t, framer, "IAL\r", "GOOD\r")
 	wantFrames(t, frames, "GOOD")
-	wantDiscards(t, discards, DiscardResync)
+	wantDiscards(t, discards, wire.DiscardResync)
 }
 
 // A second timeout means the device has fallen silent, so the burst that
@@ -316,7 +318,7 @@ func TestFramerDiscardCarriesTheDiscardedBytes(t *testing.T) {
 	t.Run("oversize", func(t *testing.T) {
 		framer := newFramer(t, "\r", 8)
 		_, discards := feed(t, framer, strings.Repeat("X", 20))
-		if len(discards) != 1 || discards[0].Reason != DiscardOversize {
+		if len(discards) != 1 || discards[0].Reason != wire.DiscardOversize {
 			t.Fatalf("discards = %v, want one oversize", discards)
 		}
 		if string(discards[0].Data) != strings.Repeat("X", 20) {
@@ -330,7 +332,7 @@ func TestFramerDiscardCarriesTheDiscardedBytes(t *testing.T) {
 	t.Run("oversize, its separator in the same read", func(t *testing.T) {
 		framer := newFramer(t, "\r\n", 10)
 		_, discards := feed(t, framer, "P00TKME1FNEG6DGXZCWWXQUL4CCJ6996JVV\r\n")
-		if len(discards) != 1 || discards[0].Reason != DiscardOversize {
+		if len(discards) != 1 || discards[0].Reason != wire.DiscardOversize {
 			t.Fatalf("discards = %v, want one oversize", discards)
 		}
 		if string(discards[0].Data) != "P00TKME1FNEG6DGXZCWWXQUL4CCJ6996JVV" {

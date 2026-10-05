@@ -433,6 +433,18 @@ func rxAttrs(rx wire.Rx, frame []byte, outcome string, withData bool) []any {
 // drops its oldest event, which is logged, and the keepalive has counted it
 // either way.
 func (core *Core) report(line *pipeline, event device.Event) {
+	// A class or reason the wire does not define is a bug in a reader. It is
+	// logged once, here; a class is then treated as unknown everywhere, and a
+	// reason is published as it came but has no counter.
+	if event.ErrorClass != "" && !event.ErrorClass.Known() {
+		core.log.Error("port event carries an error class the keepalive has no counter for; counted as unknown",
+			eventAttrs(event)...)
+		event.ErrorClass = wire.ErrorUnknown
+	}
+	if event.Kind == device.BytesDiscarded && !event.Reason.Known() {
+		core.log.Error("port event carries a discard reason the keepalive has no counter for; not counted",
+			eventAttrs(event)...)
+	}
 	core.count(line, event)
 	if event.Kind == device.BytesRead {
 		// Counted only. The reader logs every read at DEBUG already.
@@ -459,22 +471,13 @@ func (core *Core) count(line *pipeline, event device.Event) {
 		line.open = false
 	case device.PortLost:
 		line.open = false
-		line.failureClass, _ = errorClass(event.ErrorClass)
-		line.failure = errString(event.Err)
+		line.failureClass, line.failure = event.ErrorClass, errString(event.Err)
 	case device.PortOpenFailed:
 		line.open = false
-		class, known := errorClass(event.ErrorClass)
-		line.failureClass, line.failure = class, errString(event.Err)
-		if !known {
-			core.log.Error("port event carries an error class the keepalive has no counter for; counted as unknown",
-				eventAttrs(event)...)
-		}
-		countFailedOpen(&line.counters.FailedOpens, class)
+		line.failureClass, line.failure = event.ErrorClass, errString(event.Err)
+		line.counters.FailedOpens.Add(event.ErrorClass)
 	case device.BytesDiscarded:
-		if !countDiscard(&line.counters.Discards, wire.DiscardReason(event.Reason)) {
-			core.log.Error("port event carries a discard reason the keepalive has no counter for; not counted",
-				eventAttrs(event)...)
-		}
+		line.counters.Discards.Add(event.Reason)
 	case device.BytesRead:
 		line.counters.RxBytes += uint64(event.Bytes)
 	}
@@ -624,13 +627,11 @@ func (core *Core) buildEvent(line *pipeline, event device.Event) (wire.Event, bo
 	case device.PortClosed:
 		return builder.PortClosed(dev, path, at), true
 	case device.PortLost:
-		class, _ := errorClass(event.ErrorClass)
-		return builder.PortLost(dev, path, class, errString(event.Err), at), true
+		return builder.PortLost(dev, path, event.ErrorClass, errString(event.Err), at), true
 	case device.PortOpenFailed:
-		class, _ := errorClass(event.ErrorClass)
-		return builder.PortOpenFailed(dev, path, class, errString(event.Err), at), true
+		return builder.PortOpenFailed(dev, path, event.ErrorClass, errString(event.Err), at), true
 	case device.BytesDiscarded:
-		return builder.BytesDiscarded(dev, wire.DiscardReason(event.Reason), event.Bytes, at), true
+		return builder.BytesDiscarded(dev, event.Reason, event.Bytes, at), true
 	}
 	core.log.Error("port event of a kind with no message; not published", eventAttrs(event)...)
 	return wire.Event{}, false
@@ -827,62 +828,17 @@ func (queue *eventQueue) signal() {
 
 // errorClass maps a reader's error class to the wire's. A class the wire does
 // not define is reported as unknown, and false says so.
-func errorClass(class string) (wire.ErrorClass, bool) {
-	switch known := wire.ErrorClass(class); known {
-	case wire.ErrorAbsent, wire.ErrorBusy, wire.ErrorPermissionDenied, wire.ErrorReadOnly,
-		wire.ErrorDisconnected, wire.ErrorPortError, wire.ErrorUnknown:
-		return known, true
-	}
-	return wire.ErrorUnknown, false
-}
-
-func countFailedOpen(counts *wire.OpenFailureCounts, class wire.ErrorClass) {
-	switch class {
-	case wire.ErrorAbsent:
-		counts.Absent++
-	case wire.ErrorBusy:
-		counts.Busy++
-	case wire.ErrorPermissionDenied:
-		counts.PermissionDenied++
-	case wire.ErrorReadOnly:
-		counts.ReadOnly++
-	case wire.ErrorDisconnected:
-		counts.Disconnected++
-	case wire.ErrorPortError:
-		counts.PortError++
-	default:
-		counts.Unknown++
-	}
-}
-
-// countDiscard reports false for a reason with no counter.
-func countDiscard(counts *wire.DiscardCounts, reason wire.DiscardReason) bool {
-	switch reason {
-	case wire.DiscardOversize:
-		counts.Oversize++
-	case wire.DiscardInterCharTimeout:
-		counts.InterCharTimeout++
-	case wire.DiscardResync:
-		counts.Resync++
-	case wire.DiscardEmptyFrame:
-		counts.EmptyFrame++
-	default:
-		return false
-	}
-	return true
-}
-
 // eventAttrs are a port event's log attributes.
 func eventAttrs(event device.Event) []any {
 	attrs := []any{"device_id", event.DeviceID, "event", string(event.Kind), "at", event.At.UTC().Format(wire.TimeFormat)}
 	if event.ErrorClass != "" {
-		attrs = append(attrs, "error_class", event.ErrorClass)
+		attrs = append(attrs, "error_class", string(event.ErrorClass))
 	}
 	if event.Err != nil {
 		attrs = append(attrs, "error", event.Err.Error())
 	}
 	if event.Kind == device.BytesDiscarded {
-		attrs = append(attrs, "reason", event.Reason, "bytes", event.Bytes)
+		attrs = append(attrs, "reason", string(event.Reason), "bytes", event.Bytes)
 	}
 	return attrs
 }

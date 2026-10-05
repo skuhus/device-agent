@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"time"
 	"unicode/utf8"
 
@@ -121,17 +122,36 @@ const (
 	ErrorUnknown          ErrorClass = "unknown"
 )
 
-// DiscardReason says why the framer threw bytes away, in the framer's own
-// names (internal/device/serial/framer.go).
+// ErrorClasses is every error class, each with its counter in failed_opens.
+var ErrorClasses = []ErrorClass{ErrorAbsent, ErrorBusy, ErrorPermissionDenied, ErrorReadOnly,
+	ErrorDisconnected, ErrorPortError, ErrorUnknown}
+
+// Known reports whether class is one of ErrorClasses.
+func (class ErrorClass) Known() bool { return slices.Contains(ErrorClasses, class) }
+
+// DiscardReason says why the framer threw bytes away
+// (internal/device/serial/framer.go).
 type DiscardReason string
 
 // Discard reasons.
 const (
-	DiscardOversize         DiscardReason = "oversize"
+	// DiscardOversize means max_frame_bytes was reached with no separator.
+	DiscardOversize DiscardReason = "oversize"
+	// DiscardInterCharTimeout means the inter-character timeout expired with
+	// a partial frame buffered.
 	DiscardInterCharTimeout DiscardReason = "inter_char_timeout"
-	DiscardResync           DiscardReason = "resync"
-	DiscardEmptyFrame       DiscardReason = "empty_frame"
+	// DiscardResync means bytes were dropped while recovering to the next
+	// separator after an earlier discard.
+	DiscardResync DiscardReason = "resync"
+	// DiscardEmptyFrame means two separators arrived back to back.
+	DiscardEmptyFrame DiscardReason = "empty_frame"
 )
+
+// DiscardReasons is every discard reason, each with its counter in discards.
+var DiscardReasons = []DiscardReason{DiscardOversize, DiscardInterCharTimeout, DiscardResync, DiscardEmptyFrame}
+
+// Known reports whether reason is one of DiscardReasons.
+func (reason DiscardReason) Known() bool { return slices.Contains(DiscardReasons, reason) }
 
 // Event is something that happened to a device, published on the device's
 // status topic.
@@ -329,6 +349,21 @@ type DiscardCounts struct {
 	EmptyFrame       uint64 `json:"empty_frame"`
 }
 
+// Add counts one discard. A reason that is not one of DiscardReasons has no
+// counter and is not counted.
+func (counts *DiscardCounts) Add(reason DiscardReason) {
+	switch reason {
+	case DiscardOversize:
+		counts.Oversize++
+	case DiscardInterCharTimeout:
+		counts.InterCharTimeout++
+	case DiscardResync:
+		counts.Resync++
+	case DiscardEmptyFrame:
+		counts.EmptyFrame++
+	}
+}
+
 // OpenFailureCounts has one counter per error class, every key always present.
 type OpenFailureCounts struct {
 	Absent           uint64 `json:"absent"`
@@ -338,6 +373,27 @@ type OpenFailureCounts struct {
 	Disconnected     uint64 `json:"disconnected"`
 	PortError        uint64 `json:"port_error"`
 	Unknown          uint64 `json:"unknown"`
+}
+
+// Add counts one failed open. A class that is not one of ErrorClasses is
+// counted as unknown.
+func (counts *OpenFailureCounts) Add(class ErrorClass) {
+	switch class {
+	case ErrorAbsent:
+		counts.Absent++
+	case ErrorBusy:
+		counts.Busy++
+	case ErrorPermissionDenied:
+		counts.PermissionDenied++
+	case ErrorReadOnly:
+		counts.ReadOnly++
+	case ErrorDisconnected:
+		counts.Disconnected++
+	case ErrorPortError:
+		counts.PortError++
+	default:
+		counts.Unknown++
+	}
 }
 
 // DeviceCounters are one device's counters since the process started, as

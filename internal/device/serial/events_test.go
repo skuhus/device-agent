@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/skuhus/device-agent/internal/device"
+	"github.com/skuhus/device-agent/internal/wire"
 	goserial "go.bug.st/serial"
 )
 
@@ -175,15 +176,15 @@ func TestReportsEveryDiscard(t *testing.T) {
 
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		reasons := map[string]int{}
+		reasons := map[wire.DiscardReason]int{}
 		for _, event := range recorder.snapshot() {
 			if event.Kind == device.BytesDiscarded {
 				reasons[event.Reason] = event.Bytes
 			}
 		}
-		if reasons["oversize"] > 0 && reasons["inter_char_timeout"] > 0 {
-			if reasons["inter_char_timeout"] != len("PARTIAL") {
-				t.Errorf("timeout discard of %d bytes, want %d", reasons["inter_char_timeout"], len("PARTIAL"))
+		if reasons[wire.DiscardOversize] > 0 && reasons[wire.DiscardInterCharTimeout] > 0 {
+			if reasons[wire.DiscardInterCharTimeout] != len("PARTIAL") {
+				t.Errorf("timeout discard of %d bytes, want %d", reasons[wire.DiscardInterCharTimeout], len("PARTIAL"))
 			}
 			return
 		}
@@ -191,7 +192,7 @@ func TestReportsEveryDiscard(t *testing.T) {
 	}
 	var seen []string
 	for _, event := range recorder.snapshot() {
-		seen = append(seen, string(event.Kind)+":"+event.Reason)
+		seen = append(seen, string(event.Kind)+":"+string(event.Reason))
 	}
 	t.Errorf("events = %s, want an oversize and an inter_char_timeout discard", strings.Join(seen, " "))
 }

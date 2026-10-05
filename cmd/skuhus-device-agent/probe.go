@@ -202,7 +202,7 @@ type presenceLog struct {
 	log     *slog.Logger
 	known   bool
 	present bool
-	class   string
+	class   wire.ErrorClass
 }
 
 func (presence *presenceLog) report(event device.Event) {
@@ -223,7 +223,7 @@ func (presence *presenceLog) set(present bool, event device.Event) {
 		presence.log.Info("device present")
 		return
 	}
-	presence.log.Warn("device absent", "error_class", event.ErrorClass, "error", errString(event.Err))
+	presence.log.Warn("device absent", "error_class", string(event.ErrorClass), "error", errString(event.Err))
 }
 
 func printRx(w io.Writer, rx wire.Rx, raw []byte, asJSON bool) error {

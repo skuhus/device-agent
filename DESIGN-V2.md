@@ -533,10 +533,12 @@ On `<device>/status`, with `kind` `event`.
 The list is a minimum (#23 Q8); codes are added, never renamed. `error_class` is
 one of `absent`, `busy`, `permission_denied`, `read_only`, `disconnected`,
 `port_error` and `unknown`, the classes v1 assigns
-(internal/device/serial/serial.go, classify). `error` is the operating system's
-message. `reason` is one of `oversize`, `inter_char_timeout`, `resync` and
-`empty_frame`, the framer's names (internal/device/serial/framer.go), and
-`bytes` is how many bytes were discarded.
+(internal/device/serial/serial.go, classify; internal/wire/messages.go,
+ErrorClasses). `error` is the operating system's message. `reason` is one of
+`oversize`, `inter_char_timeout`, `resync` and `empty_frame`, the reasons the
+framer gives (internal/wire/messages.go, DiscardReasons), and `bytes` is how
+many bytes were discarded. Each class and each reason has its counter in the
+keepalive, under the same name.
 
 `[Decided]` `port_open_failed` is published on every attempt to open the port,
 which keeps the rule simple. Source: maintainer, 2026-09-29 (#11 Q8). A scale

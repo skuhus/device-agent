@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/skuhus/device-agent/internal/device"
-	"github.com/skuhus/device-agent/internal/device/serial"
 	"github.com/skuhus/device-agent/internal/logging/logtest"
 	"github.com/skuhus/device-agent/internal/wire"
 )
@@ -328,32 +327,32 @@ func TestUnknownErrorClassIsCountedAsUnknownAndLogged(t *testing.T) {
 	}
 }
 
-// Every discard reason the serial framer produces, and every error class the
-// wire defines, has a counter of its own. A reason or class that fell through
-// to another's counter would make the unmatched-separator signature unreadable.
-func TestEveryReasonAndClassHasItsOwnCounter(t *testing.T) {
-	var discards wire.DiscardCounts
-	for _, reason := range []serial.DiscardReason{serial.DiscardOversize, serial.DiscardTimeout, serial.DiscardResync, serial.DiscardEmpty} {
-		if !countDiscard(&discards, wire.DiscardReason(reason)) {
-			t.Errorf("framer discard reason %q has no counter", reason)
-		}
+// A discard reason the wire has no counter for is a bug in a reader too. It is
+// logged at ERROR and not counted, and the event is published with the reason
+// it came with, since discards has no unknown counter.
+func TestUnknownDiscardReasonIsLoggedAndNotCounted(t *testing.T) {
+	log, logged := logtest.New(t, "debug")
+	transport := &fakeTransport{}
+	reader := newFakeReader("scanner-main")
+	reader.events = []device.Event{{DeviceID: "scanner-main", Kind: device.BytesDiscarded, Reason: "gremlins", Bytes: 3}}
+	connected := make(chan struct{}, 1)
+	opts := testOptions(t, transport, coreDevice(t, reader, ""))
+	opts.Connected = connected
+	opts.Logger = log
+	runUntil(t, newCore(t, opts), func() {
+		<-reader.sent
+		connected <- struct{}{}
+		waitUntil(t, "a keepalive", func() bool { return transport.calls("keepalive") == 1 })
+	})
+	if got := transport.keepalives()[0].Devices[0].Discards; got != (wire.DiscardCounts{}) {
+		t.Errorf("discards = %+v, want nothing counted", got)
 	}
-	if discards != (wire.DiscardCounts{Oversize: 1, InterCharTimeout: 1, Resync: 1, EmptyFrame: 1}) {
-		t.Errorf("one of each reason counted as %+v, want 1 in every counter", discards)
+	events := transport.eventsOn("skuhus/acme/vasby/pack-03/scanner-main/status")
+	if len(events) != 1 || events[0].Detail["reason"] != "gremlins" {
+		t.Errorf("events = %+v, want one with the reason it came with", events)
 	}
-
-	var opens wire.OpenFailureCounts
-	for _, class := range []wire.ErrorClass{wire.ErrorAbsent, wire.ErrorBusy, wire.ErrorPermissionDenied, wire.ErrorReadOnly,
-		wire.ErrorDisconnected, wire.ErrorPortError, wire.ErrorUnknown} {
-		mapped, known := errorClass(string(class))
-		if !known || mapped != class {
-			t.Errorf("class %q maps to %q (known %v)", class, mapped, known)
-		}
-		countFailedOpen(&opens, mapped)
-	}
-	if opens != (wire.OpenFailureCounts{Absent: 1, Busy: 1, PermissionDenied: 1, ReadOnly: 1, Disconnected: 1, PortError: 1, Unknown: 1}) {
-		t.Errorf("one of each class counted as %+v, want 1 in every counter", opens)
-	}
+	requireRecord(t, logged.WithMessage(t, "port event carries a discard reason the keepalive has no counter for; not counted"),
+		"level", "ERROR", "reason", "gremlins")
 }
 
 // While the broker connection is down, events wait. Once it is up they are
