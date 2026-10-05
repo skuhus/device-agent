@@ -134,6 +134,48 @@ func TestWriteReachesTheOpenPortWhole(t *testing.T) {
 	}
 }
 
+// The port takes writes by the time it is reported open: a tx woken by the
+// report must find it, or it spends one of its attempts for nothing.
+func TestThePortTakesWritesWhenReportedOpen(t *testing.T) {
+	port := newWrittenPort()
+	opts := serialOpts("printer-1", "/dev/fake", "\r\n")
+	opts.Open = func(string, *goserial.Mode) (goserial.Port, error) { return port, nil }
+	dev, err := New(opts)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	writeOnOpen := make(chan error, 1)
+	report := func(event device.Event) {
+		if event.Kind != device.PortOpened {
+			return
+		}
+		_, err := dev.Write(context.Background(), []byte("label"), nil)
+		select {
+		case writeOnOpen <- err:
+		default:
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		_ = dev.Run(ctx, make(chan device.Frame, 8), report)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-stopped
+	})
+
+	select {
+	case err := <-writeOnOpen:
+		if err != nil {
+			t.Errorf("a write as the port was reported open = %v, want it written", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the port was never reported open")
+	}
+}
+
 // A tx chunk of nothing would never write a byte, so New refuses it.
 func TestNewRejectsAnEmptyTxChunk(t *testing.T) {
 	opts := serialOpts("printer-1", "/dev/fake", "\r\n")

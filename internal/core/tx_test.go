@@ -26,10 +26,13 @@ type fakePrinter struct {
 	*fakeReader
 	mu           sync.Mutex
 	opensAtStart bool
-	open         bool
-	writes       [][]byte
-	retries      int
-	report       func(device.Event)
+	// open is whether the port takes writes; announced, whether its opening
+	// has been reported since.
+	open      bool
+	announced bool
+	writes    [][]byte
+	retries   int
+	report    func(device.Event)
 	// openOnRetry opens the port when RetryOpen is called, and reports it.
 	openOnRetry bool
 	// failAfter fails a write once it has written that many bytes, with
@@ -52,23 +55,28 @@ func newFakePrinter(id string, opensAtStart bool) *fakePrinter {
 	return printer
 }
 
-// Run reports the printer's events. Its port takes writes only once its
-// opening has been reported, the order the serial reader keeps
-// (internal/device/serial/serial.go, session): a tx written before the core
-// knew the port was open would be reported written on a closed device.
+// Run reports the printer's events. Its port takes writes before its opening
+// is reported, the order the serial reader keeps
+// (internal/device/serial/serial.go, session), so that a tx woken by the
+// report finds the port.
 func (printer *fakePrinter) Run(ctx context.Context, sink chan<- device.Frame, report func(device.Event)) error {
-	reportThenOpen := func(event device.Event) {
-		report(event)
+	openThenReport := func(event device.Event) {
 		if event.Kind == device.PortOpened {
 			printer.mu.Lock()
 			printer.open = true
 			printer.mu.Unlock()
 		}
+		report(event)
+		if event.Kind == device.PortOpened {
+			printer.mu.Lock()
+			printer.announced = true
+			printer.mu.Unlock()
+		}
 	}
 	printer.mu.Lock()
-	printer.report = reportThenOpen
+	printer.report = openThenReport
 	printer.mu.Unlock()
-	return printer.fakeReader.Run(ctx, sink, reportThenOpen)
+	return printer.fakeReader.Run(ctx, sink, openThenReport)
 }
 
 func (printer *fakePrinter) Write(ctx context.Context, data []byte, progress func(int)) (int, error) {
@@ -120,10 +128,19 @@ func (printer *fakePrinter) RetryOpen() {
 	}
 }
 
-func (printer *fakePrinter) isOpen() bool {
+// running is whether the printer's reader has started, and so can open the
+// port when asked.
+func (printer *fakePrinter) running() bool {
 	printer.mu.Lock()
 	defer printer.mu.Unlock()
-	return printer.open
+	return printer.report != nil
+}
+
+// announcedOpen is whether the core has been told the port opened.
+func (printer *fakePrinter) announcedOpen() bool {
+	printer.mu.Lock()
+	defer printer.mu.Unlock()
+	return printer.announced
 }
 
 func (printer *fakePrinter) snapshot() ([][]byte, int) {
@@ -170,10 +187,13 @@ func startTxRunWith(t *testing.T, transport *fakeTransport, printer *fakePrinter
 		connected: connected, core: running, cancel: cancel, done: make(chan error, 1)}
 	go func() { run.done <- running.Run(ctx) }()
 	t.Cleanup(func() { run.stop() })
+	// A test sends its tx once the printer's reader runs, and once its port
+	// is reported open if it opens at start, as a station's sender would long
+	// after start. The serial reader runs from the core's start, and keeps a
+	// request to open that comes before it reads.
+	waitUntil(t, "the printer's reader running", printer.running)
 	if printer.opensAtStart {
-		// A test that starts with the port open sends its tx once the core
-		// has heard so, as a station's sender would long after start.
-		waitUntil(t, "the printer's port open", printer.isOpen)
+		waitUntil(t, "the printer's port reported open", printer.announcedOpen)
 	}
 	return run
 }

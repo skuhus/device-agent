@@ -263,12 +263,15 @@ func (dev *Device) session(ctx context.Context, sink chan<- device.Frame, report
 		"inter_char_timeout", dev.opts.InterCharTimeout.String(),
 		"max_frame_bytes", dev.opts.MaxFrameBytes,
 		"terminator_hex", hex.EncodeToString(dev.opts.Terminator))
-	report(dev.event(device.PortOpened, nil))
 
 	// Writes go through the same port, under a lock that closing takes too
-	// (DESIGN-V2.md, "Writing: tx").
+	// (DESIGN-V2.md, "Writing: tx"). The port takes writes before it is
+	// reported open, because the report is what a tx waiting for the port
+	// acts on: reported first, the tx's write could find no port and spend an
+	// attempt.
 	shared := &sharedPort{port: port, chunkBytes: dev.opts.TxChunkBytes}
 	dev.setCurrent(shared)
+	report(dev.event(device.PortOpened, nil))
 
 	// Read blocks in select(2) and does not observe ctx. Closing the port is
 	// what unblocks it; the library signals pending reads through an internal
