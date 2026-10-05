@@ -45,14 +45,14 @@ func (port *writtenPort) Write(data []byte) (int, error) {
 		port.afterClose++
 		return 0, syscall.EBADF
 	}
-	n := min(len(data), port.perCall)
-	if port.failAfter >= 0 && len(port.got)+n > port.failAfter {
-		n = port.failAfter - len(port.got)
-		port.got = append(port.got, data[:n]...)
-		return n, syscall.EIO
+	accepted := min(len(data), port.perCall)
+	if port.failAfter >= 0 && len(port.got)+accepted > port.failAfter {
+		accepted = port.failAfter - len(port.got)
+		port.got = append(port.got, data[:accepted]...)
+		return accepted, syscall.EIO
 	}
-	port.got = append(port.got, data[:n]...)
-	return n, nil
+	port.got = append(port.got, data[:accepted]...)
+	return accepted, nil
 }
 
 func (port *writtenPort) Close() error {
@@ -127,9 +127,9 @@ func TestWriteReachesTheOpenPortWhole(t *testing.T) {
 	if len(reported) == 0 || reported[len(reported)-1] != len(data) {
 		t.Errorf("progress = %v, want it to end at %d", reported, len(data))
 	}
-	for i := 1; i < len(reported); i++ {
-		if reported[i] <= reported[i-1] || reported[i]-reported[i-1] > testTxChunkBytes {
-			t.Fatalf("progress step %d -> %d; want rising, at most a chunk at a time", reported[i-1], reported[i])
+	for index := 1; index < len(reported); index++ {
+		if reported[index] <= reported[index-1] || reported[index]-reported[index-1] > testTxChunkBytes {
+			t.Fatalf("progress step %d -> %d; want rising, at most a chunk at a time", reported[index-1], reported[index])
 		}
 	}
 }

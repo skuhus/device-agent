@@ -82,11 +82,11 @@ func TestDeviceIDAgentIsReserved(t *testing.T) {
 // matches applies MQTT filter matching: "+" is one level, "#" the rest.
 func matches(filter, topic string) bool {
 	filterLevels, topicLevels := strings.Split(filter, "/"), strings.Split(topic, "/")
-	for i, level := range filterLevels {
+	for index, level := range filterLevels {
 		if level == "#" {
 			return true
 		}
-		if i >= len(topicLevels) || (level != "+" && level != topicLevels[i]) {
+		if index >= len(topicLevels) || (level != "+" && level != topicLevels[index]) {
 			return false
 		}
 	}

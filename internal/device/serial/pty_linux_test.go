@@ -29,20 +29,20 @@ import (
 // the desk.
 func newPTY(t *testing.T) (master *os.File, slavePath string) {
 	t.Helper()
-	m, err := os.OpenFile("/dev/ptmx", os.O_RDWR, 0)
+	ptmx, err := os.OpenFile("/dev/ptmx", os.O_RDWR, 0)
 	if err != nil {
 		t.Skipf("no /dev/ptmx on this host: %v", err)
 	}
-	t.Cleanup(func() { m.Close() })
+	t.Cleanup(func() { ptmx.Close() })
 
-	if err := unix.IoctlSetPointerInt(int(m.Fd()), unix.TIOCSPTLCK, 0); err != nil {
+	if err := unix.IoctlSetPointerInt(int(ptmx.Fd()), unix.TIOCSPTLCK, 0); err != nil {
 		t.Fatalf("unlock pty: %v", err)
 	}
-	n, err := unix.IoctlGetInt(int(m.Fd()), unix.TIOCGPTN)
+	ptyNumber, err := unix.IoctlGetInt(int(ptmx.Fd()), unix.TIOCGPTN)
 	if err != nil {
 		t.Fatalf("get pty number: %v", err)
 	}
-	return m, fmt.Sprintf("/dev/pts/%d", n)
+	return ptmx, fmt.Sprintf("/dev/pts/%d", ptyNumber)
 }
 
 // runDevice starts a device against the given path and returns its frame
@@ -61,7 +61,7 @@ func runDeviceReporting(t *testing.T, opts Options, sinkCap int, report func(dev
 		// writes is held to the log's rules when the test ends.
 		opts.Logger, _ = logtest.New(t, "debug")
 	}
-	d, err := New(opts)
+	dev, err := New(opts)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -71,7 +71,7 @@ func runDeviceReporting(t *testing.T, opts Options, sinkCap int, report func(dev
 	stopped := make(chan struct{})
 	go func() {
 		defer close(stopped)
-		if err := d.Run(ctx, frames, report); !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		if err := dev.Run(ctx, frames, report); !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 			t.Errorf("Run returned %v, want a context error", err)
 		}
 	}()
@@ -111,8 +111,8 @@ func serialOpts(id, path string, separator string) Options {
 func recvFrame(t *testing.T, frames <-chan device.Frame) device.Frame {
 	t.Helper()
 	select {
-	case f := <-frames:
-		return f
+	case frame := <-frames:
+		return frame
 	case <-time.After(3 * time.Second):
 		t.Fatal("timed out waiting for a frame")
 		return device.Frame{}
@@ -122,8 +122,8 @@ func recvFrame(t *testing.T, frames <-chan device.Frame) device.Frame {
 func expectNoFrame(t *testing.T, frames <-chan device.Frame, within time.Duration) {
 	t.Helper()
 	select {
-	case f := <-frames:
-		t.Fatalf("unexpected frame %q", f.Raw)
+	case frame := <-frames:
+		t.Fatalf("unexpected frame %q", frame.Raw)
 	case <-time.After(within):
 	}
 }
@@ -134,8 +134,8 @@ func expectNoFrame(t *testing.T, frames <-chan device.Frame, within time.Duratio
 func waitForOpen(t *testing.T, present <-chan bool) {
 	t.Helper()
 	select {
-	case p := <-present:
-		if !p {
+	case isPresent := <-present:
+		if !isPresent {
 			t.Fatal("first presence transition was absent, want present")
 		}
 	case <-time.After(3 * time.Second):
@@ -204,16 +204,16 @@ func TestPTYReplayCaptures(t *testing.T) {
 			if _, err := master.Write(capture); err != nil {
 				t.Fatalf("replay write: %v", err)
 			}
-			for i, want := range tc.want {
+			for index, want := range tc.want {
 				got := recvFrame(t, frames)
 				if string(got.Raw) != string(want) {
-					t.Errorf("frame %d = %q, want %q", i, got.Raw, want)
+					t.Errorf("frame %d = %q, want %q", index, got.Raw, want)
 				}
 				if got.DeviceID != "replay" {
-					t.Errorf("frame %d device id = %q, want replay", i, got.DeviceID)
+					t.Errorf("frame %d device id = %q, want replay", index, got.DeviceID)
 				}
 				if got.At.IsZero() {
-					t.Errorf("frame %d has no timestamp", i)
+					t.Errorf("frame %d has no timestamp", index)
 				}
 			}
 			expectNoFrame(t, frames, 200*time.Millisecond)
@@ -231,9 +231,9 @@ func TestPTYFrameArrivesAcrossManyReads(t *testing.T) {
 	frames, _ := runDeviceReporting(t, opts, 4, onPresence)
 	waitForOpen(t, present)
 
-	for _, b := range []byte("SKU-9911\r") {
-		if _, err := master.Write([]byte{b}); err != nil {
-			t.Fatalf("write %q: %v", b, err)
+	for _, oneByte := range []byte("SKU-9911\r") {
+		if _, err := master.Write([]byte{oneByte}); err != nil {
+			t.Fatalf("write %q: %v", oneByte, err)
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
@@ -281,16 +281,16 @@ func TestPTYFullSinkBlocksReaderWithoutLoss(t *testing.T) {
 	waitForOpen(t, present)
 
 	want := []string{"ONE", "TWO", "THREE", "FOUR"}
-	for _, s := range want {
-		if _, err := master.Write([]byte(s + "\r")); err != nil {
-			t.Fatalf("write %s: %v", s, err)
+	for _, text := range want {
+		if _, err := master.Write([]byte(text + "\r")); err != nil {
+			t.Fatalf("write %s: %v", text, err)
 		}
 	}
 	time.Sleep(100 * time.Millisecond)
-	for i, w := range want {
+	for index, expected := range want {
 		got := recvFrame(t, frames)
-		if string(got.Raw) != w {
-			t.Errorf("frame %d = %q, want %q", i, got.Raw, w)
+		if string(got.Raw) != expected {
+			t.Errorf("frame %d = %q, want %q", index, got.Raw, expected)
 		}
 	}
 }
@@ -315,8 +315,8 @@ func TestPTYDisconnectReportsAbsenceAndRetries(t *testing.T) {
 	deadline := time.After(3 * time.Second)
 	for {
 		select {
-		case p := <-present:
-			if !p {
+		case isPresent := <-present:
+			if !isPresent {
 				return // absence reported, Run is in its reopen loop
 			}
 		case <-deadline:
@@ -359,12 +359,12 @@ func TestReopenLoopOnMissingDeviceStopsOnCancel(t *testing.T) {
 func TestNoGoroutineLeakAcrossDeviceRestarts(t *testing.T) {
 	before := goroutineCount(t, 0)
 
-	for i := 0; i < 5; i++ {
+	for index := 0; index < 5; index++ {
 		master, slave := newPTY(t)
 		present, onPresence := presenceChan()
 		opts := serialOpts("cycle", slave, "\r")
 
-		d, err := New(opts)
+		dev, err := New(opts)
 		if err != nil {
 			t.Fatalf("New: %v", err)
 		}
@@ -373,7 +373,7 @@ func TestNoGoroutineLeakAcrossDeviceRestarts(t *testing.T) {
 		stopped := make(chan struct{})
 		go func() {
 			defer close(stopped)
-			d.Run(ctx, frames, onPresence)
+			dev.Run(ctx, frames, onPresence)
 		}()
 		waitForOpen(t, present)
 		if _, err := master.Write([]byte("CYCLE\r")); err != nil {
@@ -401,17 +401,17 @@ func TestNoGoroutineLeakAcrossDeviceRestarts(t *testing.T) {
 // goroutine that is merely slow to exit is not reported as a leak.
 func goroutineCount(t *testing.T, target int) int {
 	t.Helper()
-	n := runtime.NumGoroutine()
+	goroutines := runtime.NumGoroutine()
 	if target == 0 {
-		return n
+		return goroutines
 	}
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		n = runtime.NumGoroutine()
-		if n <= target {
-			return n
+		goroutines = runtime.NumGoroutine()
+		if goroutines <= target {
+			return goroutines
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	return n
+	return goroutines
 }

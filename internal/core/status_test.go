@@ -61,23 +61,23 @@ func TestPortEventsArePublishedOnTheDeviceStatusTopic(t *testing.T) {
 	if len(events) != len(want) {
 		t.Fatalf("%d events on %s, want %d: a read is counted, not published", len(events), topic, len(want))
 	}
-	for i, w := range want {
-		got := events[i]
+	for index, expected := range want {
+		got := events[index]
 		if got.Kind != wire.KindEvent || got.Schema != wire.Schema || got.DeviceID != "scale-1" ||
 			got.DeviceType == nil || *got.DeviceType != "mettler-ics" || got.MessageExpiryS != 30 {
-			t.Errorf("event %d header = kind %q schema %d device %q type %v expiry %d", i, got.Kind, got.Schema, got.DeviceID, got.DeviceType, got.MessageExpiryS)
+			t.Errorf("event %d header = kind %q schema %d device %q type %v expiry %d", index, got.Kind, got.Schema, got.DeviceID, got.DeviceType, got.MessageExpiryS)
 		}
-		if got.Code != w.code || got.DeviceOpen != w.open || !reflect.DeepEqual(got.Detail, w.detail) {
-			t.Errorf("event %d = %s open %v detail %v, want %s open %v detail %v", i, got.Code, got.DeviceOpen, got.Detail, w.code, w.open, w.detail)
+		if got.Code != expected.code || got.DeviceOpen != expected.open || !reflect.DeepEqual(got.Detail, expected.detail) {
+			t.Errorf("event %d = %s open %v detail %v, want %s open %v detail %v", index, got.Code, got.DeviceOpen, got.Detail, expected.code, expected.open, expected.detail)
 		}
-		if got.AgentTS != w.at.Format(wire.TimeFormat) {
-			t.Errorf("event %d agent_ts = %s, want when it happened, %s", i, got.AgentTS, w.at.Format(wire.TimeFormat))
+		if got.AgentTS != expected.at.Format(wire.TimeFormat) {
+			t.Errorf("event %d agent_ts = %s, want when it happened, %s", index, got.AgentTS, expected.at.Format(wire.TimeFormat))
 		}
 	}
-	for i, message := range transport.of("event", "") {
-		wantExpiry := 30*time.Second - now.Sub(want[i].at)
+	for index, message := range transport.of("event", "") {
+		wantExpiry := 30*time.Second - now.Sub(want[index].at)
 		if message.topic != topic || message.expiry != wantExpiry {
-			t.Errorf("event %d published on %s with expiry %s, want %s with %s, the device's 30s less its age", i, message.topic, message.expiry, topic, wantExpiry)
+			t.Errorf("event %d published on %s with expiry %s, want %s with %s, the device's 30s less its age", index, message.topic, message.expiry, topic, wantExpiry)
 		}
 	}
 }
@@ -219,9 +219,9 @@ func TestKeepaliveAtOnceOnEveryConnection(t *testing.T) {
 	opts.Connected = connected
 	runUntil(t, newCore(t, opts), func() {
 		<-reader.sent
-		for i := 1; i <= 2; i++ {
+		for index := 1; index <= 2; index++ {
 			connected <- struct{}{}
-			waitUntil(t, fmt.Sprintf("keepalive %d", i), func() bool { return transport.calls("keepalive") == i })
+			waitUntil(t, fmt.Sprintf("keepalive %d", index), func() bool { return transport.calls("keepalive") == index })
 		}
 	})
 	if got := transport.calls("keepalive"); got != 2 {
@@ -265,8 +265,8 @@ func TestFullEventQueueDoesNotBlockTheReader(t *testing.T) {
 	eventGate := make(chan struct{})
 	transport := &fakeTransport{eventGate: eventGate}
 	reader := newFakeReader("scanner-main", "A1")
-	for i := range 20 {
-		reader.events = append(reader.events, device.Event{DeviceID: "scanner-main", Kind: device.BytesDiscarded, Reason: "inter_char_timeout", Bytes: i + 1})
+	for index := range 20 {
+		reader.events = append(reader.events, device.Event{DeviceID: "scanner-main", Kind: device.BytesDiscarded, Reason: "inter_char_timeout", Bytes: index + 1})
 	}
 	connected := make(chan struct{}, 1)
 	opts := testOptions(t, transport, coreDevice(t, reader, ""))
@@ -391,8 +391,8 @@ func TestOnlyTheMostRecentEventsWaitForTheConnection(t *testing.T) {
 	down := make(chan struct{})
 	transport := &fakeTransport{down: down}
 	reader := newFakeReader("scanner-main")
-	for i := range 10 {
-		reader.events = append(reader.events, device.Event{DeviceID: "scanner-main", Kind: device.BytesDiscarded, Reason: "inter_char_timeout", Bytes: i + 1})
+	for index := range 10 {
+		reader.events = append(reader.events, device.Event{DeviceID: "scanner-main", Kind: device.BytesDiscarded, Reason: "inter_char_timeout", Bytes: index + 1})
 	}
 	opts := testOptions(t, transport, coreDevice(t, reader, ""))
 	opts.EventBufferSize = 3

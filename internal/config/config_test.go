@@ -108,18 +108,18 @@ func TestLoadValidConfig(t *testing.T) {
 	if len(cfg.Devices) != 1 {
 		t.Fatalf("got %d devices, want 1", len(cfg.Devices))
 	}
-	d := cfg.Devices[0]
-	if d.Separator != "\r" {
-		t.Errorf("separator = %q, want a carriage return", d.Separator)
+	device := cfg.Devices[0]
+	if device.Separator != "\r" {
+		t.Errorf("separator = %q, want a carriage return", device.Separator)
 	}
-	if d.InterCharTimeout.Duration() != 200*time.Millisecond {
-		t.Errorf("inter_char_timeout = %s, want 200ms", d.InterCharTimeout)
+	if device.InterCharTimeout.Duration() != 200*time.Millisecond {
+		t.Errorf("inter_char_timeout = %s, want 200ms", device.InterCharTimeout)
 	}
-	if d.MessageExpiry.Duration() != 30*time.Second {
-		t.Errorf("message_expiry = %s, want 30s", d.MessageExpiry)
+	if device.MessageExpiry.Duration() != 30*time.Second {
+		t.Errorf("message_expiry = %s, want 30s", device.MessageExpiry)
 	}
-	if d.DeviceType != "honeywell-1470g" {
-		t.Errorf("device_type = %q, want honeywell-1470g", d.DeviceType)
+	if device.DeviceType != "honeywell-1470g" {
+		t.Errorf("device_type = %q, want honeywell-1470g", device.DeviceType)
 	}
 }
 
@@ -139,29 +139,29 @@ devices:
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	d := cfg.Devices[0]
+	device := cfg.Devices[0]
 	checks := []struct {
 		name string
 		got  any
 		want any
 	}{
-		{"kind", d.Kind, KindSerial},
-		{"baud", d.Baud, DefaultBaud},
-		{"data_bits", d.DataBits, DefaultDataBits},
-		{"parity", d.Parity, DefaultParity},
-		{"stop_bits", d.StopBits, DefaultStopBits},
-		{"max_frame_bytes", d.MaxFrameBytes, DefaultMaxFrameBytes},
-		{"inter_char_timeout", d.InterCharTimeout.Duration(), DefaultInterCharTimeout},
-		{"message_expiry", d.MessageExpiry.Duration(), DefaultMessageExpiry},
-		{"device_type", d.DeviceType, ""},
-		{"tx_open_attempts", d.TxOpenAttempts, DefaultTxOpenAttempts},
-		{"tx_open_interval", d.TxOpenInterval.Duration(), DefaultTxOpenInterval},
-		{"tx_chunk_bytes", d.TxChunkBytes, DefaultTxChunkBytes},
-		{"tx_remembered_ids", d.TxRememberedIDs, DefaultTxRememberedIDs},
-		{"reopen_interval", d.ReopenInterval.Duration(), DefaultReopenInterval},
-		{"reopen_backoff.enabled", d.ReopenBackoff.Enabled, true},
-		{"reopen_backoff.max", d.ReopenBackoff.Max.Duration(), DefaultReopenBackoffMax},
-		{"reopen_backoff.jitter", d.ReopenBackoff.Jitter, DefaultReopenBackoffJitter},
+		{"kind", device.Kind, KindSerial},
+		{"baud", device.Baud, DefaultBaud},
+		{"data_bits", device.DataBits, DefaultDataBits},
+		{"parity", device.Parity, DefaultParity},
+		{"stop_bits", device.StopBits, DefaultStopBits},
+		{"max_frame_bytes", device.MaxFrameBytes, DefaultMaxFrameBytes},
+		{"inter_char_timeout", device.InterCharTimeout.Duration(), DefaultInterCharTimeout},
+		{"message_expiry", device.MessageExpiry.Duration(), DefaultMessageExpiry},
+		{"device_type", device.DeviceType, ""},
+		{"tx_open_attempts", device.TxOpenAttempts, DefaultTxOpenAttempts},
+		{"tx_open_interval", device.TxOpenInterval.Duration(), DefaultTxOpenInterval},
+		{"tx_chunk_bytes", device.TxChunkBytes, DefaultTxChunkBytes},
+		{"tx_remembered_ids", device.TxRememberedIDs, DefaultTxRememberedIDs},
+		{"reopen_interval", device.ReopenInterval.Duration(), DefaultReopenInterval},
+		{"reopen_backoff.enabled", device.ReopenBackoff.Enabled, true},
+		{"reopen_backoff.max", device.ReopenBackoff.Max.Duration(), DefaultReopenBackoffMax},
+		{"reopen_backoff.jitter", device.ReopenBackoff.Jitter, DefaultReopenBackoffJitter},
 		{"keepalive", cfg.Broker.Keepalive.Duration(), DefaultKeepalive},
 		{"connect_timeout", cfg.Broker.ConnectTimeout.Duration(), DefaultConnectTimeout},
 		{"reconnect_interval", cfg.Broker.ReconnectInterval.Duration(), DefaultReconnectInterval},
@@ -755,14 +755,14 @@ func TestDefaultPathIsPlatformSpecific(t *testing.T) {
 }
 
 func TestDurationRoundTrip(t *testing.T) {
-	var d Duration
-	if err := d.UnmarshalYAML(yamlScalar(t, "1500ms")); err != nil {
+	var duration Duration
+	if err := duration.UnmarshalYAML(yamlScalar(t, "1500ms")); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if d.Duration() != 1500*time.Millisecond {
-		t.Errorf("duration = %s, want 1.5s", d)
+	if duration.Duration() != 1500*time.Millisecond {
+		t.Errorf("duration = %s, want 1.5s", duration)
 	}
-	out, err := d.MarshalYAML()
+	out, err := duration.MarshalYAML()
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
@@ -806,12 +806,12 @@ func TestLoadEnvironmentErrorsAreDeterministic(t *testing.T) {
 		EnvPrefix + "LOGGING_KEEP=lots",
 	}
 	var first string
-	for i := 0; i < 20; i++ {
+	for index := 0; index < 20; index++ {
 		_, _, err := load(t, fixture.path, env, Overrides{})
 		if err == nil {
 			t.Fatal("three unparseable values should fail")
 		}
-		if i == 0 {
+		if index == 0 {
 			first = err.Error()
 			continue
 		}

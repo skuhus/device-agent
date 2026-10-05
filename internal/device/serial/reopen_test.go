@@ -19,11 +19,11 @@ type flakyPort struct {
 	reads int
 }
 
-func (p *flakyPort) Read(b []byte) (int, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.reads++
-	if p.reads == 1 {
+func (port *flakyPort) Read(buffer []byte) (int, error) {
+	port.mu.Lock()
+	defer port.mu.Unlock()
+	port.reads++
+	if port.reads == 1 {
 		// A read timeout: no bytes, no error. This is what the library returns
 		// when the inter-character timeout expires on an idle device.
 		return 0, nil
@@ -31,17 +31,17 @@ func (p *flakyPort) Read(b []byte) (int, error) {
 	return 0, syscall.EIO
 }
 
-func (p *flakyPort) Write([]byte) (int, error)          { return 0, nil }
-func (p *flakyPort) Drain() error                       { return nil }
-func (p *flakyPort) ResetInputBuffer() error            { return nil }
-func (p *flakyPort) ResetOutputBuffer() error           { return nil }
-func (p *flakyPort) SetDTR(bool) error                  { return nil }
-func (p *flakyPort) SetRTS(bool) error                  { return nil }
-func (p *flakyPort) SetMode(*goserial.Mode) error       { return nil }
-func (p *flakyPort) SetReadTimeout(time.Duration) error { return nil }
-func (p *flakyPort) Close() error                       { return nil }
-func (p *flakyPort) Break(time.Duration) error          { return nil }
-func (p *flakyPort) GetModemStatusBits() (*goserial.ModemStatusBits, error) {
+func (port *flakyPort) Write([]byte) (int, error)          { return 0, nil }
+func (port *flakyPort) Drain() error                       { return nil }
+func (port *flakyPort) ResetInputBuffer() error            { return nil }
+func (port *flakyPort) ResetOutputBuffer() error           { return nil }
+func (port *flakyPort) SetDTR(bool) error                  { return nil }
+func (port *flakyPort) SetRTS(bool) error                  { return nil }
+func (port *flakyPort) SetMode(*goserial.Mode) error       { return nil }
+func (port *flakyPort) SetReadTimeout(time.Duration) error { return nil }
+func (port *flakyPort) Close() error                       { return nil }
+func (port *flakyPort) Break(time.Duration) error          { return nil }
+func (port *flakyPort) GetModemStatusBits() (*goserial.ModemStatusBits, error) {
 	return &goserial.ModemStatusBits{}, nil
 }
 
@@ -146,27 +146,27 @@ type blockingPort struct {
 	start time.Time
 }
 
-func (p *blockingPort) Read(b []byte) (int, error) {
-	if p.start.IsZero() {
-		p.start = time.Now()
+func (port *blockingPort) Read(buffer []byte) (int, error) {
+	if port.start.IsZero() {
+		port.start = time.Now()
 	}
-	if time.Since(p.start) < p.hold {
+	if time.Since(port.start) < port.hold {
 		time.Sleep(10 * time.Millisecond)
 		return 0, nil
 	}
 	return 0, syscall.EIO
 }
 
-func (p *blockingPort) Write([]byte) (int, error)          { return 0, nil }
-func (p *blockingPort) Drain() error                       { return nil }
-func (p *blockingPort) ResetInputBuffer() error            { return nil }
-func (p *blockingPort) ResetOutputBuffer() error           { return nil }
-func (p *blockingPort) SetDTR(bool) error                  { return nil }
-func (p *blockingPort) SetRTS(bool) error                  { return nil }
-func (p *blockingPort) SetMode(*goserial.Mode) error       { return nil }
-func (p *blockingPort) SetReadTimeout(time.Duration) error { return nil }
-func (p *blockingPort) Close() error                       { return nil }
-func (p *blockingPort) Break(time.Duration) error          { return nil }
-func (p *blockingPort) GetModemStatusBits() (*goserial.ModemStatusBits, error) {
+func (port *blockingPort) Write([]byte) (int, error)          { return 0, nil }
+func (port *blockingPort) Drain() error                       { return nil }
+func (port *blockingPort) ResetInputBuffer() error            { return nil }
+func (port *blockingPort) ResetOutputBuffer() error           { return nil }
+func (port *blockingPort) SetDTR(bool) error                  { return nil }
+func (port *blockingPort) SetRTS(bool) error                  { return nil }
+func (port *blockingPort) SetMode(*goserial.Mode) error       { return nil }
+func (port *blockingPort) SetReadTimeout(time.Duration) error { return nil }
+func (port *blockingPort) Close() error                       { return nil }
+func (port *blockingPort) Break(time.Duration) error          { return nil }
+func (port *blockingPort) GetModemStatusBits() (*goserial.ModemStatusBits, error) {
 	return &goserial.ModemStatusBits{}, nil
 }

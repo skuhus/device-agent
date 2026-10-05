@@ -151,9 +151,9 @@ var codeCell = regexp.MustCompile("`([a-z_]+)`")
 func tableRows(t *testing.T, doc design, heading string) [][][]string {
 	t.Helper()
 	start := -1
-	for i, line := range doc.lines {
+	for index, line := range doc.lines {
 		if line == heading {
-			start = i
+			start = index
 			break
 		}
 	}

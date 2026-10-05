@@ -27,30 +27,30 @@ type recordingPort struct {
 	rts bool
 }
 
-func (p *recordingPort) SetDTR(v bool) error {
-	if p.refuse {
+func (port *recordingPort) SetDTR(raised bool) error {
+	if port.refuse {
 		return goserial.PortError{}
 	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.dtr = v
+	port.mu.Lock()
+	defer port.mu.Unlock()
+	port.dtr = raised
 	return nil
 }
 
-func (p *recordingPort) SetRTS(v bool) error {
-	if p.refuse {
+func (port *recordingPort) SetRTS(raised bool) error {
+	if port.refuse {
 		return goserial.PortError{}
 	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.rts = v
+	port.mu.Lock()
+	defer port.mu.Unlock()
+	port.rts = raised
 	return nil
 }
 
-func (p *recordingPort) state() (dtr, rts bool) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.dtr, p.rts
+func (port *recordingPort) state() (dtr, rts bool) {
+	port.mu.Lock()
+	defer port.mu.Unlock()
+	return port.dtr, port.rts
 }
 
 // The modem lines must be raised deliberately. go.bug.st/serial documents a nil
@@ -108,8 +108,8 @@ func TestOpenSucceedsWhenModemLinesAreUnsupported(t *testing.T) {
 	runDeviceReporting(t, opts, 1, onPresence)
 
 	select {
-	case p := <-present:
-		if !p {
+	case isPresent := <-present:
+		if !isPresent {
 			t.Fatal("device reported absent; refusing DTR must not fail the open")
 		}
 	case <-time.After(3 * time.Second):
@@ -187,13 +187,13 @@ type scriptedPort struct {
 	data []byte
 }
 
-func (p *scriptedPort) Read(b []byte) (int, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if len(p.data) > 0 {
-		n := copy(b, p.data)
-		p.data = p.data[n:]
-		return n, nil
+func (port *scriptedPort) Read(buffer []byte) (int, error) {
+	port.mu.Lock()
+	defer port.mu.Unlock()
+	if len(port.data) > 0 {
+		copied := copy(buffer, port.data)
+		port.data = port.data[copied:]
+		return copied, nil
 	}
 	time.Sleep(10 * time.Millisecond)
 	return 0, nil

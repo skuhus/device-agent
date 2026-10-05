@@ -30,13 +30,13 @@ func write(t *testing.T, file *File, record string) {
 
 func readLines(t *testing.T, path string) []string {
 	t.Helper()
-	f, err := os.Open(path)
+	opened, err := os.Open(path)
 	if err != nil {
 		t.Fatalf("open %s: %v", path, err)
 	}
-	defer f.Close()
+	defer opened.Close()
 	var out []string
-	scanner := bufio.NewScanner(f)
+	scanner := bufio.NewScanner(opened)
 	// One test writes a record larger than the default 64 KB token limit.
 	scanner.Buffer(make([]byte, 0, 64*1024), 8<<20)
 	for scanner.Scan() {
@@ -76,8 +76,8 @@ func TestFileRotatesAndKeepsTheConfiguredNumberOfFiles(t *testing.T) {
 	const keep = 3
 	file, path := openFile(t, 1, keep)
 	pad := strings.Repeat("x", 4096)
-	for i := 0; i < 1200; i++ {
-		write(t, file, fmt.Sprintf("r%04d %s", i, pad))
+	for index := 0; index < 1200; index++ {
+		write(t, file, fmt.Sprintf("r%04d %s", index, pad))
 	}
 
 	matches, err := filepath.Glob(path + "*")
@@ -87,22 +87,22 @@ func TestFileRotatesAndKeepsTheConfiguredNumberOfFiles(t *testing.T) {
 	if len(matches) != keep+1 {
 		t.Errorf("files = %v, want the live file and %d rotated ones", matches, keep)
 	}
-	for i := 1; i <= keep; i++ {
-		info, err := os.Stat(fmt.Sprintf("%s.%d", path, i))
+	for index := 1; index <= keep; index++ {
+		info, err := os.Stat(fmt.Sprintf("%s.%d", path, index))
 		if err != nil {
-			t.Fatalf("expected rotated file %d: %v", i, err)
+			t.Fatalf("expected rotated file %d: %v", index, err)
 		}
 		if info.Size() == 0 || info.Size() > 1<<20 {
-			t.Errorf("%s.%d is %d bytes, want some, at most 1 MB", path, i, info.Size())
+			t.Errorf("%s.%d is %d bytes, want some, at most 1 MB", path, index, info.Size())
 		}
 	}
 
 	// Each older file ends before the newer one starts.
 	newer := readLines(t, path)
-	for i := 1; i <= keep; i++ {
-		older := readLines(t, fmt.Sprintf("%s.%d", path, i))
+	for index := 1; index <= keep; index++ {
+		older := readLines(t, fmt.Sprintf("%s.%d", path, index))
 		if older[len(older)-1] >= newer[0] {
-			t.Errorf("%s.%d ends at %.5s but the next file starts at %.5s", path, i, older[len(older)-1], newer[0])
+			t.Errorf("%s.%d ends at %.5s but the next file starts at %.5s", path, index, older[len(older)-1], newer[0])
 		}
 		newer = older
 	}
@@ -112,8 +112,8 @@ func TestFileRotatesAndKeepsTheConfiguredNumberOfFiles(t *testing.T) {
 func TestFileKeepZeroDiscardsHistory(t *testing.T) {
 	file, path := openFile(t, 1, 0)
 	pad := strings.Repeat("x", 4096)
-	for i := 0; i < 600; i++ {
-		write(t, file, fmt.Sprintf("r%04d %s", i, pad))
+	for index := 0; index < 600; index++ {
+		write(t, file, fmt.Sprintf("r%04d %s", index, pad))
 	}
 	if _, err := os.Stat(path + ".1"); !os.IsNotExist(err) {
 		t.Errorf("keep 0 should leave no rotated files: %v", err)
@@ -144,17 +144,17 @@ func TestFileConcurrentWrites(t *testing.T) {
 	file, path := openFile(t, 8, 2)
 	const writers, each = 8, 200
 	var wg sync.WaitGroup
-	for w := 0; w < writers; w++ {
+	for writer := 0; writer < writers; writer++ {
 		wg.Add(1)
-		go func(w int) {
+		go func(writer int) {
 			defer wg.Done()
-			for i := 0; i < each; i++ {
-				if _, err := file.Write([]byte(fmt.Sprintf("w%d-r%d\n", w, i))); err != nil {
+			for index := 0; index < each; index++ {
+				if _, err := file.Write([]byte(fmt.Sprintf("w%d-r%d\n", writer, index))); err != nil {
 					t.Errorf("Write: %v", err)
 					return
 				}
 			}
-		}(w)
+		}(writer)
 	}
 	wg.Wait()
 	if err := file.Sync(); err != nil {
@@ -209,8 +209,8 @@ func TestFileKeepsWritingAfterTheLiveFileIsRemoved(t *testing.T) {
 		t.Fatalf("remove the live file: %v", err)
 	}
 	pad := strings.Repeat("x", 4096)
-	for i := 0; i < 300; i++ {
-		write(t, file, fmt.Sprintf("r%04d %s", i, pad))
+	for index := 0; index < 300; index++ {
+		write(t, file, fmt.Sprintf("r%04d %s", index, pad))
 	}
 	write(t, file, "after")
 	lines := readLines(t, path)
@@ -230,8 +230,8 @@ func TestFileKeepsWritingWhenRotationFails(t *testing.T) {
 	}
 	pad := strings.Repeat("x", 4096)
 	var rotationErr error
-	for i := 0; i < 300; i++ {
-		if _, err := file.Write([]byte(fmt.Sprintf("r%04d %s\n", i, pad))); err != nil && rotationErr == nil {
+	for index := 0; index < 300; index++ {
+		if _, err := file.Write([]byte(fmt.Sprintf("r%04d %s\n", index, pad))); err != nil && rotationErr == nil {
 			rotationErr = err
 		}
 	}

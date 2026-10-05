@@ -258,11 +258,11 @@ func TestBrokerPermissions(t *testing.T) {
 		{"a sender cannot publish an agent's status", ingest, agent.Status(), station, false},
 		{"a station cannot publish to another station's tx", station, otherDevice.Tx(), ingest, false},
 	}
-	for i, check := range checks {
+	for index, check := range checks {
 		t.Run(check.name, func(t *testing.T) {
 			received := subscribe(ctx, t, addr, check.observer.name, check.observer.pass,
-				fmt.Sprintf("perm-%s-observer-%d", run, i), check.topic, run)
-			publishErr := publishOnce(ctx, t, addr, check.publisher, fmt.Sprintf("perm-%s-publisher-%d", run, i), check.topic)
+				fmt.Sprintf("perm-%s-observer-%d", run, index), check.topic, run)
+			publishErr := publishOnce(ctx, t, addr, check.publisher, fmt.Sprintf("perm-%s-publisher-%d", run, index), check.topic)
 			delivered := len(collect(t, received, 2*time.Second)) > 0
 			switch {
 			case check.allowed && (publishErr != nil || !delivered):

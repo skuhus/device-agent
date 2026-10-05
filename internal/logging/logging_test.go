@@ -46,14 +46,14 @@ func TestLoggerAttachesIdentityToEveryLine(t *testing.T) {
 	if len(lines) != 2 {
 		t.Fatalf("got %d lines, want 2:\n%s", len(lines), buf.String())
 	}
-	for i, line := range lines {
+	for index, line := range lines {
 		got := decodeLine(t, line)
-		for k, want := range map[string]any{
+		for key, want := range map[string]any{
 			"project": "acme", "site": "vasby", "station": "pack-03",
 			"host": "pi-vasby-07", "agent_version": "1.2.0",
 		} {
-			if got[k] != want {
-				t.Errorf("line %d field %q = %#v, want %#v", i, k, got[k], want)
+			if got[key] != want {
+				t.Errorf("line %d field %q = %#v, want %#v", index, key, got[key], want)
 			}
 		}
 	}
@@ -118,14 +118,14 @@ func TestEveryRecordNamesWhereItWasWritten(t *testing.T) {
 	log.Debug("device read", "bytes", 3)
 	log.With("device_id", "scanner-main").Warn("discarded partial frame")
 
-	for i, text := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+	for index, text := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
 		source, ok := decodeLine(t, text)["source"].(map[string]any)
 		if !ok {
-			t.Fatalf("line %d has no source: %s", i, text)
+			t.Fatalf("line %d has no source: %s", index, text)
 		}
 		if !strings.HasSuffix(source["function"].(string), ".TestEveryRecordNamesWhereItWasWritten") ||
-			!strings.HasSuffix(source["file"].(string), "logging_test.go") || source["line"] != float64(line+1+i) {
-			t.Errorf("line %d source = %v, want this test, logging_test.go:%d", i, source, line+1+i)
+			!strings.HasSuffix(source["file"].(string), "logging_test.go") || source["line"] != float64(line+1+index) {
+			t.Errorf("line %d source = %v, want this test, logging_test.go:%d", index, source, line+1+index)
 		}
 	}
 }
@@ -162,18 +162,18 @@ type syncCounter struct {
 	err    error
 }
 
-func (file *syncCounter) Write(p []byte) (int, error) {
+func (file *syncCounter) Write(data []byte) (int, error) {
 	file.mu.Lock()
 	defer file.mu.Unlock()
 	if file.err != nil {
 		return 0, file.err
 	}
 	var record map[string]any
-	if err := json.Unmarshal(p, &record); err != nil {
+	if err := json.Unmarshal(data, &record); err != nil {
 		return 0, err
 	}
 	file.events = append(file.events, "write "+record["level"].(string))
-	return len(p), nil
+	return len(data), nil
 }
 
 func (file *syncCounter) Sync() error {

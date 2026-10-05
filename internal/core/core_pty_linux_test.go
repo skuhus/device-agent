@@ -105,9 +105,9 @@ func TestEveryFrameIsOneRxMessageOnItsDeviceTopic(t *testing.T) {
 		}
 	}()
 
-	for i, capture := range captures {
+	for index, capture := range captures {
 		select {
-		case <-watches[i].opened:
+		case <-watches[index].opened:
 		case <-time.After(3 * time.Second):
 			t.Fatalf("%s did not open its port", capture.id)
 		}
@@ -115,7 +115,7 @@ func TestEveryFrameIsOneRxMessageOnItsDeviceTopic(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read capture: %v", err)
 		}
-		if _, err := masters[i].Write(body); err != nil {
+		if _, err := masters[index].Write(body); err != nil {
 			t.Fatalf("write capture: %v", err)
 		}
 	}
@@ -135,10 +135,10 @@ func TestEveryFrameIsOneRxMessageOnItsDeviceTopic(t *testing.T) {
 			t.Errorf("%s: %d rx messages, want exactly %d", capture.topic, len(rx), len(capture.want))
 			continue
 		}
-		for i, want := range capture.want {
-			raw, _ := base64.StdEncoding.DecodeString(rx[i].RawB64)
-			if string(raw) != want || rx[i].Seq != uint64(i+1) || rx[i].DeviceID != capture.id {
-				t.Errorf("%s message %d = %q seq %d device %s, want %q seq %d", capture.topic, i, raw, rx[i].Seq, rx[i].DeviceID, want, i+1)
+		for index, want := range capture.want {
+			raw, _ := base64.StdEncoding.DecodeString(rx[index].RawB64)
+			if string(raw) != want || rx[index].Seq != uint64(index+1) || rx[index].DeviceID != capture.id {
+				t.Errorf("%s message %d = %q seq %d device %s, want %q seq %d", capture.topic, index, raw, rx[index].Seq, rx[index].DeviceID, want, index+1)
 			}
 		}
 	}

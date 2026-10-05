@@ -44,7 +44,7 @@ var agentBinary string
 // CRLF.
 const capturePath = "../../internal/device/serial/testdata/symbol-05e0-1701-crlf.bin"
 
-func TestMain(m *testing.M) {
+func TestMain(suite *testing.M) {
 	for _, name := range []string{"TEST_BROKER", "TEST_MQTT_USER", "TEST_MQTT_PASS", "TEST_INGEST_USER", "TEST_INGEST_PASS"} {
 		if os.Getenv(name) == "" {
 			fmt.Fprintf(os.Stderr, "%s is not set; make test-integration sets it for the development broker\n", name)
@@ -63,7 +63,7 @@ func TestMain(m *testing.M) {
 		fmt.Fprintf(os.Stderr, "build the agent: %v\n%s", err, out)
 		os.Exit(1)
 	}
-	code := m.Run()
+	code := suite.Run()
 	os.RemoveAll(dir)
 	os.Exit(code)
 }
@@ -77,18 +77,18 @@ func TestReadingsEventsKeepaliveAndCleanStop(t *testing.T) {
 	scans := captureScans(t)
 	agent := run.start(t)
 
-	run.waitFor(t, "port_opened", func(m message) bool { return m.isEvent(run.device, "port_opened") })
+	run.waitFor(t, "port_opened", func(received message) bool { return received.isEvent(run.device, "port_opened") })
 	writeAll(t, run.master, scans)
 
-	rx := run.waitForCount(t, "six readings", 6, func(m message) bool { return m.topic == run.deviceTopic("rx") })
-	for i, m := range rx {
-		raw, err := base64.StdEncoding.DecodeString(m.str("raw_b64"))
-		want := strings.TrimSuffix(string(scans[i]), "\r\n")
-		if err != nil || string(raw) != want || m.num("seq") != float64(i+1) || m.str("device_type") != "symbol-05e0-1701" {
-			t.Errorf("rx %d = %q seq %v type %q, want %q seq %d, symbol-05e0-1701", i, raw, m.num("seq"), m.str("device_type"), want, i+1)
+	rx := run.waitForCount(t, "six readings", 6, func(received message) bool { return received.topic == run.deviceTopic("rx") })
+	for index, received := range rx {
+		raw, err := base64.StdEncoding.DecodeString(received.str("raw_b64"))
+		want := strings.TrimSuffix(string(scans[index]), "\r\n")
+		if err != nil || string(raw) != want || received.num("seq") != float64(index+1) || received.str("device_type") != "symbol-05e0-1701" {
+			t.Errorf("rx %d = %q seq %v type %q, want %q seq %d, symbol-05e0-1701", index, raw, received.num("seq"), received.str("device_type"), want, index+1)
 		}
-		if m.qos != 1 || m.expiry == nil || *m.expiry < 25 || *m.expiry > 30 {
-			t.Errorf("rx %d arrived at QoS %d with expiry %s, want QoS 1 and the device's 30 s, less transit", i, m.qos, m.expiryText())
+		if received.qos != 1 || received.expiry == nil || *received.expiry < 25 || *received.expiry > 30 {
+			t.Errorf("rx %d arrived at QoS %d with expiry %s, want QoS 1 and the device's 30 s, less transit", index, received.qos, received.expiryText())
 		}
 	}
 
@@ -96,9 +96,9 @@ func TestReadingsEventsKeepaliveAndCleanStop(t *testing.T) {
 	for _, scan := range scans {
 		captured += len(scan)
 	}
-	keepalive := run.waitFor(t, "a keepalive with every reading counted", func(m message) bool {
-		device, ok := m.firstDevice()
-		return m.str("kind") == "keepalive" && ok && device["rx_frames"] == float64(6)
+	keepalive := run.waitFor(t, "a keepalive with every reading counted", func(received message) bool {
+		device, ok := received.firstDevice()
+		return received.str("kind") == "keepalive" && ok && device["rx_frames"] == float64(6)
 	})
 	device, _ := keepalive.firstDevice()
 	if device["device_id"] != run.device || device["rx_bytes"] != float64(captured) || device["device_open"] != true ||
@@ -107,7 +107,7 @@ func TestReadingsEventsKeepaliveAndCleanStop(t *testing.T) {
 	}
 
 	run.master.Close()
-	lost := run.waitFor(t, "port_lost", func(m message) bool { return m.isEvent(run.device, "port_lost") })
+	lost := run.waitFor(t, "port_lost", func(received message) bool { return received.isEvent(run.device, "port_lost") })
 	if detail, _ := lost.body["detail"].(map[string]any); detail["error_class"] != "disconnected" || lost.body["device_open"] != false {
 		t.Errorf("port_lost = %v, want class disconnected and the port closed", lost.body)
 	}
@@ -116,12 +116,16 @@ func TestReadingsEventsKeepaliveAndCleanStop(t *testing.T) {
 	if code := agent.wait(t, 15*time.Second); code != 0 {
 		t.Errorf("the agent exited %d on SIGTERM, want 0", code)
 	}
-	offline := run.waitFor(t, "the offline message", func(m message) bool { return m.topic == run.agentTopic() && m.str("kind") == "offline" })
+	offline := run.waitFor(t, "the offline message", func(received message) bool {
+		return received.topic == run.agentTopic() && received.str("kind") == "offline"
+	})
 	if offline.str("reason") != "shutdown" || offline.qos != 1 {
 		t.Errorf("offline = %v at QoS %d, want reason shutdown at QoS 1", offline.body, offline.qos)
 	}
 	time.Sleep(2 * time.Second)
-	if wills := run.matching(func(m message) bool { return m.topic == run.agentTopic() && m.str("reason") == "will" }); len(wills) > 0 {
+	if wills := run.matching(func(received message) bool {
+		return received.topic == run.agentTopic() && received.str("reason") == "will"
+	}); len(wills) > 0 {
 		t.Errorf("the broker published the will after a clean stop: %v", wills[0].body)
 	}
 	if published := agent.records(t, "rx published"); len(published) != 6 {
@@ -135,8 +139,8 @@ func TestReadingsEventsKeepaliveAndCleanStop(t *testing.T) {
 func TestTxReachesThePort(t *testing.T) {
 	run := newRun(t)
 	agent := run.start(t)
-	run.waitFor(t, "port_opened", func(m message) bool { return m.isEvent(run.device, "port_opened") })
-	run.waitFor(t, "the agent to subscribe", func(m message) bool { return m.str("kind") == "keepalive" })
+	run.waitFor(t, "port_opened", func(received message) bool { return received.isEvent(run.device, "port_opened") })
+	run.waitFor(t, "the agent to subscribe", func(received message) bool { return received.str("kind") == "keepalive" })
 	// Subscribing happens just after the connection comes up, and a keepalive
 	// goes out at the same moment; the record of the subscription is what says
 	// a tx can be sent.
@@ -157,7 +161,7 @@ func TestTxReachesThePort(t *testing.T) {
 	if !bytes.Equal(got, job) {
 		t.Errorf("the port got %d bytes that differ from the %d sent", len(got), len(job))
 	}
-	results := run.waitForCount(t, "accepted and written", 2, func(m message) bool { return m.str("kind") == "tx_result" && m.str("tx_id") == id })
+	results := run.waitForCount(t, "accepted and written", 2, func(received message) bool { return received.str("kind") == "tx_result" && received.str("tx_id") == id })
 	if results[0].str("state") != "accepted" || results[1].str("state") != "written" {
 		t.Errorf("results = %s, %s; want accepted, then written", results[0].str("state"), results[1].str("state"))
 	}
@@ -171,16 +175,16 @@ func TestTxReachesThePort(t *testing.T) {
 		Properties: &paho.PublishProperties{MessageExpiry: &expiry}}); err != nil {
 		t.Fatalf("publish the tx again: %v", err)
 	}
-	all := run.waitForCount(t, "the resend's answer", 3, func(m message) bool { return m.str("kind") == "tx_result" && m.str("tx_id") == id })
+	all := run.waitForCount(t, "the resend's answer", 3, func(received message) bool { return received.str("kind") == "tx_result" && received.str("tx_id") == id })
 	if all[2].str("state") != "written" || all[2].str("code") != "already_written" {
 		t.Errorf("the resend got %s/%s, want written/already_written", all[2].str("state"), all[2].str("code"))
 	}
 	if more := readFor(t, run.master, time.Second); len(more) > 0 {
 		t.Errorf("the resend put %d more bytes on the port", len(more))
 	}
-	run.waitFor(t, "a keepalive counting one write", func(m message) bool {
-		device, ok := m.firstDevice()
-		return m.str("kind") == "keepalive" && ok && device["tx_written"] == float64(1)
+	run.waitFor(t, "a keepalive counting one write", func(received message) bool {
+		device, ok := received.firstDevice()
+		return received.str("kind") == "keepalive" && ok && device["tx_written"] == float64(1)
 	})
 
 	agent.signal(t, syscall.SIGTERM)
@@ -193,16 +197,16 @@ func TestTxReachesThePort(t *testing.T) {
 }
 
 // readFor reads whatever the pseudo-terminal's master gets within d.
-func readFor(t *testing.T, master *os.File, d time.Duration) []byte {
+func readFor(t *testing.T, master *os.File, wait time.Duration) []byte {
 	t.Helper()
 	var got []byte
 	buf := make([]byte, 4096)
-	if err := master.SetReadDeadline(time.Now().Add(d)); err != nil {
+	if err := master.SetReadDeadline(time.Now().Add(wait)); err != nil {
 		t.Fatalf("read deadline: %v", err)
 	}
 	for {
-		k, err := master.Read(buf)
-		got = append(got, buf[:k]...)
+		read, err := master.Read(buf)
+		got = append(got, buf[:read]...)
 		if err != nil {
 			return got
 		}
@@ -211,19 +215,19 @@ func readFor(t *testing.T, master *os.File, d time.Duration) []byte {
 
 // readExactly reads n bytes from the pseudo-terminal's master, or fails once
 // timeout has passed.
-func readExactly(t *testing.T, master *os.File, n int, timeout time.Duration) []byte {
+func readExactly(t *testing.T, master *os.File, want int, timeout time.Duration) []byte {
 	t.Helper()
 	var got []byte
 	buf := make([]byte, 4096)
 	deadline := time.Now().Add(timeout)
-	for len(got) < n {
+	for len(got) < want {
 		if err := master.SetReadDeadline(deadline); err != nil {
 			t.Fatalf("read deadline: %v", err)
 		}
-		k, err := master.Read(buf)
-		got = append(got, buf[:k]...)
+		read, err := master.Read(buf)
+		got = append(got, buf[:read]...)
 		if err != nil {
-			t.Fatalf("after %d of %d bytes: %v", len(got), n, err)
+			t.Fatalf("after %d of %d bytes: %v", len(got), want, err)
 		}
 	}
 	return got
@@ -233,11 +237,15 @@ func readExactly(t *testing.T, master *os.File, n int, timeout time.Duration) []
 func TestWillAfterSIGKILL(t *testing.T) {
 	run := newRun(t)
 	agent := run.start(t)
-	run.waitFor(t, "a keepalive", func(m message) bool { return m.topic == run.agentTopic() && m.str("kind") == "keepalive" })
+	run.waitFor(t, "a keepalive", func(received message) bool {
+		return received.topic == run.agentTopic() && received.str("kind") == "keepalive"
+	})
 
 	agent.signal(t, syscall.SIGKILL)
 	agent.wait(t, 5*time.Second)
-	will := run.waitFor(t, "the will", func(m message) bool { return m.topic == run.agentTopic() && m.str("kind") == "offline" })
+	will := run.waitFor(t, "the will", func(received message) bool {
+		return received.topic == run.agentTopic() && received.str("kind") == "offline"
+	})
 	if will.str("reason") != "will" || will.str("instance_id") != run.instance {
 		t.Errorf("offline = %v, want reason will for %s", will.body, run.instance)
 	}
@@ -250,8 +258,10 @@ func TestReadingsRecordedWhenTheBrokerIsGone(t *testing.T) {
 	run := newRun(t)
 	scans := captureScans(t)
 	agent := run.start(t)
-	run.waitFor(t, "port_opened", func(m message) bool { return m.isEvent(run.device, "port_opened") })
-	run.waitFor(t, "a keepalive", func(m message) bool { return m.topic == run.agentTopic() && m.str("kind") == "keepalive" })
+	run.waitFor(t, "port_opened", func(received message) bool { return received.isEvent(run.device, "port_opened") })
+	run.waitFor(t, "a keepalive", func(received message) bool {
+		return received.topic == run.agentTopic() && received.str("kind") == "keepalive"
+	})
 
 	run.relay.cut()
 	writeAll(t, run.master, scans)
@@ -261,14 +271,14 @@ func TestReadingsRecordedWhenTheBrokerIsGone(t *testing.T) {
 	if code := agent.wait(t, 20*time.Second); code != 0 {
 		t.Errorf("the agent exited %d on SIGTERM with the broker gone, want 0", code)
 	}
-	for i, record := range agent.records(t, "rx publish failed") {
-		want := strings.TrimSuffix(string(scans[i]), "\r\n")
+	for index, record := range agent.records(t, "rx publish failed") {
+		want := strings.TrimSuffix(string(scans[index]), "\r\n")
 		if record["outcome"] != "failed" || record["data_text"] != want || record["data_hex"] != hex.EncodeToString([]byte(want)) ||
-			record["seq"] != float64(i+1) || record["error"] == nil {
-			t.Errorf("record %d = %v, want outcome failed, seq %d, the error, and %q as data", i, record, i+1, want)
+			record["seq"] != float64(index+1) || record["error"] == nil {
+			t.Errorf("record %d = %v, want outcome failed, seq %d, the error, and %q as data", index, record, index+1, want)
 		}
 	}
-	if rx := run.matching(func(m message) bool { return m.topic == run.deviceTopic("rx") }); len(rx) != 0 {
+	if rx := run.matching(func(received message) bool { return received.topic == run.deviceTopic("rx") }); len(rx) != 0 {
 		t.Errorf("%d readings reached the broker after it was taken away", len(rx))
 	}
 }
@@ -312,48 +322,50 @@ func newRun(t *testing.T) *run {
 		t.Fatalf("run id: %v", err)
 	}
 	id := hex.EncodeToString(random[:])
-	r := &run{id: id, device: "e2e-" + id, instance: "e2e-" + id, dir: t.TempDir()}
-	r.master, r.slave = newPTY(t)
-	r.relay = startRelay(t, os.Getenv("TEST_BROKER"))
-	r.subscribe(t)
-	return r
+	agentRun := &run{id: id, device: "e2e-" + id, instance: "e2e-" + id, dir: t.TempDir()}
+	agentRun.master, agentRun.slave = newPTY(t)
+	agentRun.relay = startRelay(t, os.Getenv("TEST_BROKER"))
+	agentRun.subscribe(t)
+	return agentRun
 }
 
-func (r *run) deviceTopic(leaf string) string {
-	return "skuhus/acme/vasby/pack-03/" + r.device + "/" + leaf
+func (run *run) deviceTopic(leaf string) string {
+	return "skuhus/acme/vasby/pack-03/" + run.device + "/" + leaf
 }
 
-func (r *run) agentTopic() string { return "skuhus/acme/vasby/pack-03/agent/" + r.instance + "/status" }
+func (run *run) agentTopic() string {
+	return "skuhus/acme/vasby/pack-03/agent/" + run.instance + "/status"
+}
 
 // subscribe listens, as the ingest user and straight to the broker, to this
 // run's device topics and agent status topic.
-func (r *run) subscribe(t *testing.T) {
+func (run *run) subscribe(t *testing.T) {
 	t.Helper()
 	conn, err := net.DialTimeout("tcp", os.Getenv("TEST_BROKER"), 10*time.Second)
 	if err != nil {
 		t.Fatalf("dial the broker: %v", err)
 	}
 	client := paho.NewClient(paho.ClientConfig{
-		ClientID: "e2e-" + r.id + "-observer",
+		ClientID: "e2e-" + run.id + "-observer",
 		Conn:     conn,
 		OnPublishReceived: []func(paho.PublishReceived) (bool, error){func(received paho.PublishReceived) (bool, error) {
-			r.receive(received.Packet)
+			run.receive(received.Packet)
 			return true, nil
 		}},
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	user, pass := os.Getenv("TEST_INGEST_USER"), os.Getenv("TEST_INGEST_PASS")
-	ack, err := client.Connect(ctx, &paho.Connect{ClientID: "e2e-" + r.id + "-observer", KeepAlive: 30, CleanStart: true,
+	ack, err := client.Connect(ctx, &paho.Connect{ClientID: "e2e-" + run.id + "-observer", KeepAlive: 30, CleanStart: true,
 		Username: user, UsernameFlag: true, Password: []byte(pass), PasswordFlag: true})
 	if err != nil || ack.ReasonCode != 0 {
 		t.Fatalf("connect as %s: %v, %v", user, err, ack)
 	}
 	t.Cleanup(func() { _ = client.Disconnect(&paho.Disconnect{}) })
-	r.observer = client
+	run.observer = client
 	subscription, err := client.Subscribe(ctx, &paho.Subscribe{Subscriptions: []paho.SubscribeOptions{
-		{Topic: "skuhus/acme/vasby/pack-03/" + r.device + "/+", QoS: 1},
-		{Topic: r.agentTopic(), QoS: 1},
+		{Topic: "skuhus/acme/vasby/pack-03/" + run.device + "/+", QoS: 1},
+		{Topic: run.agentTopic(), QoS: 1},
 	}})
 	if err != nil {
 		t.Fatalf("subscribe: %v", err)
@@ -373,21 +385,24 @@ type message struct {
 	body   map[string]any
 }
 
-func (m message) str(key string) string  { s, _ := m.body[key].(string); return s }
-func (m message) num(key string) float64 { f, _ := m.body[key].(float64); return f }
-func (m message) expiryText() string {
-	if m.expiry == nil {
+func (received message) str(key string) string { text, _ := received.body[key].(string); return text }
+func (received message) num(key string) float64 {
+	number, _ := received.body[key].(float64)
+	return number
+}
+func (received message) expiryText() string {
+	if received.expiry == nil {
 		return "none"
 	}
-	return fmt.Sprintf("%d s", *m.expiry)
+	return fmt.Sprintf("%d s", *received.expiry)
 }
 
-func (m message) isEvent(device, code string) bool {
-	return m.topic == "skuhus/acme/vasby/pack-03/"+device+"/status" && m.str("kind") == "event" && m.str("code") == code
+func (received message) isEvent(device, code string) bool {
+	return received.topic == "skuhus/acme/vasby/pack-03/"+device+"/status" && received.str("kind") == "event" && received.str("code") == code
 }
 
-func (m message) firstDevice() (map[string]any, bool) {
-	devices, _ := m.body["devices"].([]any)
+func (received message) firstDevice() (map[string]any, bool) {
+	devices, _ := received.body["devices"].([]any)
 	if len(devices) == 0 {
 		return nil, false
 	}
@@ -395,26 +410,26 @@ func (m message) firstDevice() (map[string]any, bool) {
 	return device, ok
 }
 
-func (r *run) receive(packet *paho.Publish) {
-	m := message{topic: packet.Topic, qos: packet.QoS}
+func (run *run) receive(packet *paho.Publish) {
+	received := message{topic: packet.Topic, qos: packet.QoS}
 	if packet.Properties != nil {
-		m.expiry = packet.Properties.MessageExpiry
+		received.expiry = packet.Properties.MessageExpiry
 	}
-	if err := json.Unmarshal(packet.Payload, &m.body); err != nil {
-		m.body = map[string]any{"unparsable": string(packet.Payload)}
+	if err := json.Unmarshal(packet.Payload, &received.body); err != nil {
+		received.body = map[string]any{"unparsable": string(packet.Payload)}
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.messages = append(r.messages, m)
+	run.mu.Lock()
+	defer run.mu.Unlock()
+	run.messages = append(run.messages, received)
 }
 
-func (r *run) matching(match func(message) bool) []message {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+func (run *run) matching(match func(message) bool) []message {
+	run.mu.Lock()
+	defer run.mu.Unlock()
 	var out []message
-	for _, m := range r.messages {
-		if match(m) {
-			out = append(out, m)
+	for _, received := range run.messages {
+		if match(received) {
+			out = append(out, received)
 		}
 	}
 	return out
@@ -422,26 +437,26 @@ func (r *run) matching(match func(message) bool) []message {
 
 // waitFor waits for a matching message and returns the first. It does not
 // count them: a keepalive, for one, arrives every interval.
-func (r *run) waitFor(t *testing.T, what string, match func(message) bool) message {
+func (run *run) waitFor(t *testing.T, what string, match func(message) bool) message {
 	t.Helper()
-	waitUntil(t, what, 30*time.Second, func() bool { return len(r.matching(match)) > 0 })
-	return r.matching(match)[0]
+	waitUntil(t, what, 30*time.Second, func() bool { return len(run.matching(match)) > 0 })
+	return run.matching(match)[0]
 }
 
 // waitForCount waits for count matching messages, and fails the test if more
 // than count arrive within a moment: a reading published twice is a defect.
-func (r *run) waitForCount(t *testing.T, what string, count int, match func(message) bool) []message {
+func (run *run) waitForCount(t *testing.T, what string, count int, match func(message) bool) []message {
 	t.Helper()
-	waitUntil(t, what, 30*time.Second, func() bool { return len(r.matching(match)) >= count })
+	waitUntil(t, what, 30*time.Second, func() bool { return len(run.matching(match)) >= count })
 	time.Sleep(500 * time.Millisecond)
-	if got := len(r.matching(match)); got != count {
+	if got := len(run.matching(match)); got != count {
 		t.Fatalf("%s: %d arrived, want exactly %d", what, got, count)
 	}
-	return r.matching(match)
+	return run.matching(match)
 }
 
 // start writes the agent's configuration and runs it.
-func (r *run) start(t *testing.T) *agentProcess {
+func (run *run) start(t *testing.T) *agentProcess {
 	t.Helper()
 	config := fmt.Sprintf(`identity: { project: acme, site: vasby, station: pack-03, instance: %s }
 broker:
@@ -461,12 +476,12 @@ logging:
   level: debug
   file: %s
   stdout: true
-`, r.instance, r.relay.addr(), r.device, r.slave, filepath.Join(r.dir, "agent.log"))
-	configPath := filepath.Join(r.dir, "agent.yaml")
+`, run.instance, run.relay.addr(), run.device, run.slave, filepath.Join(run.dir, "agent.log"))
+	configPath := filepath.Join(run.dir, "agent.yaml")
 	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
-	agent := &agentProcess{logFile: filepath.Join(r.dir, "agent.log"), done: make(chan struct{})}
+	agent := &agentProcess{logFile: filepath.Join(run.dir, "agent.log"), done: make(chan struct{})}
 	agent.cmd = exec.Command(agentBinary, "run", "--config", configPath)
 	agent.cmd.Env = append(os.Environ(),
 		"SH_DEV_AGENT_MQTT_USERNAME="+os.Getenv("TEST_MQTT_USER"),
@@ -574,34 +589,34 @@ func startRelay(t *testing.T, target string) *relay {
 	if err != nil {
 		t.Fatalf("relay: %v", err)
 	}
-	r := &relay{listener: listener, target: target}
-	go r.accept()
-	t.Cleanup(r.cut)
-	return r
+	proxy := &relay{listener: listener, target: target}
+	go proxy.accept()
+	t.Cleanup(proxy.cut)
+	return proxy
 }
 
-func (r *relay) addr() string { return r.listener.Addr().String() }
+func (relay *relay) addr() string { return relay.listener.Addr().String() }
 
-func (r *relay) accept() {
+func (relay *relay) accept() {
 	for {
-		client, err := r.listener.Accept()
+		client, err := relay.listener.Accept()
 		if err != nil {
 			return
 		}
-		broker, err := net.DialTimeout("tcp", r.target, 10*time.Second)
+		broker, err := net.DialTimeout("tcp", relay.target, 10*time.Second)
 		if err != nil {
 			client.Close()
 			continue
 		}
-		r.mu.Lock()
-		if r.isCut {
-			r.mu.Unlock()
+		relay.mu.Lock()
+		if relay.isCut {
+			relay.mu.Unlock()
 			client.Close()
 			broker.Close()
 			return
 		}
-		r.conns = append(r.conns, client, broker)
-		r.mu.Unlock()
+		relay.conns = append(relay.conns, client, broker)
+		relay.mu.Unlock()
 		// Either side closing closes both, so that the broker sees an agent
 		// killed by SIGKILL drop without a DISCONNECT, as it would directly.
 		go func() {
@@ -617,12 +632,12 @@ func (r *relay) accept() {
 	}
 }
 
-func (r *relay) cut() {
-	r.listener.Close()
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.isCut = true
-	for _, conn := range r.conns {
+func (relay *relay) cut() {
+	relay.listener.Close()
+	relay.mu.Lock()
+	defer relay.mu.Unlock()
+	relay.isCut = true
+	for _, conn := range relay.conns {
 		conn.Close()
 	}
 }
@@ -697,14 +712,14 @@ type syncBuffer struct {
 	buf bytes.Buffer
 }
 
-func (b *syncBuffer) Write(p []byte) (int, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.Write(p)
+func (buffer *syncBuffer) Write(data []byte) (int, error) {
+	buffer.mu.Lock()
+	defer buffer.mu.Unlock()
+	return buffer.buf.Write(data)
 }
 
-func (b *syncBuffer) String() string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.String()
+func (buffer *syncBuffer) String() string {
+	buffer.mu.Lock()
+	defer buffer.mu.Unlock()
+	return buffer.buf.String()
 }

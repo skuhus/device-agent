@@ -226,10 +226,10 @@ func TestPahoLinesNameTheirCaller(t *testing.T) {
 	if len(records) != 2 || records[0]["msg"] != "sending CONNECT" || records[1]["msg"] != "connected" {
 		t.Fatalf("records = %v", records)
 	}
-	for i, record := range records {
+	for index, record := range records {
 		source := record["source"].(map[string]any)
-		if !strings.HasSuffix(source["function"].(string), ".TestPahoLinesNameTheirCaller") || source["line"] != float64(line+1+i) {
-			t.Errorf("record %d source = %v, want this test, line %d", i, source, line+1+i)
+		if !strings.HasSuffix(source["function"].(string), ".TestPahoLinesNameTheirCaller") || source["line"] != float64(line+1+index) {
+			t.Errorf("record %d source = %v, want this test, line %d", index, source, line+1+index)
 		}
 	}
 }

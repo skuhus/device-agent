@@ -15,18 +15,18 @@ func feed(t *testing.T, framer *Framer, reads ...string) ([][]byte, []Discard) {
 	t.Helper()
 	var frames [][]byte
 	var discards []Discard
-	for _, r := range reads {
-		fr, d := framer.Append([]byte(r))
-		frames = append(frames, fr...)
-		discards = append(discards, d...)
+	for _, read := range reads {
+		readFrames, readDiscards := framer.Append([]byte(read))
+		frames = append(frames, readFrames...)
+		discards = append(discards, readDiscards...)
 	}
 	return frames, discards
 }
 
 func framesAsStrings(frames [][]byte) []string {
 	out := make([]string, len(frames))
-	for i, framer := range frames {
-		out[i] = string(framer)
+	for index, frame := range frames {
+		out[index] = string(frame)
 	}
 	return out
 }
@@ -37,9 +37,9 @@ func wantFrames(t *testing.T, got [][]byte, want ...string) {
 	if len(gotStrings) != len(want) {
 		t.Fatalf("got %d frames %q, want %d %q", len(gotStrings), gotStrings, len(want), want)
 	}
-	for i := range want {
-		if gotStrings[i] != want[i] {
-			t.Errorf("frame %d = %q, want %q", i, gotStrings[i], want[i])
+	for index := range want {
+		if gotStrings[index] != want[index] {
+			t.Errorf("frame %d = %q, want %q", index, gotStrings[index], want[index])
 		}
 	}
 }
@@ -49,9 +49,9 @@ func wantDiscards(t *testing.T, got []Discard, want ...wire.DiscardReason) {
 	if len(got) != len(want) {
 		t.Fatalf("got %d discards %v, want %d %v", len(got), got, len(want), want)
 	}
-	for i := range want {
-		if got[i].Reason != want[i] {
-			t.Errorf("discard %d = %s, want %s", i, got[i].Reason, want[i])
+	for index := range want {
+		if got[index].Reason != want[index] {
+			t.Errorf("discard %d = %s, want %s", index, got[index].Reason, want[index])
 		}
 	}
 }
@@ -193,10 +193,10 @@ func TestFramerRejectsOneByteOverMaxFrameBytes(t *testing.T) {
 func TestFramerBoundsBufferOnEndlessInput(t *testing.T) {
 	const maxFrame = 64
 	framer := newFramer(t, "\r", maxFrame)
-	for i := 0; i < 1000; i++ {
+	for index := 0; index < 1000; index++ {
 		framer.Append(bytes.Repeat([]byte("Z"), 512))
 		if framer.Pending() > maxFrame+len(framer.separator) {
-			t.Fatalf("after %d reads Pending() = %d, want at most %d", i, framer.Pending(), maxFrame+len(framer.separator))
+			t.Fatalf("after %d reads Pending() = %d, want at most %d", index, framer.Pending(), maxFrame+len(framer.separator))
 		}
 	}
 	if !framer.Resyncing() {

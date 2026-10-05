@@ -488,9 +488,9 @@ func TestTxsAreWrittenWholeInArrivalOrder(t *testing.T) {
 	run := startTxRun(t, transport, printer, 3, 10*time.Millisecond)
 	var want [][]byte
 	var ids []string
-	for i := 0; i < 20; i++ {
-		id := fmt.Sprintf("00000000-0000-4000-8000-%012d", i)
-		job := []byte(fmt.Sprintf("job %02d %s\n", i, strings.Repeat("#", i)))
+	for index := 0; index < 20; index++ {
+		id := fmt.Sprintf("00000000-0000-4000-8000-%012d", index)
+		job := []byte(fmt.Sprintf("job %02d %s\n", index, strings.Repeat("#", index)))
 		ids, want = append(ids, id), append(want, job)
 		run.send(id, job, 30*time.Second)
 	}
@@ -503,9 +503,9 @@ func TestTxsAreWrittenWholeInArrivalOrder(t *testing.T) {
 	if len(writes) != len(want) {
 		t.Fatalf("%d writes, want %d", len(writes), len(want))
 	}
-	for i := range want {
-		if !bytes.Equal(writes[i], want[i]) {
-			t.Errorf("write %d = %q, want %q", i, writes[i], want[i])
+	for index := range want {
+		if !bytes.Equal(writes[index], want[index]) {
+			t.Errorf("write %d = %q, want %q", index, writes[index], want[index])
 		}
 	}
 }
@@ -627,8 +627,8 @@ func requireRecord(t *testing.T, records []map[string]any, keyValues ...any) {
 	t.Helper()
 	for _, record := range records {
 		match := true
-		for i := 0; i+1 < len(keyValues); i += 2 {
-			if record[keyValues[i].(string)] != keyValues[i+1] {
+		for index := 0; index+1 < len(keyValues); index += 2 {
+			if record[keyValues[index].(string)] != keyValues[index+1] {
 				match = false
 				break
 			}
@@ -699,14 +699,14 @@ func TestResendAfterFailureIsWrittenAgain(t *testing.T) {
 func TestWrittenIDsKeepTheMostRecent(t *testing.T) {
 	ids := newWrittenIDs(3)
 	at := time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
-	for i, id := range []string{"a", "b", "c", "d"} {
-		ids.remember(id, at.Add(time.Duration(i)*time.Second))
+	for index, id := range []string{"a", "b", "c", "d"} {
+		ids.remember(id, at.Add(time.Duration(index)*time.Second))
 	}
 	if _, known := ids.lookup("a"); known {
 		t.Error("the oldest of four ids is remembered by a set of three")
 	}
-	for i, id := range []string{"b", "c", "d"} {
-		if when, known := ids.lookup(id); !known || !when.Equal(at.Add(time.Duration(i+1)*time.Second)) {
+	for index, id := range []string{"b", "c", "d"} {
+		if when, known := ids.lookup(id); !known || !when.Equal(at.Add(time.Duration(index+1)*time.Second)) {
 			t.Errorf("%s: %s, %t; want remembered with its time", id, when, known)
 		}
 	}

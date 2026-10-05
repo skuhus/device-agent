@@ -184,10 +184,10 @@ func (fake *fakeTransport) calls(kind string) int {
 	return count
 }
 
-func decodeAll[T any](messages []published) []T {
-	out := make([]T, 0, len(messages))
+func decodeAll[Decoded any](messages []published) []Decoded {
+	out := make([]Decoded, 0, len(messages))
 	for _, message := range messages {
-		var decoded T
+		var decoded Decoded
 		if err := json.Unmarshal(message.payload, &decoded); err != nil {
 			panic(err)
 		}
@@ -373,17 +373,17 @@ func TestPublishesRxOnTheDeviceTopic(t *testing.T) {
 		t.Fatalf("rx topics = %v, want two on skuhus/acme/vasby/pack-03/scanner-main/rx", topics)
 	}
 	rx := transport.rxOn("skuhus/acme/vasby/pack-03/scanner-main/rx")
-	for i, want := range []string{"7310425012345", "A42154587"} {
-		got := rx[i]
-		if got.Kind != wire.KindRx || got.Schema != wire.Schema || got.DeviceID != "scanner-main" || got.Seq != uint64(i+1) {
-			t.Errorf("rx %d = kind %q schema %d device %q seq %d", i, got.Kind, got.Schema, got.DeviceID, got.Seq)
+	for index, want := range []string{"7310425012345", "A42154587"} {
+		got := rx[index]
+		if got.Kind != wire.KindRx || got.Schema != wire.Schema || got.DeviceID != "scanner-main" || got.Seq != uint64(index+1) {
+			t.Errorf("rx %d = kind %q schema %d device %q seq %d", index, got.Kind, got.Schema, got.DeviceID, got.Seq)
 		}
 		if got.DeviceType == nil || *got.DeviceType != "symbol-05e0-1701" {
-			t.Errorf("rx %d device_type = %v, want symbol-05e0-1701", i, got.DeviceType)
+			t.Errorf("rx %d device_type = %v, want symbol-05e0-1701", index, got.DeviceType)
 		}
 		raw, _ := base64.StdEncoding.DecodeString(got.RawB64)
 		if string(raw) != want || got.Text == nil || *got.Text != want {
-			t.Errorf("rx %d carries %q (text %v), want %q", i, raw, got.Text, want)
+			t.Errorf("rx %d carries %q (text %v), want %q", index, raw, got.Text, want)
 		}
 	}
 }
@@ -406,9 +406,9 @@ func TestTwoDevicesPublishToTheirOwnTopics(t *testing.T) {
 			t.Errorf("%s got %d messages, want %d", topic, len(rx), len(want))
 			continue
 		}
-		for i, text := range want {
-			if rx[i].Text == nil || *rx[i].Text != text || rx[i].Seq != uint64(i+1) {
-				t.Errorf("%s message %d = %v seq %d, want %q seq %d", topic, i, rx[i].Text, rx[i].Seq, text, i+1)
+		for index, text := range want {
+			if rx[index].Text == nil || *rx[index].Text != text || rx[index].Seq != uint64(index+1) {
+				t.Errorf("%s message %d = %v seq %d, want %q seq %d", topic, index, rx[index].Text, rx[index].Seq, text, index+1)
 			}
 		}
 	}
@@ -615,20 +615,20 @@ func TestNewRejectsUnusableOptions(t *testing.T) {
 		mutate func(*Options)
 		want   string
 	}{
-		{"no transport", func(o *Options) { o.Transport = nil }, "transport is required"},
-		{"no builder", func(o *Options) { o.Builder = nil }, "message builder is required"},
-		{"no devices", func(o *Options) { o.Devices = nil }, "at least one device"},
-		{"no agent status topic", func(o *Options) { o.AgentStatus = "" }, "status topic is required"},
-		{"zero publish timeout", func(o *Options) { o.PublishTimeout = 0 }, "publish timeout must be positive"},
-		{"zero buffer", func(o *Options) { o.BufferSize = 0 }, "buffer size must be positive"},
-		{"zero drain timeout", func(o *Options) { o.DrainTimeout = 0 }, "drain timeout must be positive, got 0s"},
-		{"zero event buffer", func(o *Options) { o.EventBufferSize = 0 }, "event buffer size must be positive"},
-		{"device without message expiry", func(o *Options) { o.Devices[0].Wire.Expiry = 0 }, "has no message expiry"},
-		{"zero keepalive interval", func(o *Options) { o.KeepaliveInterval = 0 }, "keepalive interval must be positive"},
-		{"no missed keepalives", func(o *Options) { o.MissedKeepalives = 0 }, "missed keepalives must be at least 1"},
-		{"device without a reader", func(o *Options) { o.Devices[0].Reader = nil }, "has no reader"},
-		{"device without topics", func(o *Options) { o.Devices[0].Topics = wire.DeviceTopics{} }, "has no topics"},
-		{"device remembering no tx id", func(o *Options) { o.Devices[0].TxRememberedIDs = 0 }, "must remember at least 1 written tx id, got 0"},
+		{"no transport", func(opts *Options) { opts.Transport = nil }, "transport is required"},
+		{"no builder", func(opts *Options) { opts.Builder = nil }, "message builder is required"},
+		{"no devices", func(opts *Options) { opts.Devices = nil }, "at least one device"},
+		{"no agent status topic", func(opts *Options) { opts.AgentStatus = "" }, "status topic is required"},
+		{"zero publish timeout", func(opts *Options) { opts.PublishTimeout = 0 }, "publish timeout must be positive"},
+		{"zero buffer", func(opts *Options) { opts.BufferSize = 0 }, "buffer size must be positive"},
+		{"zero drain timeout", func(opts *Options) { opts.DrainTimeout = 0 }, "drain timeout must be positive, got 0s"},
+		{"zero event buffer", func(opts *Options) { opts.EventBufferSize = 0 }, "event buffer size must be positive"},
+		{"device without message expiry", func(opts *Options) { opts.Devices[0].Wire.Expiry = 0 }, "has no message expiry"},
+		{"zero keepalive interval", func(opts *Options) { opts.KeepaliveInterval = 0 }, "keepalive interval must be positive"},
+		{"no missed keepalives", func(opts *Options) { opts.MissedKeepalives = 0 }, "missed keepalives must be at least 1"},
+		{"device without a reader", func(opts *Options) { opts.Devices[0].Reader = nil }, "has no reader"},
+		{"device without topics", func(opts *Options) { opts.Devices[0].Topics = wire.DeviceTopics{} }, "has no topics"},
+		{"device remembering no tx id", func(opts *Options) { opts.Devices[0].TxRememberedIDs = 0 }, "must remember at least 1 written tx id, got 0"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
