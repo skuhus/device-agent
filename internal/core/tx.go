@@ -1,8 +1,6 @@
 package core
 
 import (
-	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"sync"
@@ -348,38 +346,6 @@ func (core *Core) txResult(line *pipeline, result wire.TxResult, at time.Time, e
 		"code", string(result.Code), "text", result.Text, "outcome", outcome}
 	logging.Record(core.log, level, message, append(attrs, extra...)...)
 	line.events.push(statusItem{tx: &txResultItem{result: result, at: at}})
-}
-
-// publishTxResult sends one tx result with what remains of the device's
-// message expiry, as an event is sent.
-func (core *Core) publishTxResult(line *pipeline, item *txResultItem) {
-	result := item.result
-	age := core.opts.Now().Sub(item.at)
-	attrs := []any{"id", result.ID, "device_id", result.DeviceID, "tx_id", deref(result.TxID),
-		"state", string(result.State), "code", string(result.Code), "age", age.String()}
-	if core.pastDrainDeadline() {
-		core.log.Warn("tx result dropped", append(attrs, "reason", "shutdown drain deadline passed")...)
-		return
-	}
-	remaining := line.device.Wire.Expiry - age
-	if remaining <= 0 {
-		core.log.Warn("tx result dropped", append(attrs, "reason", "older than its message expiry",
-			"message_expiry", line.device.Wire.Expiry.String())...)
-		return
-	}
-	payload, err := json.Marshal(result)
-	if err != nil {
-		core.log.Error("tx result could not be encoded", append(attrs, "error", err.Error())...)
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), core.opts.PublishTimeout)
-	err = core.opts.Transport.PublishEvent(ctx, line.device.Topics.Status(), payload, remaining)
-	cancel()
-	if err != nil {
-		core.log.Warn("tx result publish failed", append(attrs, "error", err.Error())...)
-		return
-	}
-	core.log.Info("tx result published", append(attrs, "message_expiry_left", remaining.String())...)
 }
 
 // payloadIf is a tx's data for a log record that carries it only with
