@@ -57,14 +57,25 @@ new topic and message layout, not new reading logic.
 of the scanner agent, which was never released under it; the number is skipped
 and not reused. Source: maintainer, 2026-09-29.
 
-Builds before that stay on 0.x; the constant is 0.3.0
+Builds before it were 0.x, up to 0.3.0. The constant is 2.0.0 from T13 on
 (internal/version/version.go). The release workflow releases whenever a merge
 to master carries a version that has no tag yet (.github/workflows/release.yml),
-so 2.0.0 is set in the pull request that completes the release scope.
+so the merge of T13's pull request releases 2.0.0.
 
 `[Decided]` 2.0.0 releases reading and writing together. Source: maintainer,
 2026-10-04 ("we need both rx and tx in the release now"). This replaces the
 decision of 2026-09-29 that 2.0.0 releases reading and 2.1.0 writing.
+
+`[Decided]` A release's notes start with a link to README.md, "Upgrading", at
+the release's tag, above the notes GitHub generates; that section says what a
+station and a consumer change for each release. Source: maintainer, 2026-10-05
+(#18 Q1). For 2.0.0 it lists what changed from 0.3.0.
+
+`[Decided]` The image on GHCR, `ghcr.io/skuhus/skuhus-device-agent`, is public,
+so that a station pulls it without credentials. Source: maintainer, 2026-10-05
+(#18 Q2). The 0.3.0 image, `ghcr.io/skuhus/skuhus-device-serial-scanner`,
+refuses an anonymous pull, so the new package is expected to start private too,
+and an organisation owner makes it public after the release first pushes it.
 
 ## Naming
 

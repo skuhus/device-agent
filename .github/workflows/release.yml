@@ -144,7 +144,9 @@ jobs:
 
       # The tag is created by the release itself, so a tag and a release always
       # appear together: a tag pushed separately would survive a failed publish
-      # and make the next merge skip a release that never happened.
+      # and make the next merge skip a release that never happened. The notes
+      # start with a link to README.md's "Upgrading", at this release's tag,
+      # above the generated notes (#18 Q1).
       - name: tag and release
         if: steps.version.outputs.release == 'true'
         env:
@@ -155,6 +157,7 @@ jobs:
           gh release create "v${version}" \
             --target "${GITHUB_SHA}" \
             --title "v${version}" \
+            --notes "Upgrading from an earlier release: [README.md, \"Upgrading\"](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/v${version}/README.md#upgrading)." \
             --generate-notes \
             dist/*
           echo "released v${version} from ${GITHUB_SHA}"
