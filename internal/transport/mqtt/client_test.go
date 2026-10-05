@@ -78,36 +78,8 @@ func TestReconnectAtOnceThenAsThePolicySays(t *testing.T) {
 	}
 }
 
-func TestTLSConfigPlaintextSchemeHasNoTLS(t *testing.T) {
-	u, err := url.Parse("tcp://localhost:1883")
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	cfg, err := tlsConfig(u, "", true)
-	if err != nil {
-		t.Fatalf("tlsConfig: %v", err)
-	}
-	if cfg != nil {
-		t.Error("a plaintext URL produced a TLS configuration")
-	}
-}
-
-// A CA file with a plaintext URL means someone believes the connection is
-// encrypted when it is not. That is worth failing over rather than ignoring.
-func TestTLSConfigRejectsCAFileOnPlaintextURL(t *testing.T) {
-	u, _ := url.Parse("tcp://localhost:1883")
-	_, err := tlsConfig(u, "/etc/skuhus-device-agent/ca.pem", false)
-	if err == nil {
-		t.Fatal("expected an error")
-	}
-	if !strings.Contains(err.Error(), "not TLS") {
-		t.Errorf("error = %v, want it to say the scheme is not TLS", err)
-	}
-}
-
 func TestTLSConfigUsesHostnameAndRejectsBadCA(t *testing.T) {
-	u, _ := url.Parse("tls://mq.internal:8883")
-	cfg, err := tlsConfig(u, "", false)
+	cfg, err := tlsConfig("mq.internal", "", false)
 	if err != nil {
 		t.Fatalf("tlsConfig: %v", err)
 	}
@@ -125,7 +97,7 @@ func TestTLSConfigUsesHostnameAndRejectsBadCA(t *testing.T) {
 	if err := os.WriteFile(notPEM, []byte("this is not a certificate"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	if _, err := tlsConfig(u, notPEM, false); err == nil {
+	if _, err := tlsConfig("mq.internal", notPEM, false); err == nil {
 		t.Error("expected an error for a file containing no certificates")
 	}
 }
@@ -150,8 +122,11 @@ func TestDialRejectsUnusableOptions(t *testing.T) {
 		{"no reconnect interval", func(opts *Options) { opts.Reconnect = backoff.Policy{} }, "reconnect: the interval must be positive"},
 		{"unparseable url", func(opts *Options) { opts.URL = "://nope" }, "broker url"},
 		{"missing ca file", func(opts *Options) {
-			opts.URL, opts.CAFile = "tls://mq.internal:8883", "/nonexistent/ca.pem"
+			opts.URL, opts.TLS, opts.CAFile = "tls://mq.internal:8883", true, "/nonexistent/ca.pem"
 		}, "ca_file"},
+		// A CA file without TLS means someone believes the connection is
+		// encrypted when it is not.
+		{"ca file without TLS", func(opts *Options) { opts.CAFile = "/etc/skuhus-device-agent/ca.pem" }, "a CA file is set but the connection is not TLS"},
 		{"will without a topic", func(opts *Options) { opts.Will = func() ([]byte, error) { return []byte("{}"), nil } }, "a will needs both"},
 		{"will topic without a payload", func(opts *Options) { opts.WillTopic = "t" }, "a will needs both"},
 	}

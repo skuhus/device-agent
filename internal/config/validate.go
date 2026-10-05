@@ -29,9 +29,6 @@ var (
 	// unstableDevPath matches kernel-assigned names that move between reboots
 	// and replug order.
 	unstableDevPath = regexp.MustCompile(`^/dev/tty(ACM|USB|S|AMA)[0-9]+$`)
-
-	tlsSchemes       = map[string]bool{"tls": true, "ssl": true, "mqtts": true, "wss": true}
-	plaintextSchemes = map[string]bool{"tcp": true, "mqtt": true, "ws": true}
 )
 
 // Limits that are not settings: the serial line's character sizes, and the
@@ -138,6 +135,12 @@ func validateBroker(broker Broker, env map[string]string) ([]error, []Warning) {
 					"set with a TLS scheme; certificate verification will be skipped"})
 			}
 		case plaintextSchemes[parsed.Scheme]:
+			if broker.CAFile != "" {
+				// Someone who set a CA file believes the connection is
+				// encrypted, and it would not be.
+				problems = append(problems, fmt.Errorf(
+					"broker.ca_file is set but broker.url %q is plaintext; the connection would not be encrypted", broker.URL))
+			}
 			if !broker.Insecure {
 				problems = append(problems, fmt.Errorf(
 					"broker.url %q is plaintext; set broker.insecure: true to allow it (development only)", broker.URL))

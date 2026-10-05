@@ -169,6 +169,7 @@ func runAgent(ctx context.Context, cfg *config.Config, warnings []config.Warning
 		ClientID:       cfg.Identity.Instance,
 		Username:       creds.Username,
 		Password:       creds.Password,
+		TLS:            cfg.Broker.UsesTLS(),
 		CAFile:         cfg.Broker.CAFile,
 		Insecure:       cfg.Broker.Insecure,
 		Keepalive:      cfg.Broker.Keepalive.Duration(),

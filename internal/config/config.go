@@ -85,6 +85,19 @@ func (broker Broker) RedactedURL() string {
 	return parsed.Redacted()
 }
 
+// The broker URL schemes the agent accepts, as autopaho dials them
+// (autopaho/net.go): a TLS scheme, or with broker.insecure a plaintext one.
+var (
+	tlsSchemes       = map[string]bool{"tls": true, "ssl": true, "mqtts": true, "wss": true}
+	plaintextSchemes = map[string]bool{"tcp": true, "mqtt": true, "ws": true}
+)
+
+// UsesTLS reports whether the broker URL's scheme is a TLS one.
+func (broker Broker) UsesTLS() bool {
+	parsed, err := url.Parse(broker.URL)
+	return err == nil && tlsSchemes[parsed.Scheme]
+}
+
 // ReconnectPolicy is the wait before each attempt to connect.
 func (broker Broker) ReconnectPolicy() backoff.Policy {
 	return broker.ReconnectBackoff.policy(broker.ReconnectInterval)

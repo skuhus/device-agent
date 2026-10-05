@@ -46,9 +46,12 @@ type Options struct {
 	ClientID string
 	Username string
 	Password string
-	CAFile   string
-	// Insecure allows a plaintext URL and skips certificate verification. The
-	// configuration layer already refuses a plaintext URL without it.
+	// TLS says whether the connection is encrypted; the configuration decides
+	// it from the URL's scheme. CAFile and Insecure apply only with it.
+	TLS    bool
+	CAFile string
+	// Insecure skips certificate verification. The configuration refuses a
+	// plaintext URL without it.
 	Insecure bool
 	// Keepalive must be positive: zero would turn keepalive off, and a
 	// half-open connection would go undetected.
@@ -134,14 +137,24 @@ func Dial(ctx context.Context, opts Options) (*Client, error) {
 	}
 	log = log.With("broker", brokerURL.Redacted(), "client_id", opts.ClientID)
 
-	tlsCfg, err := tlsConfig(brokerURL, opts.CAFile, opts.Insecure)
-	if err != nil {
-		return nil, err
+	var tlsCfg *tls.Config
+	switch {
+	case opts.TLS:
+		if tlsCfg, err = tlsConfig(brokerURL.Hostname(), opts.CAFile, opts.Insecure); err != nil {
+			return nil, err
+		}
+	case opts.CAFile != "":
+		return nil, errors.New("mqtt: a CA file is set but the connection is not TLS")
 	}
 	if (opts.Will == nil) != (opts.WillTopic == "") {
 		return nil, errors.New("mqtt: a will needs both a topic and a way to compose it")
 	}
 
+	log.Info("broker connection settings", "tls", opts.TLS, "ca_file", opts.CAFile, "insecure", opts.Insecure,
+		"keepalive", opts.Keepalive.String(), "connect_timeout", opts.ConnectTimeout.String(),
+		"reconnect_interval", opts.Reconnect.Interval.String(), "reconnect_backoff", opts.Reconnect.Grow,
+		"reconnect_backoff_max", opts.Reconnect.Max.String(), "reconnect_backoff_jitter", opts.Reconnect.Jitter,
+		"subscriptions", opts.Subscriptions, "will_topic", opts.WillTopic)
 	lines := &lineGate{}
 	cm, err := autopaho.NewConnection(ctx, clientConfig(opts, brokerURL, tlsCfg, log, lines))
 	if err != nil {
@@ -414,20 +427,11 @@ func reconnectDelay(policy backoff.Policy) func(attempt int) time.Duration {
 	}
 }
 
-// tlsConfig builds the TLS settings for a TLS scheme, and returns nil for a
-// plaintext one so autopaho dials TCP.
-func tlsConfig(brokerURL *url.URL, caFile string, insecure bool) (*tls.Config, error) {
-	switch brokerURL.Scheme {
-	case "tls", "ssl", "mqtts", "mqtt+ssl", "tcps", "wss":
-	default:
-		if caFile != "" {
-			return nil, fmt.Errorf("mqtt: broker.ca_file is set but the URL scheme %q is not TLS", brokerURL.Scheme)
-		}
-		return nil, nil
-	}
-
+// tlsConfig builds the TLS settings for a connection to host, verified against
+// caFile when there is one and the system's CA certificates otherwise.
+func tlsConfig(host, caFile string, insecure bool) (*tls.Config, error) {
 	cfg := &tls.Config{
-		ServerName:         brokerURL.Hostname(),
+		ServerName:         host,
 		InsecureSkipVerify: insecure,
 		MinVersion:         tls.VersionTLS12,
 	}

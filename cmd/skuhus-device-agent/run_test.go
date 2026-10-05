@@ -122,7 +122,7 @@ func TestRunUsesTheConfiguredSettings(t *testing.T) {
 	configFile := filepath.Join(dir, "agent.yaml")
 	body := fmt.Sprintf(`identity: { project: acme, site: vasby, station: pack-03 }
 broker:
-  url: tcp://127.0.0.1:1
+  url: tls://127.0.0.1:1
   insecure: true
   reconnect_interval: 130ms
 devices:
@@ -165,6 +165,9 @@ logging:
 	starting := stdout.WithMessage(t, "device starting")
 	if len(starting) != 1 || starting[0]["tx_remembered_ids"] != float64(77) {
 		t.Errorf("device starting records = %v, want one with tx_remembered_ids 77", starting)
+	}
+	if connection := stdout.WithMessage(t, "broker connection settings"); len(connection) != 1 || connection[0]["tls"] != true {
+		t.Errorf("broker connection records = %v, want one with tls, for the tls:// URL", connection)
 	}
 	if intake := stdout.WithMessage(t, "tx intake ready"); len(intake) != 1 || intake[0]["tx_intake_size"] != float64(9) {
 		t.Errorf("tx intake records = %v, want one with the configured size 9", intake)

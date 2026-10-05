@@ -650,6 +650,35 @@ func TestValidateBrokerScheme(t *testing.T) {
 	}
 }
 
+// The configuration decides whether the connection uses TLS, from the URL's
+// scheme, and tells the transport.
+func TestUsesTLSFollowsTheScheme(t *testing.T) {
+	for url, want := range map[string]bool{
+		"tls://mq.internal:8883": true, "ssl://mq.internal:8883": true, "mqtts://mq.internal:8883": true, "wss://mq.internal/mqtt": true,
+		"tcp://mq.internal:1883": false, "mqtt://mq.internal:1883": false, "ws://mq.internal/mqtt": false,
+	} {
+		if got := defaultBroker(url, true).UsesTLS(); got != want {
+			t.Errorf("%s: UsesTLS = %t, want %t", url, got, want)
+		}
+	}
+}
+
+// A CA file with a plaintext URL means someone believes the connection is
+// encrypted when it is not, so validation refuses it, naming both keys.
+func TestValidateRefusesCAFileWithPlaintextURL(t *testing.T) {
+	caFile := filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(caFile, []byte("-"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	broker := defaultBroker("tcp://mq.internal:1883", true)
+	broker.CAFile = caFile
+	problems, _ := validateBroker(broker, map[string]string{EnvMQTTPassword: "x"})
+	want := `broker.ca_file is set but broker.url "tcp://mq.internal:1883" is plaintext; the connection would not be encrypted`
+	if len(problems) != 1 || problems[0].Error() != want {
+		t.Errorf("problems = %v, want exactly %q", problems, want)
+	}
+}
+
 // Plaintext is allowed only when it is asked for explicitly, and it still warns
 // on every load.
 func TestValidatePlaintextBrokerWarnsWhenAllowed(t *testing.T) {
