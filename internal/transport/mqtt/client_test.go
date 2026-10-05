@@ -19,7 +19,7 @@ import (
 	"github.com/skuhus/device-agent/internal/logging/logtest"
 )
 
-func TestExpirySecondsRoundsUp(t *testing.T) {
+func TestMessageExpiryIntervalRoundsUp(t *testing.T) {
 	tests := []struct {
 		in   time.Duration
 		want uint32
@@ -31,8 +31,8 @@ func TestExpirySecondsRoundsUp(t *testing.T) {
 		{-time.Second, 0},
 	}
 	for _, tc := range tests {
-		if got := expirySeconds(tc.in); got != tc.want {
-			t.Errorf("expirySeconds(%s) = %d, want %d", tc.in, got, tc.want)
+		if got := messageExpiryInterval(tc.in); got != tc.want {
+			t.Errorf("messageExpiryInterval(%s) = %d, want %d", tc.in, got, tc.want)
 		}
 	}
 }

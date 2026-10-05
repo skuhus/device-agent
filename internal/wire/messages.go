@@ -611,7 +611,7 @@ func (builder *Builder) txResult(device Device, deviceOpen bool, tx TxRef, code 
 		header:         builder.header(KindTxResult, at),
 		deviceHeader:   deviceHeaderOf(device),
 		DeviceOpen:     deviceOpen,
-		MessageExpiryS: expirySeconds(device.Expiry),
+		MessageExpiryS: messageExpirySeconds(device.Expiry),
 		TxID:           nullable(tx.ID),
 		Sender:         nullable(tx.Sender),
 		State:          txCodeStates[code],
@@ -629,7 +629,7 @@ func (builder *Builder) Keepalive(started, at time.Time, interval time.Duration,
 		entries = append(entries, KeepaliveDevice{
 			deviceHeader:   deviceHeaderOf(state.Device),
 			DeviceOpen:     state.Open,
-			MessageExpiryS: expirySeconds(state.Device.Expiry),
+			MessageExpiryS: messageExpirySeconds(state.Device.Expiry),
 			DeviceCounters: state.Counters,
 		})
 	}
@@ -655,7 +655,7 @@ func (builder *Builder) event(device Device, open bool, code EventCode, text str
 		header:         builder.header(KindEvent, at),
 		deviceHeader:   deviceHeaderOf(device),
 		DeviceOpen:     open,
-		MessageExpiryS: expirySeconds(device.Expiry),
+		MessageExpiryS: messageExpirySeconds(device.Expiry),
 		Code:           code,
 		Text:           text,
 		Detail:         detail,
@@ -687,4 +687,7 @@ func nullable(value string) *string {
 	return &value
 }
 
-func expirySeconds(expiry time.Duration) int64 { return int64(expiry / time.Second) }
+// messageExpirySeconds is a device's message expiry as message_expiry_s
+// carries it. The configuration holds every message expiry to whole seconds,
+// so nothing is lost.
+func messageExpirySeconds(expiry time.Duration) int64 { return int64(expiry / time.Second) }

@@ -300,7 +300,7 @@ func (client *Client) AwaitConnection(ctx context.Context) error {
 // within ctx, which the caller records as a failed delivery rather than
 // retrying: by the time a retry lands, the reading is stale anyway.
 func (client *Client) PublishRx(ctx context.Context, topic string, payload []byte, expiry time.Duration) error {
-	seconds := expirySeconds(expiry)
+	seconds := messageExpiryInterval(expiry)
 	return client.publish(ctx, &paho.Publish{
 		Topic:      topic,
 		QoS:        qosAtLeastOnce,
@@ -313,7 +313,7 @@ func (client *Client) PublishRx(ctx context.Context, topic string, payload []byt
 // expiry, as DESIGN-V2.md, "Publishing", assigns it. Like a reading, an event
 // is not retried: the keepalive counts what it reported either way.
 func (client *Client) PublishEvent(ctx context.Context, topic string, payload []byte, expiry time.Duration) error {
-	seconds := expirySeconds(expiry)
+	seconds := messageExpiryInterval(expiry)
 	return client.publish(ctx, &paho.Publish{
 		Topic:      topic,
 		QoS:        qosAtLeastOnce,
@@ -327,7 +327,7 @@ func (client *Client) PublishEvent(ctx context.Context, topic string, payload []
 // nothing is acknowledged, so a nil error means the packet was written, not
 // that the broker took it.
 func (client *Client) PublishKeepalive(ctx context.Context, topic string, payload []byte, expiry time.Duration) error {
-	seconds := expirySeconds(expiry)
+	seconds := messageExpiryInterval(expiry)
 	return client.publish(ctx, &paho.Publish{
 		Topic:      topic,
 		QoS:        qosAtMostOnce,
@@ -387,13 +387,15 @@ func reasonString(resp *paho.PublishResponse) string {
 	return ""
 }
 
-// expirySeconds rounds up, so a sub-second ttl expires after a second rather
-// than immediately. MQTT expresses expiry in whole seconds.
-func expirySeconds(delay time.Duration) uint32 {
-	if delay <= 0 {
+// messageExpiryInterval is MQTT's Message Expiry Interval for expiry, in
+// whole seconds, the protocol's unit. It rounds up, so that a sub-second
+// expiry ends after a second rather than at once, and is 0, meaning none, for
+// no expiry.
+func messageExpiryInterval(expiry time.Duration) uint32 {
+	if expiry <= 0 {
 		return 0
 	}
-	seconds := math.Ceil(delay.Seconds())
+	seconds := math.Ceil(expiry.Seconds())
 	if seconds > math.MaxUint32 {
 		return math.MaxUint32
 	}
