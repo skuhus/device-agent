@@ -417,16 +417,21 @@ devices:
 
 A group name is a topic level, so it follows `[a-z0-9-]+`, as a device id does
 ("Topics"). The site topic has the shape of a device's tx topic, so `group` is
-reserved as a station id, as `agent` is reserved as a device id. No other topic
-has the project topic's or the station topic's number of levels (#35 Q1b).
+reserved as a station id, as `agent` is reserved as a device id (#35 Q1b). No
+other topic has the project topic's five levels. The station topic has the
+seven of the agent's status topic, and differs from it in its fifth level,
+`group` where that has `agent`, and in its last.
 
 `[Decided]` A group is not a `device_type`, which does not identify a model.
 What describes a device, a `device_info` with its model, description, serial
 number and part number, is decided on #36. Source: maintainer, 2026-10-06
 (#35 Q1, Q1a).
 
-The agent subscribes to a group's topic once, however many of its devices are in
-the group, and hands a tx on it to each of them (cmd/skuhus-device-agent/run.go,
+A tx on a group's topic reaches the devices in the group whose agents are
+connected; one published while an agent is disconnected is lost to that
+agent's devices, as any tx is ("The tx contract"). The agent subscribes to a
+group's topic once, however many of its devices are in the group, and hands a
+tx on it to each of them (cmd/skuhus-device-agent/run.go,
 buildDevices; internal/core/tx.go, admitTx). Tx ids are kept per device
 (internal/core/pipeline.go:28-33). Each device therefore takes the tx once and
 publishes its own results on its own status topic, all with the same `tx_id`. A

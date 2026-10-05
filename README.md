@@ -124,8 +124,8 @@ the project, the site or the station:
 broadcast_groups: { project: [], site: [scales], station: [] }
 ```
 
-A tx on a group's topic is taken by every device in the group, as if it had
-been sent to each on its own topic: each writes it and answers on its own
+A tx on a group's topic is taken by every device in the group whose agent is
+connected, as if it had been sent to each on its own topic: each writes it and answers on its own
 status topic, all under the tx's id, and a resend is answered by each for
 itself. The agent subscribes to each group's topic once, and each keepalive
 lists every topic that reaches a device, as subscribed, with the broker's
