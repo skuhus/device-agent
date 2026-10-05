@@ -190,7 +190,7 @@ var deviceSettingFlags = map[string]bool{
 // setting with --device, which takes the config file's, and --config with
 // --path, which reads no file. It requires --separator with --path, because a
 // separator is per model and a wrong one corrupts readings without failing
-// (DESIGN-V2.md, "A CR/CRLF mismatch is the one wrong terminator that is not
+// (DESIGN-V2.md, "A CR/CRLF mismatch is the one wrong separator that is not
 // loud"), so it has no default.
 func checkProbeSources(fs *flag.FlagSet, fromConfig bool, separator string) error {
 	var ignored []string

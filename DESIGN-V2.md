@@ -43,7 +43,7 @@ Printers are the main reason for writing; they are "a big chunk of our needs"
 Whether they move onto this agent depends on the exchange session, which is
 deferred; see "Deferred beyond #4".
 
-The v1 read path is already device-neutral. The framer knows a terminator, a
+The v1 read path is already device-neutral. The framer knows a separator, a
 maximum frame size and an inter-character timeout
 (internal/device/serial/framer.go). The only scanner-specific text in the
 device layer is the assert_config warning (internal/device/serial/serial.go:212).
@@ -190,10 +190,10 @@ parameters and its separator. Source: maintainer, 2026-09-19.
 `[Carried over]` Framing rules, each with the measurement behind it under
 "Carried over from v1":
 
-- max_frame_bytes counts the payload and excludes the terminator
-  ("max_frame_bytes is the payload size, excluding the terminator").
-- After any discard the framer drops bytes up to the next terminator ("Any
-  discard resynchronises to the next terminator").
+- max_frame_bytes counts the payload and excludes the separator
+  ("max_frame_bytes is the payload size, excluding the separator").
+- After any discard the framer drops bytes up to the next separator ("Any
+  discard resynchronises to the next separator").
 - Resynchronisation also ends when the device is silent for one inter-character
   timeout ("Choosing inter_char_timeout").
 - The reopen backoff resets after a session that stayed up, not after an open
@@ -220,7 +220,7 @@ discard per scan, and no frames (docs/scanners/symbol-05e0-1701.md:32).
 A separator configured as only part of what the device sends, such as CR for a
 device that sends CRLF, is a different failure. Frames still come out, and the
 stray byte is discarded or prepended to the next reading ("A CR/CRLF
-mismatch is the one wrong terminator that is not loud").
+mismatch is the one wrong separator that is not loud").
 
 `[Decided]` That failure is detected upstream from the counters, not in the
 agent: for one device, rx bytes rising, rx frames flat, timeout discards rising.
@@ -230,7 +230,7 @@ Source: maintainer, 2026-09-29 (#23 Q5).
 size, or both: #7. Source: maintainer, 2026-09-29, as no device in use needs it.
 v1 discards on both triggers because publishing the tail of a frame produced
 plausible, wrong readings when a CRLF device was configured as CR ("A
-CR/CRLF mismatch is the one wrong terminator that is not loud"). #7 records the
+CR/CRLF mismatch is the one wrong separator that is not loud"). #7 records the
 constraints: chosen per device, never the default where a separator is
 configured, and the size semantics settled with a device on the bench.
 
@@ -1027,7 +1027,7 @@ expiry (#13 Q1). Readings do not wait (#13 Q2).
 
 Do not "fix" any of this by applying the offline-first principle uniformly.
 
-### max_frame_bytes is the payload size, excluding the terminator
+### max_frame_bytes is the payload size, excluding the separator
 
 The specification does not say which. The payload was chosen so that the number
 means the same whatever the separator is: switching a device from CR to CRLF
@@ -1043,7 +1043,7 @@ the separator, so that a frame which arrives at once is read in one call
 (internal/device/serial/serial.go, New). It had fixed bounds of 64 and 4096
 bytes until #30.
 
-### Any discard resynchronises to the next terminator
+### Any discard resynchronises to the next separator
 
 Resuming mid-frame after a discard emits the tail of a broken frame as if it
 were a short reading. That is silent corruption: a plausible-looking payload no
@@ -1076,7 +1076,7 @@ checklist of device-agent-spec.md, section 11, expects. In v2 each of those
 discards is also an event and a count in the keepalive, which is how an
 unmatched separator is seen from outside the station ("Reading: rx").
 
-### A CR/CRLF mismatch is the one wrong terminator that is not loud
+### A CR/CRLF mismatch is the one wrong separator that is not loud
 
 Measured on a Symbol 05e0:1701, not reasoned about. When the device sends CRLF
 and the configuration says CR, the frame splits correctly on the CR and an
