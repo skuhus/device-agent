@@ -229,26 +229,6 @@ func TestClassify(t *testing.T) {
 	}
 }
 
-// streamingPort has data waiting, and each read takes as much of it as the
-// buffer holds, as a port with a backlog does.
-type streamingPort struct {
-	blockingPort
-	mu      sync.Mutex
-	pending []byte
-}
-
-func (port *streamingPort) Read(buffer []byte) (int, error) {
-	port.mu.Lock()
-	defer port.mu.Unlock()
-	if len(port.pending) == 0 {
-		time.Sleep(10 * time.Millisecond)
-		return 0, nil
-	}
-	read := copy(buffer, port.pending)
-	port.pending = port.pending[read:]
-	return read, nil
-}
-
 // One read holds a whole frame with its separator, whatever max_frame_bytes
 // is, so a frame of the largest size that arrives at once is read in one call.
 func TestOneReadHoldsAWholeFrame(t *testing.T) {
@@ -257,7 +237,7 @@ func TestOneReadHoldsAWholeFrame(t *testing.T) {
 	opts.MaxFrameBytes = maxFrame
 	var logged *logtest.Log
 	opts.Logger, logged = logtest.New(t, "debug")
-	port := &streamingPort{blockingPort: blockingPort{hold: time.Hour}, pending: bytes.Repeat([]byte("7"), 3*maxFrame)}
+	port := &scriptedPort{blockingPort: blockingPort{hold: time.Hour}, data: bytes.Repeat([]byte("7"), 3*maxFrame)}
 	opts.Open = func(string, *goserial.Mode) (goserial.Port, error) { return port, nil }
 	runDevice(t, opts, 1)
 
