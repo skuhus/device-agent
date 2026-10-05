@@ -376,9 +376,24 @@ expose them to every user on the host.
 skuhus-device-agent validate --config /etc/skuhus-device-agent/config.yaml
 ```
 
-Every problem is reported in one pass, so a misconfigured station is fixed
-without a restart per typo. Warnings are printed on stderr and do not affect the
-exit code.
+It states its result on the first line. A usable configuration gives `OK`, on
+stdout, followed by every setting, and exit status 0:
+
+```
+OK: /etc/skuhus-device-agent/config.yaml is valid
+```
+
+Any other gives `ERROR`, on stderr, with every problem found, one a line, and
+exit status 1, so a misconfigured station is fixed without a restart per typo:
+
+```
+ERROR: /etc/skuhus-device-agent/config.yaml is not valid: 2 problems
+  - identity.station "pack_03" must match [a-z0-9-]+; it is used verbatim as an MQTT topic segment
+  - devices.scanner-main.baud must be positive, got 0
+```
+
+Warnings are printed on stderr, before the result, and do not change it:
+`OK: ... is valid, with 1 warning above`.
 
 ## Upgrading
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -53,8 +54,8 @@ func TestRunValidateAcceptsGoodConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("validateCommand: %v", err)
 	}
-	if !strings.Contains(stdout, "configuration is valid") {
-		t.Errorf("stdout does not confirm validity:\n%s", stdout)
+	if first, _, _ := strings.Cut(stdout, "\n"); first != "OK: "+path+" is valid" {
+		t.Errorf("first line = %q, want the OK result naming the file", first)
 	}
 	// Every key, under the file's name, with its value: the ones goodConfig
 	// sets and the defaults it leaves to the agent.
@@ -100,14 +101,38 @@ func TestRunValidateShowsBroadcastGroupTopics(t *testing.T) {
 	}
 }
 
+// An invalid file ends in ERROR, naming the file and how many problems it
+// has, then each problem on its own line, all on stderr; main exits 1 without
+// printing them again.
 func TestRunValidateReportsBadConfig(t *testing.T) {
 	path := writeConfig(t, strings.Replace(goodConfig, "station: pack-03", "station: pack_03", 1))
-	_, _, err := validate(t, "--config", path)
-	if err == nil {
-		t.Fatal("an invalid station id should make validate fail")
+	stdout, stderr, err := validate(t, "--config", path)
+	if !errors.Is(err, errReported) {
+		t.Fatalf("err = %v, want errReported", err)
 	}
-	if !strings.Contains(err.Error(), "identity.station") {
-		t.Errorf("error does not name the field: %v", err)
+	lines := strings.Split(strings.TrimSpace(stderr), "\n")
+	want := "ERROR: " + path + " is not valid: 2 problems"
+	if len(lines) != 3 || lines[0] != want || !strings.HasPrefix(lines[1], "  - identity.station \"pack_03\"") ||
+		!strings.HasPrefix(lines[2], "  - identity.instance \"pack_03\"") {
+		t.Errorf("stderr =\n%s\nwant %q, then the station and the instance it defaults to, a line each", stderr, want)
+	}
+	if stdout != "" {
+		t.Errorf("stdout = %q, want nothing", stdout)
+	}
+}
+
+// A file that cannot be read, or parsed, ends in ERROR too.
+func TestRunValidateReportsUnreadableConfig(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "absent.yaml")
+	_, stderr, err := validate(t, "--config", missing)
+	if !errors.Is(err, errReported) || !strings.HasPrefix(stderr, "ERROR: "+missing+" is not valid: 1 problem\n  - open ") {
+		t.Errorf("err = %v, stderr =\n%s\nwant ERROR naming the file and why it could not be opened", err, stderr)
+	}
+	unknownKey := writeConfig(t, goodConfig+"surprise: true\n")
+	_, stderr, err = validate(t, "--config", unknownKey)
+	if !errors.Is(err, errReported) || !strings.Contains(stderr, "is not valid: 1 problem\n  - line ") ||
+		!strings.Contains(stderr, "field surprise not found") {
+		t.Errorf("err = %v, stderr =\n%s\nwant ERROR with the unknown key", err, stderr)
 	}
 }
 
@@ -122,8 +147,8 @@ func TestRunValidateWarningsDoNotFail(t *testing.T) {
 	if !strings.Contains(stderr, "warning:") || !strings.Contains(stderr, "by-id") {
 		t.Errorf("the unstable path warning is missing from stderr:\n%s", stderr)
 	}
-	if !strings.Contains(stdout, "warnings       1") {
-		t.Errorf("stdout does not report the warning count:\n%s", stdout)
+	if first, _, _ := strings.Cut(stdout, "\n"); first != "OK: "+path+" is valid, with 1 warning above" {
+		t.Errorf("first line = %q, want OK with the warning count", first)
 	}
 }
 
@@ -147,12 +172,5 @@ func TestRunValidateRejectsPositionalArguments(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "usage") {
 		t.Errorf("error should be a usage error: %v", err)
-	}
-}
-
-func TestRunValidateMissingConfigFile(t *testing.T) {
-	_, _, err := validate(t, "--config", filepath.Join(t.TempDir(), "absent.yaml"))
-	if err == nil {
-		t.Fatal("a missing config file should fail")
 	}
 }
