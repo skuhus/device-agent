@@ -1,5 +1,6 @@
 // Command sendtx publishes a tx to a device, as a sender does, and prints the
-// results the agent publishes for it.
+// results the agent publishes for it. Sent to a broadcast group's topic, it
+// prints the result of every device that takes the tx until --wait ends.
 //
 // It is the writing counterpart of the consumer: run it as the ingest user,
 // which may write device tx topics and read everything. It is not part of the
@@ -29,14 +30,14 @@ func main() {
 	broker := flags.String("broker", "skuhus-dev-rabbitmq:1883", "broker address as host:port")
 	username := flags.String("username", "ingest", "broker username")
 	password := flags.String("password", "ingest-dev", "broker password")
-	topic := flags.String("topic", "", "the device's tx topic, skuhus/<project>/<site>/<station>/<device>/tx")
+	topic := flags.String("topic", "", "the device's tx topic, skuhus/<project>/<site>/<station>/<device>/tx, or a broadcast group's")
 	text := flags.String("text", "", `bytes to write, with \r, \n, \t, \\ and \xNN decoded`)
 	file := flags.String("file", "", "write the bytes of this file instead")
 	hexData := flags.String("hex", "", "write these bytes, given as hex, instead")
 	id := flags.String("id", "", "the tx id; a new UUID by default. Reuse one to see in_progress or a resend")
 	sender := flags.String("sender", "make-send-tx", "the tx's sender")
 	expiry := flags.Duration("expiry", 30*time.Second, "the tx's MQTT message expiry; 0 sends none")
-	wait := flags.Duration("wait", 15*time.Second, "how long to wait for the tx's final result")
+	wait := flags.Duration("wait", 15*time.Second, "how long to wait for the tx's final result, or for a group's results")
 	if err := flags.Parse(os.Args[1:]); err != nil {
 		os.Exit(2)
 	}
@@ -159,7 +160,7 @@ func run(broker, username, password, topic, id, sender string, data []byte, expi
 	defer client.Disconnect(&paho.Disconnect{ReasonCode: 0})
 
 	// Subscribed before the tx goes out, so that no result is missed.
-	status := strings.TrimSuffix(topic, "/tx") + "/status"
+	status, group := resultsFilter(topic)
 	suback, err := client.Subscribe(ctx, &paho.Subscribe{Subscriptions: []paho.SubscribeOptions{{Topic: status, QoS: 1}}})
 	if err != nil {
 		return fmt.Errorf("subscribe to %s: %w", status, err)
@@ -188,17 +189,45 @@ func run(broker, username, password, topic, id, sender string, data []byte, expi
 	fmt.Printf("sent tx %s, %d bytes, to %s at %s\n", id, len(data), topic, sent.UTC().Format("15:04:05.000"))
 
 	deadline := time.After(wait)
+	finished := map[string]bool{}
 	for {
 		select {
 		case result := <-results:
 			detail, _ := json.Marshal(result["detail"])
-			fmt.Printf("+%s  %s  %s  %s  %s\n", time.Since(sent).Round(time.Millisecond), result["state"], result["code"], result["text"], detail)
+			device := ""
+			if group {
+				device = fmt.Sprintf("  %s/%s", result["station"], result["device_id"])
+			}
+			fmt.Printf("+%s%s  %s  %s  %s  %s\n", time.Since(sent).Round(time.Millisecond), device, result["state"], result["code"], result["text"], detail)
 			switch result["state"] {
 			case "written", "failed", "rejected":
-				return nil
+				if !group {
+					return nil
+				}
+				finished[fmt.Sprintf("%s/%s", result["station"], result["device_id"])] = true
 			}
 		case <-deadline:
+			if group && len(finished) > 0 {
+				fmt.Printf("%d devices finished the tx within %s\n", len(finished), wait)
+				return nil
+			}
 			return fmt.Errorf("no final result within %s", wait)
 		}
 	}
+}
+
+// resultsFilter is the filter the tx's results arrive on, and whether the
+// topic is a broadcast group's: a device's status topic, or every device's
+// status topic within the group's scope.
+func resultsFilter(topic string) (string, bool) {
+	levels := strings.Split(topic, "/")
+	switch {
+	case len(levels) == 5 && levels[2] == "group":
+		return strings.Join(levels[:2], "/") + "/+/+/+/status", true
+	case len(levels) == 6 && levels[3] == "group":
+		return strings.Join(levels[:3], "/") + "/+/+/status", true
+	case len(levels) == 7 && levels[4] == "group":
+		return strings.Join(levels[:4], "/") + "/+/status", true
+	}
+	return strings.TrimSuffix(topic, "/tx") + "/status", false
 }
