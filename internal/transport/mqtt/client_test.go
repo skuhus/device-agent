@@ -134,7 +134,7 @@ func TestTLSConfigUsesHostnameAndRejectsBadCA(t *testing.T) {
 // is for the reason the case names.
 func TestDialRejectsUnusableOptions(t *testing.T) {
 	usable := Options{
-		URL: "tcp://localhost:1883", ClientID: "pack-03", Keepalive: 30 * time.Second,
+		URL: "tcp://localhost:1883", ClientID: "pack-03", Keepalive: 30 * time.Second, ConnectTimeout: 10 * time.Second,
 		Reconnect: backoff.Policy{Interval: time.Second},
 	}
 	tests := []struct {
@@ -146,6 +146,7 @@ func TestDialRejectsUnusableOptions(t *testing.T) {
 		// Zero would turn keepalive off, and a half-open connection would go
 		// undetected; the configuration refuses it, and so does Dial.
 		{"no keepalive", func(opts *Options) { opts.Keepalive = 0 }, "keepalive must be positive, got 0s"},
+		{"no connect timeout", func(opts *Options) { opts.ConnectTimeout = 0 }, "connect timeout must be positive, got 0s"},
 		{"no reconnect interval", func(opts *Options) { opts.Reconnect = backoff.Policy{} }, "reconnect: the interval must be positive"},
 		{"unparseable url", func(opts *Options) { opts.URL = "://nope" }, "broker url"},
 		{"missing ca file", func(opts *Options) {
@@ -180,8 +181,9 @@ func TestConnectionConfiguration(t *testing.T) {
 	brokerURL, _ := url.Parse("tcp://skuhus-dev-rabbitmq:1883")
 	composed := 0
 	cfg := clientConfig(Options{
-		ClientID:  "pack-03",
-		WillTopic: "skuhus/acme/vasby/pack-03/agent/pack-03/status",
+		ClientID:       "pack-03",
+		ConnectTimeout: 7 * time.Second,
+		WillTopic:      "skuhus/acme/vasby/pack-03/agent/pack-03/status",
 		Will: func() ([]byte, error) {
 			composed++
 			return []byte(fmt.Sprintf(`{"kind":"offline","reason":"will","attempt":%d}`, composed)), nil
@@ -210,6 +212,9 @@ func TestConnectionConfiguration(t *testing.T) {
 	}
 	if cfg.WillMessage.Payload != nil {
 		t.Errorf("the configured will was changed to %s; each packet should get a copy", cfg.WillMessage.Payload)
+	}
+	if cfg.ConnectTimeout != 7*time.Second {
+		t.Errorf("connect timeout = %s, want the configured 7s", cfg.ConnectTimeout)
 	}
 	if !cfg.CleanStartOnInitialConnection || cfg.SessionExpiryInterval != 0 || cfg.Queue != nil {
 		t.Errorf("clean start %t, session expiry %d, queue %v: want a clean connection with no session and no queue",
@@ -312,5 +317,59 @@ func TestReceivedPublishesReachOnMessage(t *testing.T) {
 	none := clientConfig(Options{ClientID: "pack-03"}, brokerURL, nil, slog.New(slog.DiscardHandler), &lineGate{})
 	if len(none.OnPublishReceived) != 0 {
 		t.Errorf("a connection without OnMessage has %d publish handlers", len(none.OnPublishReceived))
+	}
+}
+
+// fakeSubscriber answers a SUBSCRIBE as the broker would, and records the
+// packet and how long it was given.
+type fakeSubscriber struct {
+	answer   *paho.Suback
+	err      error
+	packet   *paho.Subscribe
+	deadline time.Duration
+}
+
+func (fake *fakeSubscriber) Subscribe(ctx context.Context, packet *paho.Subscribe) (*paho.Suback, error) {
+	fake.packet = packet
+	if deadline, ok := ctx.Deadline(); ok {
+		fake.deadline = time.Until(deadline)
+	}
+	return fake.answer, fake.err
+}
+
+// Every tx topic is asked for at QoS 1 within the connect timeout. What the
+// broker grants is INFO; a refused topic, or no answer at all, is an ERROR,
+// because that device will receive no tx.
+func TestSubscribeAsksForEachTopicAndLogsTheAnswer(t *testing.T) {
+	topics := []string{"skuhus/acme/vasby/pack-03/printer-1/tx", "skuhus/acme/vasby/pack-03/printer-2/tx"}
+	logger, log := logtest.New(t, "debug")
+	broker := &fakeSubscriber{answer: &paho.Suback{Reasons: []byte{1, 0x87}}}
+	subscribe(broker, topics, 7*time.Second, logger)
+
+	if broker.deadline <= 6*time.Second || broker.deadline > 7*time.Second {
+		t.Errorf("subscribing was given %s, want the 7s connect timeout", broker.deadline)
+	}
+	if len(broker.packet.Subscriptions) != 2 {
+		t.Fatalf("asked for %d topics, want 2", len(broker.packet.Subscriptions))
+	}
+	for index, subscription := range broker.packet.Subscriptions {
+		if subscription.Topic != topics[index] || subscription.QoS != 1 {
+			t.Errorf("subscription %d = %s at QoS %d, want %s at 1", index, subscription.Topic, subscription.QoS, topics[index])
+		}
+	}
+	granted := log.WithMessage(t, "subscribed")
+	if len(granted) != 1 || granted[0]["topic"] != topics[0] || granted[0]["level"] != "INFO" {
+		t.Errorf("subscribed records = %v, want one INFO for %s", granted, topics[0])
+	}
+	refused := log.WithMessage(t, "subscription refused; this device will receive no tx")
+	if len(refused) != 1 || refused[0]["topic"] != topics[1] || refused[0]["reason"] != "0x87" || refused[0]["level"] != "ERROR" {
+		t.Errorf("refused records = %v, want one ERROR for %s with reason 0x87", refused, topics[1])
+	}
+
+	failingLogger, failingLog := logtest.New(t, "debug")
+	subscribe(&fakeSubscriber{err: context.DeadlineExceeded}, topics, 7*time.Second, failingLogger)
+	failed := failingLog.WithMessage(t, "subscribing failed; no tx will arrive until the next connection")
+	if len(failed) != 1 || failed[0]["level"] != "ERROR" || failed[0]["timeout"] != "7s" {
+		t.Errorf("failure records = %v, want one ERROR with the 7s timeout", failed)
 	}
 }

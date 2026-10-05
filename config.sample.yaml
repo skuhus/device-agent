@@ -55,6 +55,10 @@ broker:
 
   keepalive: 30s
 
+  # Each attempt to connect, from dialling to the broker's answer, and the wait
+  # for the broker to answer the tx subscriptions, give up after this long.
+  connect_timeout: 10s
+
   # While the broker cannot be reached, the agent tries it at once and then
   # every reconnect_interval. Every reading made while the connection is down
   # fails, so a short interval keeps that window short.

@@ -145,6 +145,9 @@ func validateBroker(broker Broker, env map[string]string) ([]error, []Warning) {
 	if broker.Keepalive <= 0 {
 		problems = append(problems, fmt.Errorf("broker.keepalive must be positive, got %s", broker.Keepalive))
 	}
+	if broker.ConnectTimeout <= 0 {
+		problems = append(problems, fmt.Errorf("broker.connect_timeout must be positive, got %s", broker.ConnectTimeout))
+	}
 	if err := broker.ReconnectPolicy().Validate(); err != nil {
 		problems = append(problems, fmt.Errorf("broker.reconnect_interval and broker.reconnect_backoff: %w", err))
 	}

@@ -63,6 +63,9 @@ type Broker struct {
 	CAFile          string   `yaml:"ca_file"`
 	Insecure        bool     `yaml:"insecure"`
 	Keepalive       Duration `yaml:"keepalive"`
+	// ConnectTimeout bounds each attempt to connect, from dialling to the
+	// broker's CONNACK, and the wait for its answer to the subscriptions.
+	ConnectTimeout Duration `yaml:"connect_timeout"`
 	// ReconnectInterval is the wait between attempts to connect, while the
 	// broker cannot be reached (#13 Q3).
 	ReconnectInterval Duration `yaml:"reconnect_interval"`

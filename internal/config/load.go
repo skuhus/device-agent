@@ -357,6 +357,7 @@ func envTargets(cfg *Config) map[string]func(string) error {
 		EnvPrefix + "BROKER_CA_FILE":          setString(&cfg.Broker.CAFile),
 		EnvPrefix + "BROKER_INSECURE":         setBool(&cfg.Broker.Insecure),
 		EnvPrefix + "BROKER_KEEPALIVE":        setDuration(&cfg.Broker.Keepalive),
+		EnvPrefix + "BROKER_CONNECT_TIMEOUT":  setDuration(&cfg.Broker.ConnectTimeout),
 		// reconnect_backoff is a mapping and has no variable, as devices have
 		// none: a mapping does not map onto flat variables.
 		EnvPrefix + "BROKER_RECONNECT_INTERVAL": setDuration(&cfg.Broker.ReconnectInterval),

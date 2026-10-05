@@ -896,6 +896,11 @@ by `jitter`, a fraction either way, so that stations that lost the broker
 together do not retry in step (internal/backoff, Policy.Wait, which the
 device reopen uses as well).
 
+Each attempt, from dialling to the broker's CONNACK, is bounded by
+`broker.connect_timeout`, 10 s by default, autopaho's own default, which the
+agent used before it was a key (autopaho/net.go; #30). The same bound applies
+to the broker's answer to the tx subscriptions.
+
 0.3.0's `broker.connect_backoff` is refused with its replacements named, as
 every removed key is ("Loading is strict in both directions").
 

@@ -251,19 +251,20 @@ func runAgent(ctx context.Context, cfg *config.Config, warnings []config.Warning
 		}
 	}
 	client, err := mqtt.Dial(connCtx, mqtt.Options{
-		URL:           cfg.Broker.URL,
-		ClientID:      cfg.Identity.Instance,
-		Username:      creds.Username,
-		Password:      creds.Password,
-		CAFile:        cfg.Broker.CAFile,
-		Insecure:      cfg.Broker.Insecure,
-		Keepalive:     cfg.Broker.Keepalive.Duration(),
-		Reconnect:     cfg.Broker.ReconnectPolicy(),
-		Subscriptions: txTopics,
-		OnMessage:     onMessage,
-		WillTopic:     agentTopics.Status(),
-		Will:          will,
-		Logger:        log,
+		URL:            cfg.Broker.URL,
+		ClientID:       cfg.Identity.Instance,
+		Username:       creds.Username,
+		Password:       creds.Password,
+		CAFile:         cfg.Broker.CAFile,
+		Insecure:       cfg.Broker.Insecure,
+		Keepalive:      cfg.Broker.Keepalive.Duration(),
+		ConnectTimeout: cfg.Broker.ConnectTimeout.Duration(),
+		Reconnect:      cfg.Broker.ReconnectPolicy(),
+		Subscriptions:  txTopics,
+		OnMessage:      onMessage,
+		WillTopic:      agentTopics.Status(),
+		Will:           will,
+		Logger:         log,
 		OnUp: func() {
 			select {
 			case connected <- struct{}{}:

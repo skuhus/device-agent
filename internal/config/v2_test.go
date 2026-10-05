@@ -438,3 +438,31 @@ func TestReopenSettings(t *testing.T) {
 		}
 	}
 }
+
+// broker.connect_timeout comes from the file or the environment, and a
+// non-positive one is refused: zero would leave no time to connect at all.
+func TestConnectTimeout(t *testing.T) {
+	set := strings.Replace(validConfig, "  reconnect_interval: 1s\n", "  reconnect_interval: 1s\n  connect_timeout: 4s\n", 1)
+	if set == validConfig {
+		t.Fatal("validConfig no longer sets reconnect_interval; this test needs to add to the broker")
+	}
+	cfg, _, err := load(t, newFixture(t, set).path, noEnv(), Overrides{})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.Broker.ConnectTimeout.Duration(); got != 4*time.Second {
+		t.Errorf("connect_timeout from the file = %s, want 4s", got)
+	}
+	cfg, _, err = load(t, newFixture(t, set).path, []string{EnvPrefix + "BROKER_CONNECT_TIMEOUT=6s"}, Overrides{})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.Broker.ConnectTimeout.Duration(); got != 6*time.Second {
+		t.Errorf("connect_timeout from the environment = %s, want 6s", got)
+	}
+	zero := strings.Replace(validConfig, "  reconnect_interval: 1s\n", "  reconnect_interval: 1s\n  connect_timeout: 0s\n", 1)
+	_, _, err = load(t, newFixture(t, zero).path, noEnv(), Overrides{})
+	if want := "broker.connect_timeout must be positive, got 0s"; err == nil || !strings.Contains(err.Error(), want) {
+		t.Errorf("error = %v, want %q", err, want)
+	}
+}

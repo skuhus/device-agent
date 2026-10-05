@@ -30,6 +30,9 @@ const (
 	DefaultReopenBackoffJitter  = 0.3
 
 	DefaultKeepalive = 30 * time.Second
+	// DefaultConnectTimeout is autopaho's own default, which the agent used
+	// before it was a setting.
+	DefaultConnectTimeout = 10 * time.Second
 	// DefaultReconnectInterval is how often the agent tries the broker while it
 	// cannot be reached, with the backoff off, which is its default (#13 Q3).
 	DefaultReconnectInterval = 1 * time.Second
@@ -76,6 +79,7 @@ func Defaults() Config {
 	return Config{
 		Broker: Broker{
 			Keepalive:         Duration(DefaultKeepalive),
+			ConnectTimeout:    Duration(DefaultConnectTimeout),
 			ReconnectInterval: Duration(DefaultReconnectInterval),
 			ReconnectBackoff: Backoff{
 				Max:    Duration(DefaultReconnectBackoffMax),

@@ -161,6 +161,7 @@ devices:
 		{"reopen_backoff.max", d.ReopenBackoff.Max.Duration(), DefaultReopenBackoffMax},
 		{"reopen_backoff.jitter", d.ReopenBackoff.Jitter, DefaultReopenBackoffJitter},
 		{"keepalive", cfg.Broker.Keepalive.Duration(), DefaultKeepalive},
+		{"connect_timeout", cfg.Broker.ConnectTimeout.Duration(), DefaultConnectTimeout},
 		{"reconnect_interval", cfg.Broker.ReconnectInterval.Duration(), DefaultReconnectInterval},
 		{"reconnect_backoff.enabled", cfg.Broker.ReconnectBackoff.Enabled, false},
 		{"reconnect_backoff.max", cfg.Broker.ReconnectBackoff.Max.Duration(), DefaultReconnectBackoffMax},
@@ -637,11 +638,7 @@ func TestValidateBrokerScheme(t *testing.T) {
 			name += " insecure"
 		}
 		t.Run(name, func(t *testing.T) {
-			problems, _ := validateBroker(Broker{
-				URL: tc.url, Insecure: tc.insecure, CredentialsFile: "",
-				Keepalive:         Duration(DefaultKeepalive),
-				ReconnectInterval: Duration(time.Second),
-			}, map[string]string{EnvMQTTPassword: "x"})
+			problems, _ := validateBroker(defaultBroker(tc.url, tc.insecure), map[string]string{EnvMQTTPassword: "x"})
 			if gotErr := len(problems) > 0; gotErr != tc.wantErr {
 				t.Errorf("error = %t, want %t (%v)", gotErr, tc.wantErr, problems)
 			}
@@ -652,11 +649,7 @@ func TestValidateBrokerScheme(t *testing.T) {
 // Plaintext is allowed only when it is asked for explicitly, and it still warns
 // on every load.
 func TestValidatePlaintextBrokerWarnsWhenAllowed(t *testing.T) {
-	problems, warnings := validateBroker(Broker{
-		URL: "tcp://mq.internal:1883", Insecure: true,
-		Keepalive:         Duration(DefaultKeepalive),
-		ReconnectInterval: Duration(time.Second),
-	}, map[string]string{EnvMQTTPassword: "x"})
+	problems, warnings := validateBroker(defaultBroker("tcp://mq.internal:1883", true), map[string]string{EnvMQTTPassword: "x"})
 	if len(problems) > 0 {
 		t.Fatalf("insecure plaintext should be allowed: %v", problems)
 	}
@@ -791,6 +784,13 @@ func TestLoadEnvironmentErrorsAreDeterministic(t *testing.T) {
 			t.Fatalf("error text varies between runs:\n%s\n---\n%s", first, err.Error())
 		}
 	}
+}
+
+// defaultBroker is the broker section's defaults with the given URL.
+func defaultBroker(url string, insecure bool) Broker {
+	broker := Defaults().Broker
+	broker.URL, broker.Insecure = url, insecure
+	return broker
 }
 
 // validDevice is a device entry every rule accepts, with the given path.

@@ -45,6 +45,9 @@ type Options struct {
 	// Keepalive must be positive: zero would turn keepalive off, and a
 	// half-open connection would go undetected.
 	Keepalive time.Duration
+	// ConnectTimeout bounds each attempt to connect, from dialling to the
+	// broker's CONNACK, and the wait for the answer to the subscriptions.
+	ConnectTimeout time.Duration
 
 	// Reconnect is the wait after a failed attempt to connect. The first
 	// attempt, at start and after a connection is lost, goes at once.
@@ -107,6 +110,9 @@ func Dial(ctx context.Context, opts Options) (*Client, error) {
 	if opts.Keepalive <= 0 {
 		return nil, fmt.Errorf("mqtt: keepalive must be positive, got %s", opts.Keepalive)
 	}
+	if opts.ConnectTimeout <= 0 {
+		return nil, fmt.Errorf("mqtt: connect timeout must be positive, got %s", opts.ConnectTimeout)
+	}
 	if err := opts.Reconnect.Validate(); err != nil {
 		return nil, fmt.Errorf("mqtt: reconnect: %w", err)
 	}
@@ -150,7 +156,7 @@ func clientConfig(opts Options, brokerURL *url.URL, tlsCfg *tls.Config, log *slo
 		ConnectUsername:               opts.Username,
 		ConnectPassword:               []byte(opts.Password),
 		ReconnectBackoff:              reconnectDelay(opts.Reconnect),
-		ConnectTimeout:                10 * time.Second,
+		ConnectTimeout:                opts.ConnectTimeout,
 		// Queue stays nil on purpose. With a queue, a publish while
 		// disconnected is accepted and sent later, which is exactly the
 		// offline replay section 6 forbids. Nil makes it fail immediately.
@@ -160,7 +166,7 @@ func clientConfig(opts Options, brokerURL *url.URL, tlsCfg *tls.Config, log *slo
 			if len(opts.Subscriptions) > 0 {
 				// Subscribing waits for the broker's answer, and this must
 				// not block the connection manager.
-				go subscribe(cm, opts.Subscriptions, log)
+				go subscribe(cm, opts.Subscriptions, opts.ConnectTimeout, log)
 			}
 			if opts.OnUp != nil {
 				opts.OnUp()
@@ -214,19 +220,27 @@ func clientConfig(opts Options, brokerURL *url.URL, tlsCfg *tls.Config, log *slo
 	return cfg
 }
 
-// subscribe asks for every topic at QoS 1 and logs what the broker answered.
-// A refused topic is an ERROR: its device will never receive a tx, and the
-// usual cause, the station's topic permission, is the operator's to fix.
-func subscribe(cm *autopaho.ConnectionManager, topics []string, log *slog.Logger) {
+// subscriber is the part of the connection manager that subscribe uses, so
+// that a test can answer for the broker.
+type subscriber interface {
+	Subscribe(ctx context.Context, packet *paho.Subscribe) (*paho.Suback, error)
+}
+
+// subscribe asks for every topic at QoS 1, waiting at most timeout for the
+// answer, and logs what the broker answered. A refused topic is an ERROR: its
+// device will never receive a tx, and the usual cause, the station's topic
+// permission, is the operator's to fix.
+func subscribe(cm subscriber, topics []string, timeout time.Duration, log *slog.Logger) {
 	subscriptions := make([]paho.SubscribeOptions, 0, len(topics))
 	for _, topic := range topics {
 		subscriptions = append(subscriptions, paho.SubscribeOptions{Topic: topic, QoS: qosAtLeastOnce})
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	suback, err := cm.Subscribe(ctx, &paho.Subscribe{Subscriptions: subscriptions})
 	if err != nil {
-		log.Error("subscribing failed; no tx will arrive until the next connection", "topics", topics, "error", err.Error())
+		log.Error("subscribing failed; no tx will arrive until the next connection", "topics", topics,
+			"timeout", timeout.String(), "error", err.Error())
 		return
 	}
 	for i, topic := range topics {
