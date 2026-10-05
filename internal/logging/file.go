@@ -8,6 +8,13 @@ import (
 	"sync"
 )
 
+const (
+	// bytesPerMB is the unit of logging.max_size_mb.
+	bytesPerMB = 1024 * 1024
+	// logFileMode lets the agent's group read the log, and no one else.
+	logFileMode = 0o640
+)
+
 // File is the log file: an append-only file rotated by size. Each Write is one
 // record, and rotation happens between records, never inside one.
 type File struct {
@@ -42,7 +49,7 @@ func OpenFile(path string, maxSizeMB, keep int) (*File, error) {
 		return nil, fmt.Errorf("logging: %s is not a directory", filepath.Dir(path))
 	}
 
-	file := &File{path: path, maxBytes: int64(maxSizeMB) * 1024 * 1024, keep: keep}
+	file := &File{path: path, maxBytes: int64(maxSizeMB) * bytesPerMB, keep: keep}
 	if err := file.open(); err != nil {
 		return nil, err
 	}
@@ -53,7 +60,7 @@ func OpenFile(path string, maxSizeMB, keep int) (*File, error) {
 func (file *File) Path() string { return file.path }
 
 func (file *File) open() error {
-	handle, err := os.OpenFile(file.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o640)
+	handle, err := os.OpenFile(file.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, logFileMode)
 	if err != nil {
 		return fmt.Errorf("logging: open %s: %w", file.path, err)
 	}

@@ -54,6 +54,13 @@ func invert[V comparable](byName map[string]V) map[V]string {
 	return names
 }
 
+// minDataBits and maxDataBits are the character sizes a serial line has. The
+// configuration checks the same range; a test keeps the two in step.
+const (
+	minDataBits = 5
+	maxDataBits = 8
+)
+
 // OpenFunc opens a serial port. It is a field on Options so tests can inject
 // failures that no PTY can reproduce, such as EIO on a removed USB device.
 type OpenFunc func(path string, mode *goserial.Mode) (goserial.Port, error)
@@ -63,9 +70,8 @@ type Options struct {
 	ID   string
 	Path string
 	Baud int
-	// DataBits, Parity and StopBits set the line format. Their zero values are
-	// 8, none and 1, the format every device was opened with before they were
-	// configurable.
+	// DataBits, Parity and StopBits set the line format. DataBits is 5 to 8;
+	// the zero values of Parity and StopBits are none and 1.
 	DataBits         int
 	Parity           goserial.Parity
 	StopBits         goserial.StopBits
@@ -130,11 +136,8 @@ func New(opts Options) (*Device, error) {
 	if opts.InterCharTimeout <= 0 {
 		return nil, fmt.Errorf("device %s: inter-character timeout must be positive, got %s", opts.ID, opts.InterCharTimeout)
 	}
-	if opts.DataBits == 0 {
-		opts.DataBits = 8
-	}
-	if opts.DataBits < 5 || opts.DataBits > 8 {
-		return nil, fmt.Errorf("device %s: data bits must be 5 to 8, got %d", opts.ID, opts.DataBits)
+	if opts.DataBits < minDataBits || opts.DataBits > maxDataBits {
+		return nil, fmt.Errorf("device %s: data bits must be %d to %d, got %d", opts.ID, minDataBits, maxDataBits, opts.DataBits)
 	}
 	if _, err := NewFramer(opts.Terminator, opts.MaxFrameBytes); err != nil {
 		return nil, fmt.Errorf("device %s: %w", opts.ID, err)

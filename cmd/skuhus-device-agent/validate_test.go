@@ -204,7 +204,7 @@ func TestRunProbeRejectsBadLineFormat(t *testing.T) {
 	for flag, want := range map[string]string{
 		"--parity=high":   `devices.probe.parity "high" is unknown`,
 		"--stop-bits=1.5": `devices.probe.stop_bits 1.5 is not supported`,
-		"--data-bits=9":   `devices.probe.data_bits must be 5, 6, 7 or 8, got 9`,
+		"--data-bits=9":   `devices.probe.data_bits must be 5 to 8, got 9`,
 	} {
 		_, _, err := probe(t, "--path", "/dev/serial/by-id/usb-x-if00", flag)
 		if err == nil || !strings.Contains(err.Error(), want) {

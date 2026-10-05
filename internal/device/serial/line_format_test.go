@@ -20,7 +20,7 @@ func TestOpenUsesTheConfiguredLineFormat(t *testing.T) {
 		stopBits goserial.StopBits
 		want     goserial.Mode
 	}{
-		{"unset is 8N1", 0, 0, 0, goserial.Mode{BaudRate: 9600, DataBits: 8, Parity: goserial.NoParity, StopBits: goserial.OneStopBit}},
+		{"8 bits with parity and stop bits unset is 8N1", 8, 0, 0, goserial.Mode{BaudRate: 9600, DataBits: 8, Parity: goserial.NoParity, StopBits: goserial.OneStopBit}},
 		{"7E2", 7, goserial.EvenParity, goserial.TwoStopBits, goserial.Mode{BaudRate: 9600, DataBits: 7, Parity: goserial.EvenParity, StopBits: goserial.TwoStopBits}},
 		{"5 bits, odd", 5, goserial.OddParity, goserial.OneStopBit, goserial.Mode{BaudRate: 9600, DataBits: 5, Parity: goserial.OddParity, StopBits: goserial.OneStopBit}},
 	}
@@ -49,13 +49,23 @@ func TestOpenUsesTheConfiguredLineFormat(t *testing.T) {
 	}
 }
 
+// 0 included: data bits are not defaulted here, the configuration supplies
+// them.
 func TestNewRejectsDataBitsOutOfRange(t *testing.T) {
-	for _, bits := range []int{4, 9} {
+	for _, bits := range []int{0, 4, 9} {
 		opts := serialOpts("format", "/dev/fake", "\r")
 		opts.DataBits = bits
 		if _, err := New(opts); err == nil || !strings.Contains(err.Error(), "data bits must be 5 to 8") {
 			t.Errorf("data bits %d: err = %v, want a rejection", bits, err)
 		}
+	}
+}
+
+// The configuration and the port accept the same data bits.
+func TestDataBitsMatchTheConfiguration(t *testing.T) {
+	if minDataBits != config.MinDataBits || maxDataBits != config.MaxDataBits {
+		t.Errorf("the port takes %d to %d data bits, the configuration %d to %d",
+			minDataBits, maxDataBits, config.MinDataBits, config.MaxDataBits)
 	}
 }
 

@@ -34,6 +34,29 @@ var (
 	plaintextSchemes = map[string]bool{"tcp": true, "mqtt": true, "ws": true}
 )
 
+// Limits that are not settings: the serial line's character sizes, and the
+// bounds on values that become topic levels, client ids, message fields or
+// buffers.
+const (
+	// MinDataBits and MaxDataBits are the character sizes a serial line
+	// has. The serial package checks the same range; a test keeps the two in
+	// step.
+	MinDataBits = 5
+	MaxDataBits = 8
+	// maxInstanceLength keeps the instance usable as an MQTT client id.
+	maxInstanceLength = 64
+	// maxFrameBytesLimit bounds max_frame_bytes, which bounds how much of a
+	// frame a stuck device can make the agent hold.
+	maxFrameBytesLimit = 1 << 20
+	maxSeparatorBytes  = 8
+	// maxDeviceTypeLength bounds a value carried in every message about the
+	// device.
+	maxDeviceTypeLength = 64
+	// secretFileOtherAccess are the permission bits for group and other,
+	// which a credentials file must not have.
+	secretFileOtherAccess = 0o077
+)
+
 // Validate checks the whole configuration and reports every problem it finds.
 //
 // env is consulted only to decide whether broker credentials are supplied
@@ -78,9 +101,10 @@ func validateIdentity(identity Identity) []error {
 		// Empty means it takes the station id, which is checked above. Load
 		// fills that in before validating, so this only happens when Validate
 		// is called on a configuration assembled by hand.
-	case !topicSegment.MatchString(identity.Instance) || len(identity.Instance) > 64:
+	case !topicSegment.MatchString(identity.Instance) || len(identity.Instance) > maxInstanceLength:
 		problems = append(problems, fmt.Errorf(
-			"identity.instance %q must match [a-z0-9-]+ and be at most 64 characters; it is a level of the agent's status topic and the MQTT client id", identity.Instance))
+			"identity.instance %q must match [a-z0-9-]+ and be at most %d characters; it is a level of the agent's status topic and the MQTT client id",
+			identity.Instance, maxInstanceLength))
 	}
 	return problems
 }
@@ -163,7 +187,7 @@ func checkSecretFile(field, path string) []error {
 	if !info.Mode().IsRegular() {
 		return []error{fmt.Errorf("%s %s is not a regular file", field, path)}
 	}
-	if perm := info.Mode().Perm(); perm&0o077 != 0 {
+	if perm := info.Mode().Perm(); perm&secretFileOtherAccess != 0 {
 		return []error{fmt.Errorf("%s %s has mode %04o; it must not be readable by group or other (chmod 0600)", field, path, perm)}
 	}
 	return nil
@@ -223,8 +247,8 @@ func validateDevices(devices []Device) ([]error, []Warning) {
 		if deviceCfg.Baud <= 0 {
 			problems = append(problems, fmt.Errorf("%s.baud must be positive, got %d", where, deviceCfg.Baud))
 		}
-		if deviceCfg.DataBits < 5 || deviceCfg.DataBits > 8 {
-			problems = append(problems, fmt.Errorf("%s.data_bits must be 5, 6, 7 or 8, got %d", where, deviceCfg.DataBits))
+		if deviceCfg.DataBits < MinDataBits || deviceCfg.DataBits > MaxDataBits {
+			problems = append(problems, fmt.Errorf("%s.data_bits must be %d to %d, got %d", where, MinDataBits, MaxDataBits, deviceCfg.DataBits))
 		}
 		if !slices.Contains(Parities, deviceCfg.Parity) {
 			problems = append(problems, fmt.Errorf("%s.parity %q is unknown; expected none, odd, even, mark or space", where, deviceCfg.Parity))
@@ -244,9 +268,9 @@ func validateDevices(devices []Device) ([]error, []Warning) {
 			problems = append(problems, fmt.Errorf(
 				"%s.max_frame_bytes is the largest accepted payload excluding the separator and must be at least 1, got %d", where, deviceCfg.MaxFrameBytes))
 		}
-		if deviceCfg.MaxFrameBytes > 1<<20 {
+		if deviceCfg.MaxFrameBytes > maxFrameBytesLimit {
 			problems = append(problems, fmt.Errorf(
-				"%s.max_frame_bytes %d exceeds 1048576; the limit exists to bound a stuck device", where, deviceCfg.MaxFrameBytes))
+				"%s.max_frame_bytes %d exceeds %d; the limit exists to bound a stuck device", where, deviceCfg.MaxFrameBytes, maxFrameBytesLimit))
 		}
 		if deviceCfg.InterCharTimeout <= 0 {
 			problems = append(problems, fmt.Errorf("%s.inter_char_timeout must be positive, got %s", where, deviceCfg.InterCharTimeout))
@@ -286,8 +310,8 @@ func validateDeviceType(where, deviceType string) []error {
 		return nil
 	case strings.TrimSpace(deviceType) == "":
 		return []error{fmt.Errorf("%s.device_type is blank; leave it out instead", where)}
-	case len(deviceType) > 64:
-		return []error{fmt.Errorf("%s.device_type is %d bytes; expected at most 64", where, len(deviceType))}
+	case len(deviceType) > maxDeviceTypeLength:
+		return []error{fmt.Errorf("%s.device_type is %d bytes; expected at most %d", where, len(deviceType), maxDeviceTypeLength)}
 	case strings.IndexFunc(deviceType, unicode.IsControl) >= 0:
 		return []error{fmt.Errorf("%s.device_type %q contains a control character", where, deviceType)}
 	}
@@ -331,8 +355,8 @@ func validateSeparator(where, separator string) []error {
 		return []error{fmt.Errorf(
 			"%s.separator %q contains a literal backslash; write it as a double-quoted YAML scalar so escapes are decoded, for example separator: \"\\r\"", where, separator)}
 	}
-	if len(separator) > 8 {
-		return []error{fmt.Errorf("%s.separator is %d bytes; expected at most 8", where, len(separator))}
+	if len(separator) > maxSeparatorBytes {
+		return []error{fmt.Errorf("%s.separator is %d bytes; expected at most %d", where, len(separator), maxSeparatorBytes)}
 	}
 	return nil
 }

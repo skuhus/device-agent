@@ -30,6 +30,14 @@ const (
 	qosAtMostOnce = 0
 )
 
+// reasonCodeFailure is the lowest MQTT 5 reason code that reports a failure
+// (MQTT 5.0, section 2.4).
+const reasonCodeFailure = 0x80
+
+// callersAboveEmit is how many frames emit skips to find the line that logged:
+// runtime.Callers, emit itself, and logAdapter's Println or Printf.
+const callersAboveEmit = 3
+
 // Options configures the connection. Everything here comes from the broker
 // section of the configuration, except the will, which the caller builds from
 // the station identity.
@@ -248,7 +256,7 @@ func subscribe(cm subscriber, topics []string, timeout time.Duration, log *slog.
 			log.Error("the broker answered fewer subscriptions than were asked for", "topic", topic, "answers", len(suback.Reasons))
 			continue
 		}
-		if code := suback.Reasons[i]; code >= 0x80 {
+		if code := suback.Reasons[i]; code >= reasonCodeFailure {
 			log.Error("subscription refused; this device will receive no tx", "topic", topic, "reason", fmt.Sprintf("0x%02x", code))
 			continue
 		}
@@ -353,7 +361,7 @@ func (client *Client) publish(ctx context.Context, packet *paho.Publish) error {
 	if resp == nil || packet.QoS == qosAtMostOnce {
 		return nil
 	}
-	if resp.ReasonCode >= 0x80 {
+	if resp.ReasonCode >= reasonCodeFailure {
 		return fmt.Errorf("publish to %s refused with reason 0x%02x%s", packet.Topic, resp.ReasonCode, reasonString(resp))
 	}
 	return nil
@@ -472,7 +480,7 @@ func (adapter logAdapter) emit(msg string) {
 		return
 	}
 	var pcs [1]uintptr
-	runtime.Callers(3, pcs[:]) // skip Callers, emit, and Println or Printf
+	runtime.Callers(callersAboveEmit, pcs[:])
 	record := slog.NewRecord(time.Now(), adapter.level, msg, pcs[0])
 	adapter.lines.pass(func() {
 		// The agent's handler reports a record it could not write itself.

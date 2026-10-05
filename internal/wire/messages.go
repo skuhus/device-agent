@@ -17,6 +17,10 @@ import (
 // are schema 1 (internal/event); consumers switch on it.
 const Schema = 2
 
+// hyphenatedUUIDLength is the length of a UUID in its hyphenated form,
+// 8-4-4-4-12 hex digits (RFC 9562, section 4).
+const hyphenatedUUIDLength = 36
+
 // TimeFormat is RFC 3339 with milliseconds. Timestamps are always rendered in
 // UTC, because consumers compare them across stations in different zones.
 const TimeFormat = "2006-01-02T15:04:05.000Z07:00"
@@ -296,7 +300,7 @@ func ReadTx(payload []byte) (TxRef, []byte, *TxProblem) {
 	}
 	// The hyphenated form only: uuid.Parse also takes braces, a urn: prefix
 	// and bare hex, none of which a sender means as an id.
-	if _, err := uuid.Parse(*fields.ID); err != nil || len(*fields.ID) != 36 {
+	if _, err := uuid.Parse(*fields.ID); err != nil || len(*fields.ID) != hyphenatedUUIDLength {
 		return ref, nil, &TxProblem{Code: TxCodeInvalidID, Text: fmt.Sprintf("the id %q is not a UUID", *fields.ID)}
 	}
 	return ref, raw, nil

@@ -99,6 +99,7 @@ func serialOpts(id, path string, term string) Options {
 		ID:               id,
 		Path:             path,
 		Baud:             9600,
+		DataBits:         8,
 		Terminator:       []byte(term),
 		MaxFrameBytes:    4096,
 		InterCharTimeout: 50 * time.Millisecond,
