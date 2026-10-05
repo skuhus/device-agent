@@ -61,6 +61,50 @@ func TestSegmentRuleRejectsEveryLevel(t *testing.T) {
 		if _, err := station.Device(value); err == nil || !strings.Contains(err.Error(), "device id") {
 			t.Errorf("device id %q: err = %v, want a rejection naming device id", value, err)
 		}
+		if _, err := station.GroupTx(ScopeSite, value); err == nil || !strings.Contains(err.Error(), "broadcast group") {
+			t.Errorf("broadcast group %q: err = %v, want a rejection naming broadcast group", value, err)
+		}
+	}
+}
+
+// A group's tx topic is under the project, the site or the station, so the
+// same name at two scopes is two topics. The device's own topic is a route too,
+// with no group.
+func TestBroadcastGroupTopics(t *testing.T) {
+	station := mustStation(t)
+	for _, check := range []struct {
+		scope TxScope
+		want  string
+	}{
+		{ScopeProject, "skuhus/acme/group/scales/tx"},
+		{ScopeSite, "skuhus/acme/vasby/group/scales/tx"},
+		{ScopeStation, "skuhus/acme/vasby/pack-03/group/scales/tx"},
+	} {
+		route, err := station.GroupTx(check.scope, "scales")
+		if err != nil {
+			t.Fatalf("GroupTx(%s): %v", check.scope, err)
+		}
+		if route != (TxRoute{Topic: check.want, Scope: check.scope, Group: "scales"}) {
+			t.Errorf("GroupTx(%s) = %+v, want %s in group scales", check.scope, route, check.want)
+		}
+	}
+	for _, scope := range []TxScope{ScopeDevice, "", "region"} {
+		if _, err := station.GroupTx(scope, "scales"); err == nil || !strings.Contains(err.Error(), "scope") {
+			t.Errorf("GroupTx(%q): err = %v, want the scope refused", scope, err)
+		}
+	}
+	device, _ := station.Device("scale-1")
+	if route := device.TxRoute(); route != (TxRoute{Topic: "skuhus/acme/vasby/pack-03/scale-1/tx", Scope: ScopeDevice}) {
+		t.Errorf("TxRoute = %+v, want the device's own tx topic with no group", route)
+	}
+}
+
+// A station called "group" would have, as its device scale-1's tx topic, the
+// site's group topic for a group called scale-1.
+func TestStationGroupIsReserved(t *testing.T) {
+	_, err := NewStationTopics("acme", "vasby", GroupLevel)
+	if err == nil || !strings.Contains(err.Error(), "reserved") {
+		t.Fatalf("station %q: err = %v, want it refused as reserved", GroupLevel, err)
 	}
 }
 
@@ -101,6 +145,9 @@ func TestFiltersSelectTheirOwnTopics(t *testing.T) {
 	agent, _ := station.Agent("pack-03")
 	first, _ := station.Device("scanner-1")
 	second, _ := station.Device("scale-1")
+	stationGroup, _ := station.GroupTx(ScopeStation, "scales")
+	siteGroup, _ := station.GroupTx(ScopeSite, "scales")
+	projectGroup, _ := station.GroupTx(ScopeProject, "scales")
 	topics := map[string]string{
 		"agent status":     agent.Status(),
 		"scanner-1 rx":     first.Rx(),
@@ -109,6 +156,9 @@ func TestFiltersSelectTheirOwnTopics(t *testing.T) {
 		"scale-1 rx":       second.Rx(),
 		"scale-1 tx":       second.Tx(),
 		"scale-1 status":   second.Status(),
+		"station group tx": stationGroup.Topic,
+		"site group tx":    siteGroup.Topic,
+		"project group tx": projectGroup.Topic,
 	}
 	want := map[string][]string{
 		station.EveryDeviceRx():     {"scanner-1 rx", "scale-1 rx"},

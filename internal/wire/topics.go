@@ -18,10 +18,37 @@ var segmentRule = regexp.MustCompile(`^[a-z0-9-]+$`)
 // may take it as its id, or that device's topics would be the agent's.
 const AgentLevel = "agent"
 
+// GroupLevel is the topic level broadcast groups' tx topics live under. A
+// site's group topic, skuhus/<project>/<site>/group/<group>/tx, has the shape
+// of a device's tx topic, so no station may take it as its id (DESIGN-V2.md,
+// "Broadcast groups").
+const GroupLevel = "group"
+
+// TxScope is how far a tx topic reaches: one device, or every device in a
+// broadcast group at a station, a site or a project.
+type TxScope string
+
+// The scopes of a tx topic.
+const (
+	ScopeDevice  TxScope = "device"
+	ScopeStation TxScope = "station"
+	ScopeSite    TxScope = "site"
+	ScopeProject TxScope = "project"
+)
+
+// TxRoute is one topic that reaches a device's tx: the device's own, or a
+// broadcast group's. Group is empty for the device's own.
+type TxRoute struct {
+	Topic string
+	Scope TxScope
+	Group string
+}
+
 // StationTopics is the topic prefix of one station,
-// skuhus/<project>/<site>/<station>, and the topics and filters under it.
+// skuhus/<project>/<site>/<station>, and the topics and filters under it,
+// with the project's and the site's prefixes for broadcast groups.
 type StationTopics struct {
-	base string
+	project, site, base string
 }
 
 // AgentTopics are the topics of one agent instance at a station.
@@ -35,7 +62,8 @@ type DeviceTopics struct {
 }
 
 // NewStationTopics builds the prefix. It returns an error naming the first
-// level that does not follow the segment rule.
+// level that does not follow the segment rule, and rejects the reserved
+// station id "group".
 func NewStationTopics(project, site, station string) (StationTopics, error) {
 	for _, level := range []struct{ name, value string }{
 		{"project", project},
@@ -46,7 +74,33 @@ func NewStationTopics(project, site, station string) (StationTopics, error) {
 			return StationTopics{}, err
 		}
 	}
-	return StationTopics{base: "skuhus/" + project + "/" + site + "/" + station}, nil
+	if station == GroupLevel {
+		return StationTopics{}, fmt.Errorf("station %q is reserved for the site's broadcast group topics", station)
+	}
+	projectPrefix := "skuhus/" + project
+	sitePrefix := projectPrefix + "/" + site
+	return StationTopics{project: projectPrefix, site: sitePrefix, base: sitePrefix + "/" + station}, nil
+}
+
+// GroupTx returns the route of a broadcast group's tx topic: under the
+// project, the site or the station, as scope says. The group's name is a topic
+// level, so it follows the segment rule.
+func (station StationTopics) GroupTx(scope TxScope, group string) (TxRoute, error) {
+	if err := checkSegment("broadcast group", group); err != nil {
+		return TxRoute{}, err
+	}
+	var prefix string
+	switch scope {
+	case ScopeProject:
+		prefix = station.project
+	case ScopeSite:
+		prefix = station.site
+	case ScopeStation:
+		prefix = station.base
+	default:
+		return TxRoute{}, fmt.Errorf("broadcast group %q has scope %q; expected project, site or station", group, scope)
+	}
+	return TxRoute{Topic: prefix + "/" + GroupLevel + "/" + group + "/tx", Scope: scope, Group: group}, nil
 }
 
 // Agent returns the topics of the agent instance. The instance is a topic
@@ -94,6 +148,9 @@ func (device DeviceTopics) Rx() string { return device.rx }
 
 // Tx carries what senders want written to the device.
 func (device DeviceTopics) Tx() string { return device.tx }
+
+// TxRoute is the device's own tx topic as a route.
+func (device DeviceTopics) TxRoute() TxRoute { return TxRoute{Topic: device.tx, Scope: ScopeDevice} }
 
 // Status carries the device's events and tx results.
 func (device DeviceTopics) Status() string { return device.status }
