@@ -113,7 +113,7 @@ A consumer takes every device at a station with a single-level wildcard:
 `skuhus/<project>/<site>/<station>/+/rx`.
 
 A tx can also reach every device in a broadcast group, on the group's own topic
-("Broadcast groups"; not built, #35).
+("Broadcast groups", #35).
 
 `[Decided]` Status at two levels. Source: maintainer, 2026-09-29.
 
@@ -395,8 +395,6 @@ every byte is written. Source: maintainer, 2026-09-29 (#23 Q20).
 
 ## Broadcast groups
 
-Not built: #35.
-
 `[Decided]` A device can be in broadcast groups at three scopes, its project,
 its site and its station, and one tx on a group's topic reaches every device in
 the group. Each device declares its groups, one list per scope. Source:
@@ -428,10 +426,14 @@ number and part number, is decided on #36. Source: maintainer, 2026-10-06
 (#35 Q1, Q1a).
 
 The agent subscribes to a group's topic once, however many of its devices are in
-the group, and hands a tx on it to each of them. Tx ids are kept per device
-(internal/core/pipeline.go:25-30). Each device therefore takes the tx once and
+the group, and hands a tx on it to each of them (cmd/skuhus-device-agent/run.go,
+buildDevices; internal/core/tx.go, admitTx). Tx ids are kept per device
+(internal/core/pipeline.go:28-33). Each device therefore takes the tx once and
 publishes its own results on its own status topic, all with the same `tx_id`. A
-resend is answered per device, as "The tx contract" describes.
+resend is answered per device, as "The tx contract" describes, and so is the
+same tx reaching a device through two of its groups. The log records each tx on
+a group's topic with the devices it went to, and each device's admission with
+the topic it came on.
 
 `[Decided]` Each device's entry in the keepalive lists every group the device
 is in, with its scope, and every tx topic that reaches the device: its own and
@@ -439,7 +441,9 @@ each group's. A topic is reported as the filter that went into the SUBSCRIBE
 packet, with the broker's SUBACK answer to it, both recorded when the agent
 subscribes. The value used to subscribe is the value reported, so the keepalive
 cannot drift from what was subscribed. Source: maintainer, 2026-10-06 (#35 Q3,
-Q3a, Q3b).
+Q3a, Q3b). The field is `tx_topics` ("Agent keepalive"). The integration test
+compares it with the SUBSCRIBE and SUBACK packets that went over the wire
+(test/integration, TestBroadcastGroupTxReachesEveryDeviceInTheGroup).
 
 MQTT gives a client no way to read the broker's bindings. The other option was
 reading them from RabbitMQ's management API, and it was not chosen: it needs an
@@ -447,14 +451,24 @@ HTTP credential with the `management` tag on every station, and works with
 RabbitMQ only (#35 Q3a).
 
 A station's agent needs read permission on its project and site group topics
-before it subscribes to them. This was measured on 2026-10-06 against RabbitMQ
-4.3.5, with mosquitto_sub 2.1.2 subscribing as a station (#35):
-- with one topic in a SUBSCRIBE refused, the broker closed the connection after
-  the SUBACK, and the client received 0 of 10 tx sent to its own device;
-- with every topic permitted, it received 10 of 10.
+before it subscribes to them; dev/rabbitmq/definitions.json has an example.
+Measured on 2026-10-06 against RabbitMQ 4.3.5 (#35):
+- mosquitto_sub 2.1.2, subscribing as a station: with one topic in a SUBSCRIBE
+  refused, the broker closed the connection after the SUBACK, and the client
+  received 0 of 10 tx sent to its own device. With every topic permitted, it
+  received 10 of 10.
+- The agent, with a site group its station may not read: it connected 549
+  times in 8 s. Each time the broker closed the connection over the refused
+  subscription (`subscribe_error`), the agent logged that subscribing failed,
+  and it reconnected at once, since the first attempt after a lost connection
+  does not wait ("Reconnecting to the broker"). With the permission in place it
+  connected once.
 
-The agent today expects a refused subscription to cost only that topic
-(internal/transport/mqtt/client.go:251-273).
+A group subscription the broker refuses therefore takes the whole agent off the
+broker, and makes it reconnect without a pause; the permissions come before the
+configuration. The agent logs a refusal that the broker answers without closing
+the connection as `subscription refused; no tx will arrive on this topic`
+(internal/transport/mqtt/client.go, subscribe).
 
 ## Status channel
 
