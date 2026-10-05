@@ -64,8 +64,9 @@ change in it.
 
 ### T1. Commit the measurements in docs/
 
-Status: done on branch gh-4-docs, committed at the maintainer's request on
-2026-09-29, together with dev/, spike/ and these two documents.
+Status: done on branch gh-4-docs, merged to master in #31. It was committed
+at the maintainer's request on 2026-09-29, together with dev/, spike/ and these
+two documents.
 
 Motivation. DESIGN-V2.md cites docs/spikes/m0-mqtt5.md for every broker
 constraint and docs/scanners/symbol-05e0-1701.md for the signature of an
@@ -104,7 +105,7 @@ depends on. Items that only affect phase 2 may stay open until T14 starts.
 
 ### T3. Rename to the device agent
 
-Status: done on branch gh-8-rename, not yet merged.
+Status: done on branch gh-8-rename, merged to master in #31.
 
 Motivation. The repository is skuhus/device-agent, but the module path, binary,
 environment prefix, directories and image still carry the scanner's name
@@ -135,7 +136,7 @@ Depends on: T1, T2.
 
 ### T4. Give spike/ and dev/ their own modules
 
-Status: done on branch gh-9-tool-modules, not yet merged.
+Status: done on branch gh-9-tool-modules, merged to master in #31.
 
 Motivation. spike/mqtt5, spike/brokerinfo and dev/consumer are tools, not the
 agent, but they are packages of the agent's module. `go vet ./...` and `go test
@@ -167,8 +168,8 @@ Depends on: T1, T3.
 
 ### T5. Configuration schema v2
 
-Status: done on branch gh-10-config, not yet merged. The v1 binary runs on the
-v2 schema until T7 and T9 replace its wiring.
+Status: done on branch gh-10-config, merged to master in #31. The v1 binary runs
+on the v2 schema until T7 and T9 replace its wiring.
 
 Motivation. The v1 schema is shaped around a scanner:
 - one delivery.scan_ttl for the whole process (internal/config/config.go:114);
@@ -206,8 +207,8 @@ Depends on: T2, T3.
 
 ### T6. Topics and message formats
 
-Status: done on branch gh-11-message-formats, not yet merged; the maintainer
-reviewed the format section in #11.
+Status: done on branch gh-11-message-formats, merged to master in #31; the
+maintainer reviewed the format section in #11.
 
 Motivation. The topics and the JSON messages are the contract that parsers,
 relays and the tx senders are built against. Writing them down before the code
@@ -237,8 +238,9 @@ Depends on: T2, T3.
 
 ### T7. Core: reading and publishing
 
-Status: done on branch gh-12-core, not yet merged. Until T8 the agent publishes
-rx and its offline message and will, but no keepalive or device events.
+Status: done on branch gh-12-core, merged to master in #31. Until T8 the agent
+publishes rx and its offline message and will, but no keepalive or device
+events.
 
 Motivation. This is the part of v1 the maintainer judged easier to rewrite than
 to fix. The supervisor in internal/agent owns publishing, status, heartbeat,
@@ -288,7 +290,7 @@ Depends on: T5, T6.
 
 ### T8. Status channel and counters
 
-Status: done on branch gh-13-status, not yet merged.
+Status: done on branch gh-13-status, merged to master in #31.
 
 Motivation. The maintainer wants device problems visible outside the host, and
 every agent and device visible from outside (DESIGN-V2.md, "Status channel").
@@ -315,7 +317,7 @@ Depends on: T6, T7.
 
 ### T9. Common log
 
-Status: done on branch gh-14-common-log, not yet merged.
+Status: done on branch gh-14-common-log, merged to master in #31.
 
 Motivation. Two maintainer decisions. On 2026-09-29: one common log that
 everything is written to, replacing the separate audit log, with every record
@@ -346,8 +348,9 @@ Depends on: T5, T7.
 
 ### T11. Development environment for v2
 
-Status: done on branch gh-16-dev-env, not yet merged. A broker already running
-keeps the old definitions until it restarts (`make broker-down broker-up`).
+Status: done on branch gh-16-dev-env, merged to master in #31. A broker already
+running keeps the old definitions until it restarts (`make broker-down
+broker-up`).
 
 Motivation. The development broker still grants v1's command topic: the ingest
 user may write only to topics ending in `.cmd`
@@ -390,8 +393,9 @@ Depends on: T5, T6.
 
 ### T10. End-to-end test in CI
 
-Status: done on branch gh-15-e2e, not yet merged. `make test-integration` passes
-against the development broker; the CI job runs once the branch is pushed.
+Status: done on branch gh-15-e2e, merged to master in #31. `make
+test-integration` passes against the development broker; the CI job runs once
+the branch is pushed.
 
 Motivation. The worst v1 defects were found only by running the agent against a
 broker by hand. On SIGTERM the connection was torn down before the offline
@@ -432,8 +436,9 @@ Depends on: T7, T8, T9, T11.
 
 ### T12. Documentation
 
-Status: done on branch gh-17-docs, not yet merged. docs/spikes/m0-mqtt5.md also
-named the v1 topics as the agent's, and now says it is a record of v1's.
+Status: done on branch gh-17-docs, merged to master in #31.
+docs/spikes/m0-mqtt5.md also named the v1 topics as the agent's, and now says it
+is a record of v1's.
 
 Motivation. After phase 1, DESIGN.md describes topics and a supervisor that no
 longer exist, and README.md describes the v1 scanner agent: a retained status,
@@ -490,8 +495,8 @@ Depends on: T2 to T12, T14, T16.
 
 ### T14. tx: receive and write
 
-Status: done on branch gh-19-tx, not yet merged. A tx the agent stops before
-writing fails as `agent_stopping` (#19 Q1).
+Status: done on branch gh-19-tx, merged to master in #31. A tx the agent stops
+before writing fails as `agent_stopping` (#19 Q1).
 
 Motivation. Printers are the main reason for writing (DESIGN-V2.md, "Scope"),
 and 2.0.0 now releases writing (DESIGN-V2.md, "Version"). The bench printer is
@@ -572,7 +577,7 @@ kept so that references to T15 stay unambiguous.
 
 ### T16. tx idempotency
 
-Status: done on branch gh-21-idempotency, not yet merged.
+Status: done on branch gh-21-idempotency, merged to master in #31.
 
 Motivation. A sender that hears nothing within its own timeout resends, and a
 resend after the first copy was written would print it twice (#11 Q6a). T14
