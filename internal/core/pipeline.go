@@ -53,10 +53,10 @@ func (core *Core) count(line *pipeline, event device.Event) {
 		line.open = false
 	case device.PortLost:
 		line.open = false
-		line.failureClass, line.failure = event.ErrorClass, errString(event.Err)
+		line.failureClass, line.failure = event.ErrorClass, event.ErrorText()
 	case device.PortOpenFailed:
 		line.open = false
-		line.failureClass, line.failure = event.ErrorClass, errString(event.Err)
+		line.failureClass, line.failure = event.ErrorClass, event.ErrorText()
 		line.counters.FailedOpens.Add(event.ErrorClass)
 	case device.BytesDiscarded:
 		line.counters.Discards.Add(event.Reason)

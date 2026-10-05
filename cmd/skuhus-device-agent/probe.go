@@ -204,7 +204,7 @@ func (presence *presenceLog) set(present bool, event device.Event) {
 		presence.log.Info("device present")
 		return
 	}
-	presence.log.Warn("device absent", "error_class", string(event.ErrorClass), "error", errString(event.Err))
+	presence.log.Warn("device absent", "error_class", string(event.ErrorClass), "error", event.ErrorText())
 }
 
 func printRx(w io.Writer, rx wire.Rx, raw []byte, asJSON bool) error {
@@ -273,11 +273,4 @@ func listDevices(w io.Writer) error {
 		}
 	}
 	return nil
-}
-
-func errString(err error) string {
-	if err == nil {
-		return ""
-	}
-	return err.Error()
 }

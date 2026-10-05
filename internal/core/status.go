@@ -134,9 +134,9 @@ func (core *Core) buildEvent(line *pipeline, event device.Event) (wire.Event, bo
 	case device.PortClosed:
 		return builder.PortClosed(dev, path, at), true
 	case device.PortLost:
-		return builder.PortLost(dev, path, event.ErrorClass, errString(event.Err), at), true
+		return builder.PortLost(dev, path, event.ErrorClass, event.ErrorText(), at), true
 	case device.PortOpenFailed:
-		return builder.PortOpenFailed(dev, path, event.ErrorClass, errString(event.Err), at), true
+		return builder.PortOpenFailed(dev, path, event.ErrorClass, event.ErrorText(), at), true
 	case device.BytesDiscarded:
 		return builder.BytesDiscarded(dev, event.Reason, event.Bytes, at), true
 	}
@@ -273,11 +273,4 @@ func eventAttrs(event device.Event) []any {
 		attrs = append(attrs, "reason", string(event.Reason), "bytes", event.Bytes)
 	}
 	return attrs
-}
-
-func errString(err error) string {
-	if err == nil {
-		return ""
-	}
-	return err.Error()
 }

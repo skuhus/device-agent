@@ -58,6 +58,14 @@ type Event struct {
 	Bytes  int
 }
 
+// ErrorText is the message of the event's error, or "" when it has none.
+func (event Event) ErrorText() string {
+	if event.Err == nil {
+		return ""
+	}
+	return event.Err.Error()
+}
+
 // Frame is one complete separator-delimited unit read from a device.
 //
 // Raw holds bytes, not text. GS1-128 and Data Matrix payloads carry 0x1D group
