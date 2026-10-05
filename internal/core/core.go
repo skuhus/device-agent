@@ -826,8 +826,6 @@ func (queue *eventQueue) signal() {
 	}
 }
 
-// errorClass maps a reader's error class to the wire's. A class the wire does
-// not define is reported as unknown, and false says so.
 // eventAttrs are a port event's log attributes.
 func eventAttrs(event device.Event) []any {
 	attrs := []any{"device_id", event.DeviceID, "event", string(event.Kind), "at", event.At.UTC().Format(wire.TimeFormat)}
