@@ -256,6 +256,8 @@ func readTxCases() []readTxCase {
 			code: TxCodeInvalidMessage},
 		{name: "one name in another case", payload: `{"schema":2,"ID":"` + id + `","sender":"s","raw_b64":"AA=="}`,
 			code: TxCodeInvalidMessage, wantRef: TxRef{Sender: "s"}},
+		{name: "a name that only Unicode folding matches", payload: `{"schema":2,"id":"` + id + `","\u017fender":"s","raw_b64":"AA=="}`,
+			code: TxCodeInvalidMessage, wantRef: TxRef{ID: id}},
 		{name: "a name twice, in two cases", payload: `{"schema":2,"id":"` + id + `","Id":"` + id + `","sender":"s","raw_b64":"AA=="}`,
 			code: TxCodeInvalidMessage, wantRef: TxRef{ID: id, Sender: "s"}},
 		{name: "missing raw_b64", payload: `{"schema":2,"id":"` + id + `","sender":"s"}`, code: TxCodeInvalidMessage,

@@ -640,10 +640,11 @@ All four fields are required and no other field is accepted, so a mistake in a
 sender gets a failed result instead of being ignored. Source: maintainer,
 2026-09-29 (#11 Q3). Senders set an MQTT message expiry on every tx (#23 Q19).
 
-A field's name is matched exactly, so `"ID"` is a field other than `id` and
-fails the tx. encoding/json alone matches names regardless of case, and the
-agent used to write such a tx under an empty id, with `tx_id` null in its
-results (#47).
+A field's name is matched exactly, so `"ID"`, or `"\u017fender"` with a long s,
+is a field other than `id` or `sender`, and fails the tx, which names every
+such field. encoding/json alone matches a name to a struct field regardless of
+case, and takes the long s for an s, so the agent used to write such a tx
+under an empty id or sender, with them null in its results (#47).
 
 The tx schema and `wire.ReadTx` differ in two ways, measured on 2026-10-06
 (internal/wire/messages_test.go, readTxCases):
