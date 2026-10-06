@@ -11,7 +11,8 @@
 # The credentials come from the environment rather than a file, so running this
 # needs no secret on disk. They are the development fixtures in
 # dev/rabbitmq/definitions.json, and that user is confined by topic permission
-# to this station's own topics.
+# to this station's own topics, and to reading its project's and its site's
+# broadcast group tx topics.
 
 identity:
   project: acme

@@ -107,7 +107,7 @@ const (
 	EventBytesDiscarded EventCode = "bytes_discarded"
 )
 
-// ErrorClass names a port failure the way v1 classifies one
+// ErrorClass names a port failure, as the serial reader classifies it
 // (internal/device/serial/serial.go, classify).
 type ErrorClass string
 
