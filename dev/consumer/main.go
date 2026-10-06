@@ -16,7 +16,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"net"
 	"os"
 	"os/signal"
 	"strings"
@@ -25,6 +24,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/eclipse/paho.golang/paho"
+	"github.com/skuhus/device-agent/dev/internal/mqttconn"
 )
 
 func main() {
@@ -54,11 +54,6 @@ func run(broker, username, password, topic, clientID string, qos byte, raw bool)
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	conn, err := net.DialTimeout("tcp", broker, 10*time.Second)
-	if err != nil {
-		return fmt.Errorf("connect to %s: %w", broker, err)
-	}
-
 	// A dropped connection ends the run with its error rather than being
 	// retried: this is a diagnostic tool, and reconnecting, or carrying on
 	// subscribed to nothing, would hide the very disconnect someone is watching
@@ -72,12 +67,11 @@ func run(broker, username, password, topic, clientID string, qos byte, raw bool)
 		}
 		stop()
 	}
-	mqttClient := paho.NewClient(paho.ClientConfig{
+	mqttClient, err := mqttconn.Connect(ctx, broker, username, password, paho.ClientConfig{
 		ClientID: clientID,
-		Conn:     conn,
 		OnPublishReceived: []func(paho.PublishReceived) (bool, error){
 			func(received paho.PublishReceived) (bool, error) {
-				print(received.Packet, raw)
+				printMessage(received.Packet, raw)
 				return true, nil
 			},
 		},
@@ -86,34 +80,11 @@ func run(broker, username, password, topic, clientID string, qos byte, raw bool)
 			end(fmt.Errorf("the broker disconnected, reason %d", disconnect.ReasonCode))
 		},
 	})
-
-	connect := &paho.Connect{
-		ClientID:   clientID,
-		KeepAlive:  30,
-		CleanStart: true,
-	}
-	if username != "" {
-		connect.Username, connect.UsernameFlag = username, true
-		connect.Password, connect.PasswordFlag = []byte(password), true
-	}
-	connack, err := mqttClient.Connect(ctx, connect)
 	if err != nil {
-		return fmt.Errorf("MQTT connect: %w", err)
+		return err
 	}
-	if connack.ReasonCode != 0 {
-		return fmt.Errorf("MQTT connect refused with reason %d", connack.ReasonCode)
-	}
-
-	suback, err := mqttClient.Subscribe(ctx, &paho.Subscribe{
-		Subscriptions: []paho.SubscribeOptions{{Topic: topic, QoS: qos}},
-	})
-	if err != nil {
-		return fmt.Errorf("subscribe to %s: %w", topic, err)
-	}
-	for _, code := range suback.Reasons {
-		if code > 2 {
-			return fmt.Errorf("subscription to %s refused with reason %d; check the user's topic permissions", topic, code)
-		}
+	if err := mqttconn.Subscribe(ctx, mqttClient, topic, qos); err != nil {
+		return err
 	}
 
 	fmt.Printf("subscribed to %s on %s as %s, waiting\n\n", topic, broker, username)
@@ -128,9 +99,9 @@ func run(broker, username, password, topic, clientID string, qos byte, raw bool)
 	return nil
 }
 
-// print writes one message: a header line that is greppable, the payload, and
-// for an rx or a tx the decoded bytes.
-func print(packet *paho.Publish, raw bool) {
+// printMessage writes one message: a header line that is greppable, the
+// payload, and for an rx or a tx the decoded bytes.
+func printMessage(packet *paho.Publish, raw bool) {
 	header := fmt.Sprintf("%s  %s  qos=%d", time.Now().UTC().Format("15:04:05.000"), packet.Topic, packet.QoS)
 	if packet.Retain {
 		header += " retained"
