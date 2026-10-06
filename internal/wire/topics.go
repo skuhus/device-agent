@@ -7,6 +7,7 @@ package wire
 import (
 	"fmt"
 	"regexp"
+	"strings"
 )
 
 // segmentRule is what every topic level taken from configuration must match.
@@ -17,6 +18,20 @@ var segmentRule = regexp.MustCompile(`^[a-z0-9-]+$`)
 // AgentLevel is the topic level the agent's own status lives under. No device
 // may take it as its id, or that device's topics would be the agent's.
 const AgentLevel = "agent"
+
+// The other fixed levels of the agent's topics (DESIGN-V2.md, "Topics").
+const (
+	// rootLevel opens every topic.
+	rootLevel   = "skuhus"
+	rxLevel     = "rx"
+	txLevel     = "tx"
+	statusLevel = "status"
+	// anyLevel is MQTT's single-level wildcard, for consumer filters.
+	anyLevel = "+"
+)
+
+// joinLevels makes a topic, or a filter, of its levels.
+func joinLevels(levels ...string) string { return strings.Join(levels, "/") }
 
 // GroupLevel is the topic level broadcast groups' tx topics live under. A
 // site's group topic, skuhus/<project>/<site>/group/<group>/tx, has the shape
@@ -77,9 +92,9 @@ func NewStationTopics(project, site, station string) (StationTopics, error) {
 	if station == GroupLevel {
 		return StationTopics{}, fmt.Errorf("station %q is reserved for the site's broadcast group topics", station)
 	}
-	projectPrefix := "skuhus/" + project
-	sitePrefix := projectPrefix + "/" + site
-	return StationTopics{projectPrefix: projectPrefix, sitePrefix: sitePrefix, stationPrefix: sitePrefix + "/" + station}, nil
+	projectPrefix := joinLevels(rootLevel, project)
+	sitePrefix := joinLevels(projectPrefix, site)
+	return StationTopics{projectPrefix: projectPrefix, sitePrefix: sitePrefix, stationPrefix: joinLevels(sitePrefix, station)}, nil
 }
 
 // GroupTx returns the route of a broadcast group's tx topic: under the
@@ -100,7 +115,7 @@ func (station StationTopics) GroupTx(scope TxScope, group string) (TxRoute, erro
 	default:
 		return TxRoute{}, fmt.Errorf("broadcast group %q has scope %q; expected project, site or station", group, scope)
 	}
-	return TxRoute{Topic: prefix + "/" + GroupLevel + "/" + group + "/tx", Scope: scope, Group: group}, nil
+	return TxRoute{Topic: joinLevels(prefix, GroupLevel, group, txLevel), Scope: scope, Group: group}, nil
 }
 
 // Agent returns the topics of the agent instance. The instance is a topic
@@ -109,7 +124,7 @@ func (station StationTopics) Agent(instance string) (AgentTopics, error) {
 	if err := checkSegment("instance", instance); err != nil {
 		return AgentTopics{}, err
 	}
-	return AgentTopics{status: station.stationPrefix + "/" + AgentLevel + "/" + instance + "/status"}, nil
+	return AgentTopics{status: joinLevels(station.stationPrefix, AgentLevel, instance, statusLevel)}, nil
 }
 
 // Device returns the topics of one device. It rejects an id that breaks the
@@ -121,22 +136,26 @@ func (station StationTopics) Device(id string) (DeviceTopics, error) {
 	if id == AgentLevel {
 		return DeviceTopics{}, fmt.Errorf("device id %q is reserved for the agent's own topics", id)
 	}
-	prefix := station.stationPrefix + "/" + id
-	return DeviceTopics{rx: prefix + "/rx", tx: prefix + "/tx", status: prefix + "/status"}, nil
+	prefix := joinLevels(station.stationPrefix, id)
+	return DeviceTopics{rx: joinLevels(prefix, rxLevel), tx: joinLevels(prefix, txLevel), status: joinLevels(prefix, statusLevel)}, nil
 }
 
 // EveryDeviceRx is the filter a consumer subscribes to for every device's
 // readings at the station.
-func (station StationTopics) EveryDeviceRx() string { return station.stationPrefix + "/+/rx" }
+func (station StationTopics) EveryDeviceRx() string {
+	return joinLevels(station.stationPrefix, anyLevel, rxLevel)
+}
 
 // EveryDeviceStatus is the filter for every device's events and tx results. It
 // does not match the agents' status topics, which are one level deeper.
-func (station StationTopics) EveryDeviceStatus() string { return station.stationPrefix + "/+/status" }
+func (station StationTopics) EveryDeviceStatus() string {
+	return joinLevels(station.stationPrefix, anyLevel, statusLevel)
+}
 
 // EveryAgentStatus is the filter for every agent instance's keepalives and
 // offline messages at the station.
 func (station StationTopics) EveryAgentStatus() string {
-	return station.stationPrefix + "/" + AgentLevel + "/+/status"
+	return joinLevels(station.stationPrefix, AgentLevel, anyLevel, statusLevel)
 }
 
 // Status is where the agent publishes its keepalives and offline message, and
