@@ -60,22 +60,13 @@ jobs:
       - name: render it
         run: make protocol-html
 
-      # The notes are the version's section of CHANGES.md, and a version
-      # without one is not released.
+      # The notes are the version's section of CHANGES.md, unwrapped, and a
+      # version without one is not released.
       - name: collect the release
         if: steps.version.outputs.release == 'true'
         run: |
           set -eu
-          version="${{ steps.version.outputs.version }}"
-          awk -v heading="## ${version}" '
-            /^## / { inside = ($0 == heading); next }
-            inside { print }
-          ' protocol/CHANGES.md > dist/protocol-notes.md
-          if ! grep -q '[^[:space:]]' dist/protocol-notes.md; then
-            echo "protocol/CHANGES.md has no section \"## ${version}\"" >&2
-            exit 1
-          fi
-          cat dist/protocol-notes.md
+          make protocol-notes
           cp protocol/asyncapi.yaml protocol/messages.schema.json protocol/CHANGES.md dist/protocol/
           cd dist/protocol && sha256sum ./* > checksums.txt && cat checksums.txt
 
