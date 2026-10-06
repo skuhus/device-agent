@@ -10,6 +10,7 @@ ASYNCAPI_IMAGE ?= asyncapi/cli:6.1.0
 # The CLI image does not include the HTML template; the generator fetches it
 # from npm at this version.
 ASYNCAPI_HTML_TEMPLATE ?= @asyncapi/html-template@3.5.6
+PANDOC_IMAGE ?= pandoc/core:3.7
 BIN            ?= skuhus-device-agent
 IMAGE          ?= skuhus-device-agent
 
@@ -60,6 +61,7 @@ help:
 	@echo
 	@echo "protocol-check    validate protocol/asyncapi.yaml and the schemas it references"
 	@echo "protocol-html     render it to dist/protocol/asyncapi-$(PROTOCOL_VERSION).html"
+	@echo "protocol-notes    the release notes of protocol $(PROTOCOL_VERSION), from protocol/CHANGES.md"
 	@echo "protocol-version  print the protocol version the agent speaks"
 	@echo
 	@echo "broker-up      start the local RabbitMQ from dev/rabbitmq"
@@ -189,6 +191,20 @@ protocol-html:
 		cat /tmp/html/asyncapi.html' > dist/protocol/asyncapi-$(PROTOCOL_VERSION).html.part
 	@mv dist/protocol/asyncapi-$(PROTOCOL_VERSION).html.part dist/protocol/asyncapi-$(PROTOCOL_VERSION).html
 	@ls -l dist/protocol/asyncapi-$(PROTOCOL_VERSION).html
+
+# The version's section of CHANGES.md, with each paragraph and list item on one
+# line: GitHub shows every newline in release notes as a line break, and
+# CHANGES.md is wrapped. A version with no section has no notes, and fails.
+.PHONY: protocol-notes
+protocol-notes:
+	@mkdir -p dist
+	@awk -v heading="## $(PROTOCOL_VERSION)" '/^## / { inside = ($$0 == heading); next } inside { print }' \
+		protocol/CHANGES.md > dist/protocol-notes.md.part
+	@grep -q '[^[:space:]]' dist/protocol-notes.md.part || \
+		{ echo 'protocol/CHANGES.md has no section "## $(PROTOCOL_VERSION)"' >&2; rm dist/protocol-notes.md.part; exit 1; }
+	docker run --rm -i $(PANDOC_IMAGE) --from gfm --to gfm --wrap=none < dist/protocol-notes.md.part > dist/protocol-notes.md
+	@rm dist/protocol-notes.md.part
+	@cat dist/protocol-notes.md
 
 .PHONY: protocol-version
 protocol-version:

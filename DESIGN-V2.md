@@ -640,20 +640,21 @@ All four fields are required and no other field is accepted, so a mistake in a
 sender gets a failed result instead of being ignored. Source: maintainer,
 2026-09-29 (#11 Q3). Senders set an MQTT message expiry on every tx (#23 Q19).
 
-The tx schema and `wire.ReadTx` differ in three ways, measured on 2026-10-06
-(internal/wire/messages_test.go, readTxCases, for the first two):
+A field's name is matched exactly, so `"ID"`, or `"\u017fender"` with a long s,
+is a field other than `id` or `sender`, and fails the tx, which names every
+such field. encoding/json alone matches a name to a struct field regardless of
+case, and takes the long s for an s, so the agent used to write such a tx
+under an empty id or sender, with them null in its results (#47).
 
-- `"schema": 2.0`: the agent refuses it, and the schema takes it, since JSON
-  Schema compares numbers by value.
-- A line break inside `raw_b64`: the agent takes it, since Go's base64 decoder
-  skips CR and LF, and the schema refuses it.
-- A field name in another case, such as `"ID"`: the agent writes the tx, since
-  encoding/json matches names regardless of case, and its results carry
-  `tx_id` and `sender` null, since `readTxRef` reads the names as written. The
-  schema refuses it.
+`[Decided]` A line break inside `raw_b64` fails the tx, as the tx schema says,
+so that the agent takes what the schema takes. Go's base64 decoder skips CR and
+LF even in its strict mode, so the agent checks for them itself. Source:
+maintainer, 2026-10-06 (#47 Q1). A sender that wraps its base64, as Python's
+`base64.encodebytes` does every 76 characters, gets `invalid_message`.
 
-Of the cases tested, the only tx the schema takes and the agent refuses is the
-one that writes `schema` as `2.0`.
+The tx schema and `wire.ReadTx` differ in one way, measured on 2026-10-06
+(internal/wire/messages_test.go, readTxCases): `"schema": 2.0`, which the agent
+refuses and the schema takes, since JSON Schema compares numbers by value.
 
 ### tx results
 

@@ -246,13 +246,26 @@ func readTxCases() []readTxCase {
 			wantRef: TxRef{ID: strings.ToUpper(id), Sender: "label-service"}},
 		{name: "not JSON", payload: `^XA^FD`, code: TxCodeInvalidMessage},
 		{name: "an array", payload: `[1]`, code: TxCodeInvalidMessage},
+		{name: "null", payload: `null`, code: TxCodeInvalidMessage},
+		{name: "schema as a string", payload: strings.Replace(good, `"schema":2`, `"schema":"2"`, 1), code: TxCodeInvalidMessage,
+			wantRef: TxRef{ID: id, Sender: "label-service"}},
 		{name: "two values", payload: good + good, code: TxCodeInvalidMessage},
 		{name: "unknown field", payload: strings.Replace(good, `"schema":2`, `"schema":2,"qos":1`, 1), code: TxCodeInvalidMessage,
 			wantRef: TxRef{ID: id, Sender: "label-service"}},
+		{name: "field names in another case", payload: `{"SCHEMA":2,"ID":"` + id + `","Sender":"label-service","Raw_B64":"XlhB"}`,
+			code: TxCodeInvalidMessage},
+		{name: "one name in another case", payload: `{"schema":2,"ID":"` + id + `","sender":"s","raw_b64":"AA=="}`,
+			code: TxCodeInvalidMessage, wantRef: TxRef{Sender: "s"}},
+		{name: "a name that only Unicode folding matches", payload: `{"schema":2,"id":"` + id + `","\u017fender":"s","raw_b64":"AA=="}`,
+			code: TxCodeInvalidMessage, wantRef: TxRef{ID: id}},
+		{name: "a name twice, in two cases", payload: `{"schema":2,"id":"` + id + `","Id":"` + id + `","sender":"s","raw_b64":"AA=="}`,
+			code: TxCodeInvalidMessage, wantRef: TxRef{ID: id, Sender: "s"}},
 		{name: "missing raw_b64", payload: `{"schema":2,"id":"` + id + `","sender":"s"}`, code: TxCodeInvalidMessage,
 			wantRef: TxRef{ID: id, Sender: "s"}},
 		{name: "null id", payload: `{"schema":2,"id":null,"sender":"s","raw_b64":"AA=="}`, code: TxCodeInvalidMessage,
 			wantRef: TxRef{Sender: "s"}},
+		{name: "null id, spaced", payload: "{\"schema\": 2, \"id\" :\n null , \"sender\": \"s\", \"raw_b64\": \"AA==\"}",
+			code: TxCodeInvalidMessage, wantRef: TxRef{Sender: "s"}},
 		{name: "schema 1", payload: strings.Replace(good, `"schema":2`, `"schema":1`, 1), code: TxCodeInvalidMessage,
 			wantRef: TxRef{ID: id, Sender: "label-service"}},
 		{name: "schema 2.0", payload: strings.Replace(good, `"schema":2`, `"schema":2.0`, 1), code: TxCodeInvalidMessage,
@@ -266,9 +279,12 @@ func readTxCases() []readTxCase {
 			wantRef: TxRef{ID: id, Sender: "s"}},
 		{name: "non-zero pad bits", payload: `{"schema":2,"id":"` + id + `","sender":"s","raw_b64":"AB=="}`, code: TxCodeInvalidMessage,
 			wantRef: TxRef{ID: id, Sender: "s"}},
-		{name: "line break in base64", payload: `{"schema":2,"id":"` + id + `","sender":"s","raw_b64":"AA\n=="}`,
-			wantRef:       TxRef{ID: id, Sender: "s"},
-			schemaDiffers: "Go's base64 decoder skips line breaks, and the schema allows none"},
+		{name: "line feed in base64", payload: `{"schema":2,"id":"` + id + `","sender":"s","raw_b64":"AA\n=="}`,
+			code: TxCodeInvalidMessage, wantRef: TxRef{ID: id, Sender: "s"}},
+		{name: "carriage return in base64", payload: `{"schema":2,"id":"` + id + `","sender":"s","raw_b64":"AA\r=="}`,
+			code: TxCodeInvalidMessage, wantRef: TxRef{ID: id, Sender: "s"}},
+		{name: "base64 wrapped at the end", payload: `{"schema":2,"id":"` + id + `","sender":"s","raw_b64":"AA==\r\n"}`,
+			code: TxCodeInvalidMessage, wantRef: TxRef{ID: id, Sender: "s"}},
 		{name: "no bytes", payload: `{"schema":2,"id":"` + id + `","sender":"s","raw_b64":""}`, code: TxCodeInvalidMessage,
 			wantRef: TxRef{ID: id, Sender: "s"}},
 		{name: "id not a UUID", payload: strings.Replace(good, id, "job-1042", 1), code: TxCodeInvalidID,
@@ -308,6 +324,26 @@ func TestReadTx(t *testing.T) {
 				t.Errorf("raw = %q for a tx that cannot be taken", raw)
 			}
 		})
+	}
+}
+
+// A field name in another case is refused by name, every one of them, so that
+// the sender sees which; encoding/json alone would take each for its field
+// (#47).
+func TestReadTxNamesEveryUnknownField(t *testing.T) {
+	const id = "0192a3b4-c5d6-7e8f-9a0b-1c2d3e4f5a6b"
+	for _, check := range []struct {
+		payload, want string
+	}{
+		{`{"schema":2,"ID":"` + id + `","sender":"s","raw_b64":"AA=="}`,
+			`unknown field "ID"; a tx has exactly schema, id, sender and raw_b64`},
+		{`{"SCHEMA":2,"ID":"` + id + `","Sender":"s","Raw_B64":"AA=="}`,
+			`unknown fields "ID", "Raw_B64", "SCHEMA", "Sender"; a tx has exactly schema, id, sender and raw_b64`},
+	} {
+		_, _, problem := ReadTx([]byte(check.payload))
+		if problem == nil || problem.Code != TxCodeInvalidMessage || problem.Text != check.want {
+			t.Errorf("%s: problem = %+v, want invalid_message: %s", check.payload, problem, check.want)
+		}
 	}
 }
 
