@@ -195,13 +195,9 @@ func (dev *Device) Run(ctx context.Context, sink chan<- device.Frame, report fun
 	}
 	policy := dev.opts.Reopen
 	stableAfter := policy.Max
-	dev.log.Info("device settings",
-		"baud", dev.opts.Baud, "data_bits", dev.mode.DataBits, "parity", parityNames[dev.mode.Parity],
-		"stop_bits", stopBitsNames[dev.mode.StopBits], "separator_hex", hex.EncodeToString(dev.opts.Separator),
-		"max_frame_bytes", dev.opts.MaxFrameBytes, "inter_char_timeout", dev.opts.InterCharTimeout.String(),
-		"read_buffer_bytes", dev.readBufferBytes, "tx_chunk_bytes", dev.opts.TxChunkBytes,
+	dev.log.Info("device settings", append(dev.lineAttrs(), "tx_chunk_bytes", dev.opts.TxChunkBytes,
 		"reopen_interval", policy.Interval.String(), "reopen_backoff", policy.Grow,
-		"reopen_backoff_max", policy.Max.String(), "reopen_backoff_jitter", policy.Jitter)
+		"reopen_backoff_max", policy.Max.String(), "reopen_backoff_jitter", policy.Jitter)...)
 	retry := 0
 	for {
 		if err := ctx.Err(); err != nil {
@@ -254,12 +250,7 @@ func (dev *Device) session(ctx context.Context, sink chan<- device.Frame, report
 	}
 	dev.assertModemLines(port)
 	dev.logModemStatus(port)
-	dev.log.Info("device open", "baud", dev.opts.Baud,
-		"data_bits", dev.mode.DataBits, "parity", parityNames[dev.mode.Parity], "stop_bits", stopBitsNames[dev.mode.StopBits],
-		"read_buffer_bytes", dev.readBufferBytes,
-		"inter_char_timeout", dev.opts.InterCharTimeout.String(),
-		"max_frame_bytes", dev.opts.MaxFrameBytes,
-		"separator_hex", hex.EncodeToString(dev.opts.Separator))
+	dev.log.Info("device open", dev.lineAttrs()...)
 
 	// Writes go through the same port, under a lock that closing takes too
 	// (DESIGN-V2.md, "Writing: tx"). The port takes writes before it is
@@ -454,6 +445,15 @@ func (shared *sharedPort) close() error {
 	defer shared.mu.Unlock()
 	shared.closed = true
 	return shared.port.Close()
+}
+
+// lineAttrs are the port's line format and framing, as the "device settings"
+// and "device open" records carry them.
+func (dev *Device) lineAttrs() []any {
+	return []any{"baud", dev.opts.Baud, "data_bits", dev.mode.DataBits, "parity", parityNames[dev.mode.Parity],
+		"stop_bits", stopBitsNames[dev.mode.StopBits], "separator_hex", hex.EncodeToString(dev.opts.Separator),
+		"max_frame_bytes", dev.opts.MaxFrameBytes, "inter_char_timeout", dev.opts.InterCharTimeout.String(),
+		"read_buffer_bytes", dev.readBufferBytes}
 }
 
 // assertModemLines raises DTR and RTS.
