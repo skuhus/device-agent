@@ -105,8 +105,8 @@ the TLS listener, port 1883 refused connections, and the agent connected with
 
 ## Sending a tx with curl
 
-curl speaks MQTT. A tx is the JSON DESIGN-V2.md, "tx", describes, published on
-the device's tx topic, or on a broadcast group's, such as
+curl speaks MQTT. A tx is the JSON protocol/messages.schema.json defines as
+`tx`, published on the device's tx topic, or on a broadcast group's, such as
 `skuhus/acme/vasby/group/scales/tx` for the site's group `scales`, where each
 device in the group answers on its own status topic:
 

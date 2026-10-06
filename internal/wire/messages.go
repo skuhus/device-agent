@@ -403,7 +403,7 @@ func (counts *OpenFailureCounts) Add(class ErrorClass) {
 }
 
 // DeviceCounters are one device's counters since the process started, as
-// DESIGN-V2.md, "Agent keepalive", defines them.
+// protocol/messages.schema.json, keepalive_device, defines them.
 type DeviceCounters struct {
 	// RxFrames counts frames taken for publishing: the last rx seq.
 	RxFrames uint64 `json:"rx_frames"`

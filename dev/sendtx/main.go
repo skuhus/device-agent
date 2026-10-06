@@ -112,7 +112,8 @@ func unescape(text string) ([]byte, error) {
 	return out, nil
 }
 
-// newUUID makes a version 4 UUID, which every agent accepts (DESIGN-V2.md, "tx").
+// newUUID makes a version 4 UUID, which every agent accepts (DESIGN-V2.md,
+// "Message ids and execution results").
 func newUUID() (string, error) {
 	var randomBytes [16]byte
 	if _, err := rand.Read(randomBytes[:]); err != nil {

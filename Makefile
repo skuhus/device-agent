@@ -6,11 +6,18 @@
 GO_IMAGE       ?= golang:1.25
 RABBITMQ_IMAGE ?= rabbitmq:4.3.5-management
 MOSQUITTO_IMAGE ?= eclipse-mosquitto:2.1.2-alpine
+ASYNCAPI_IMAGE ?= asyncapi/cli:6.1.0
+# The CLI image does not include the HTML template; the generator fetches it
+# from npm at this version.
+ASYNCAPI_HTML_TEMPLATE ?= @asyncapi/html-template@3.5.6
 BIN            ?= skuhus-device-agent
 IMAGE          ?= skuhus-device-agent
 
 # The version is defined once, in Go source. This reads it; it is never injected.
 VERSION := $(shell sed -n 's/^const version = "\(.*\)"/\1/p' internal/version/version.go)
+# The protocol's version, from the constant a test holds to asyncapi.yaml's
+# info.version.
+PROTOCOL_VERSION := $(shell sed -n 's/^const ProtocolVersion = "\(.*\)"/\1/p' internal/wire/messages.go)
 COMMIT  := $(shell git rev-parse HEAD 2>/dev/null || echo none)
 DATE    := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS := -s -w -X main.commit=$(COMMIT) -X main.date=$(DATE)
@@ -50,6 +57,10 @@ help:
 	@echo "fmt        rewrite files with gofmt"
 	@echo "clean      remove dist/ and coverage.out"
 	@echo "version    print the version compiled into the binary"
+	@echo
+	@echo "protocol-check    validate protocol/asyncapi.yaml and the schemas it references"
+	@echo "protocol-html     render it to dist/protocol/asyncapi-$(PROTOCOL_VERSION).html"
+	@echo "protocol-version  print the protocol version the agent speaks"
 	@echo
 	@echo "broker-up      start the local RabbitMQ from dev/rabbitmq"
 	@echo "broker-down    stop it, keeping its data"
@@ -154,6 +165,34 @@ shell: caches
 	docker run --rm -it \
 		-v "$(CURDIR)":/src -v $(MOD_CACHE):/go/pkg/mod -v $(BUILD_CACHE):/root/.cache/go-build \
 		-w /src -e GOFLAGS=-buildvcs=false $(GO_IMAGE) bash
+
+# --- protocol --------------------------------------------------------------
+
+# CI=true turns off the CLI's usage tracking, which otherwise reports every run
+# (lib/apps/cli/internal/base.js in asyncapi/cli 6.1.0).
+ASYNCAPI = docker run --rm -e CI=true -v "$(CURDIR)/protocol":/protocol:ro
+
+.PHONY: protocol-check
+protocol-check:
+	$(ASYNCAPI) $(ASYNCAPI_IMAGE) validate /protocol/asyncapi.yaml
+
+# The image runs as its own user, which cannot write to a directory mounted
+# from a Linux host, so the page is written inside the container and streamed
+# out. PUPPETEER_SKIP_DOWNLOAD skips the browser the template installs for PDF
+# output, which is not made here.
+.PHONY: protocol-html
+protocol-html:
+	@mkdir -p dist/protocol
+	$(ASYNCAPI) -e PUPPETEER_SKIP_DOWNLOAD=true --entrypoint sh $(ASYNCAPI_IMAGE) -c ' \
+		asyncapi generate fromTemplate /protocol/asyncapi.yaml $(ASYNCAPI_HTML_TEMPLATE) \
+			--output /tmp/html --force-write --no-interactive -p singleFile=true -p outFilename=asyncapi.html >&2 && \
+		cat /tmp/html/asyncapi.html' > dist/protocol/asyncapi-$(PROTOCOL_VERSION).html.part
+	@mv dist/protocol/asyncapi-$(PROTOCOL_VERSION).html.part dist/protocol/asyncapi-$(PROTOCOL_VERSION).html
+	@ls -l dist/protocol/asyncapi-$(PROTOCOL_VERSION).html
+
+.PHONY: protocol-version
+protocol-version:
+	@echo $(PROTOCOL_VERSION)
 
 # --- development environment ----------------------------------------------
 

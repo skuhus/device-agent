@@ -9,9 +9,13 @@ require (
 	gopkg.in/yaml.v3 v3.0.1
 )
 
-require github.com/eclipse/paho.golang v0.23.0
+require (
+	github.com/eclipse/paho.golang v0.23.0
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
+)
 
 require (
 	github.com/gorilla/websocket v1.5.3 // indirect
 	golang.org/x/net v0.43.0 // indirect
+	golang.org/x/text v0.28.0 // indirect
 )

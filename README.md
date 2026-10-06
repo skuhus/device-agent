@@ -74,9 +74,13 @@ fails at once and is recorded in the log with its data. A device's events wait,
 up to `status.event_buffer_size` of the most recent, and one older than the
 device's `message_expiry` by then is dropped.
 
-DESIGN-V2.md, "Message formats", has every field, with an example of each
-message; the tests in `internal/wire` fail when the examples and the code
-disagree.
+The protocol is in [protocol/](protocol/), versioned on its own:
+`asyncapi.yaml` describes every topic and message, with an example of each,
+`messages.schema.json` defines every field in JSON Schema, and `CHANGES.md`
+lists the versions and the agent versions that speak each. The tests in
+`internal/wire` fail when the code and protocol/ disagree. Each protocol
+version is released as `protocol-v<version>`, with those files and a rendered
+page, and from protocol 2.2.0 the keepalive carries `protocol_version`.
 
 ## Writing to a device
 
@@ -657,7 +661,8 @@ internal/backoff/          the wait between attempts, for a device's reopen and 
 internal/core/             runs the agent: each device's frames, status messages, tx, keepalive, shutdown
 internal/device/           Device interface
 internal/device/serial/    CDC / RS-232 implementation, framing, PTY harness
-internal/wire/             topics and the JSON of every message
+internal/wire/             topics and the JSON of every message, held to protocol/ by its tests
+protocol/                  the MQTT protocol: AsyncAPI document, JSON Schema, versions
 internal/transport/mqtt/   the broker connection: autopaho wiring, publishing, subscribing
 internal/logging/          the common log and its file rotation
 internal/logging/logtest/  the log captured and checked in tests

@@ -226,33 +226,64 @@ func TestDefaultIDs(t *testing.T) {
 	}
 }
 
+// readTxCase is one payload a sender might publish, what ReadTx makes of it,
+// and, where the tx schema in protocol/ cannot agree, why.
+type readTxCase struct {
+	name, payload string
+	code          TxCode
+	wantRef       TxRef
+	schemaDiffers string
+}
+
+// readTxCases are the tx payloads TestReadTx and TestTxSchemaAgreesWithReadTx
+// both run.
+func readTxCases() []readTxCase {
+	const id = "0192a3b4-c5d6-7e8f-9a0b-1c2d3e4f5a6b"
+	good := `{"schema":2,"id":"` + id + `","sender":"label-service","raw_b64":"XlhBXkZEU0tVLTEwNDJeRlNeWFo="}`
+	return []readTxCase{
+		{name: "good", payload: good, wantRef: TxRef{ID: id, Sender: "label-service"}},
+		{name: "upper-case id", payload: strings.Replace(good, id, strings.ToUpper(id), 1),
+			wantRef: TxRef{ID: strings.ToUpper(id), Sender: "label-service"}},
+		{name: "not JSON", payload: `^XA^FD`, code: TxCodeInvalidMessage},
+		{name: "an array", payload: `[1]`, code: TxCodeInvalidMessage},
+		{name: "two values", payload: good + good, code: TxCodeInvalidMessage},
+		{name: "unknown field", payload: strings.Replace(good, `"schema":2`, `"schema":2,"qos":1`, 1), code: TxCodeInvalidMessage,
+			wantRef: TxRef{ID: id, Sender: "label-service"}},
+		{name: "missing raw_b64", payload: `{"schema":2,"id":"` + id + `","sender":"s"}`, code: TxCodeInvalidMessage,
+			wantRef: TxRef{ID: id, Sender: "s"}},
+		{name: "null id", payload: `{"schema":2,"id":null,"sender":"s","raw_b64":"AA=="}`, code: TxCodeInvalidMessage,
+			wantRef: TxRef{Sender: "s"}},
+		{name: "schema 1", payload: strings.Replace(good, `"schema":2`, `"schema":1`, 1), code: TxCodeInvalidMessage,
+			wantRef: TxRef{ID: id, Sender: "label-service"}},
+		{name: "schema 2.0", payload: strings.Replace(good, `"schema":2`, `"schema":2.0`, 1), code: TxCodeInvalidMessage,
+			wantRef:       TxRef{ID: id, Sender: "label-service"},
+			schemaDiffers: "JSON Schema compares numbers by value, so 2.0 is the integer 2 to it"},
+		{name: "empty sender", payload: strings.Replace(good, `"label-service"`, `""`, 1), code: TxCodeInvalidMessage,
+			wantRef: TxRef{ID: id}},
+		{name: "unpadded base64", payload: strings.Replace(good, `XlhBXkZEU0tVLTEwNDJeRlNeWFo=`, `XlhBXkZEU0tVLTEwNDJeRlNeWFo`, 1),
+			code: TxCodeInvalidMessage, wantRef: TxRef{ID: id, Sender: "label-service"}},
+		{name: "url base64", payload: `{"schema":2,"id":"` + id + `","sender":"s","raw_b64":"_-8="}`, code: TxCodeInvalidMessage,
+			wantRef: TxRef{ID: id, Sender: "s"}},
+		{name: "non-zero pad bits", payload: `{"schema":2,"id":"` + id + `","sender":"s","raw_b64":"AB=="}`, code: TxCodeInvalidMessage,
+			wantRef: TxRef{ID: id, Sender: "s"}},
+		{name: "line break in base64", payload: `{"schema":2,"id":"` + id + `","sender":"s","raw_b64":"AA\n=="}`,
+			wantRef:       TxRef{ID: id, Sender: "s"},
+			schemaDiffers: "Go's base64 decoder skips line breaks, and the schema allows none"},
+		{name: "no bytes", payload: `{"schema":2,"id":"` + id + `","sender":"s","raw_b64":""}`, code: TxCodeInvalidMessage,
+			wantRef: TxRef{ID: id, Sender: "s"}},
+		{name: "id not a UUID", payload: strings.Replace(good, id, "job-1042", 1), code: TxCodeInvalidID,
+			wantRef: TxRef{ID: "job-1042", Sender: "label-service"}},
+		{name: "id in braces", payload: strings.Replace(good, id, "{"+id+"}", 1), code: TxCodeInvalidID,
+			wantRef: TxRef{ID: "{" + id + "}", Sender: "label-service"}},
+		{name: "id as bare hex", payload: strings.Replace(good, id, strings.ReplaceAll(id, "-", ""), 1), code: TxCodeInvalidID,
+			wantRef: TxRef{ID: strings.ReplaceAll(id, "-", ""), Sender: "label-service"}},
+	}
+}
+
 // Every way a tx can be wrong gets its own failed result, with the id and the
 // sender wherever they could be read, and a good one comes back as its bytes.
 func TestReadTx(t *testing.T) {
-	const id = "0192a3b4-c5d6-7e8f-9a0b-1c2d3e4f5a6b"
-	good := `{"schema":2,"id":"` + id + `","sender":"label-service","raw_b64":"XlhBXkZEU0tVLTEwNDJeRlNeWFo="}`
-	cases := []struct {
-		name, payload string
-		code          TxCode
-		wantRef       TxRef
-	}{
-		{"good", good, "", TxRef{ID: id, Sender: "label-service"}},
-		{"not JSON", `^XA^FD`, TxCodeInvalidMessage, TxRef{}},
-		{"an array", `[1]`, TxCodeInvalidMessage, TxRef{}},
-		{"two values", good + good, TxCodeInvalidMessage, TxRef{}},
-		{"unknown field", strings.Replace(good, `"schema":2`, `"schema":2,"qos":1`, 1), TxCodeInvalidMessage, TxRef{ID: id, Sender: "label-service"}},
-		{"missing raw_b64", `{"schema":2,"id":"` + id + `","sender":"s"}`, TxCodeInvalidMessage, TxRef{ID: id, Sender: "s"}},
-		{"null id", `{"schema":2,"id":null,"sender":"s","raw_b64":"AA=="}`, TxCodeInvalidMessage, TxRef{Sender: "s"}},
-		{"schema 1", strings.Replace(good, `"schema":2`, `"schema":1`, 1), TxCodeInvalidMessage, TxRef{ID: id, Sender: "label-service"}},
-		{"empty sender", strings.Replace(good, `"label-service"`, `""`, 1), TxCodeInvalidMessage, TxRef{ID: id}},
-		{"unpadded base64", strings.Replace(good, `XlhBXkZEU0tVLTEwNDJeRlNeWFo=`, `XlhBXkZEU0tVLTEwNDJeRlNeWFo`, 1), TxCodeInvalidMessage, TxRef{ID: id, Sender: "label-service"}},
-		{"url base64", `{"schema":2,"id":"` + id + `","sender":"s","raw_b64":"_-8="}`, TxCodeInvalidMessage, TxRef{ID: id, Sender: "s"}},
-		{"no bytes", `{"schema":2,"id":"` + id + `","sender":"s","raw_b64":""}`, TxCodeInvalidMessage, TxRef{ID: id, Sender: "s"}},
-		{"id not a UUID", strings.Replace(good, id, "job-1042", 1), TxCodeInvalidID, TxRef{ID: "job-1042", Sender: "label-service"}},
-		{"id in braces", strings.Replace(good, id, "{"+id+"}", 1), TxCodeInvalidID, TxRef{ID: "{" + id + "}", Sender: "label-service"}},
-		{"id as bare hex", strings.Replace(good, id, strings.ReplaceAll(id, "-", ""), 1), TxCodeInvalidID, TxRef{ID: strings.ReplaceAll(id, "-", ""), Sender: "label-service"}},
-	}
-	for _, testCase := range cases {
+	for _, testCase := range readTxCases() {
 		t.Run(testCase.name, func(t *testing.T) {
 			ref, raw, problem := ReadTx([]byte(testCase.payload))
 			if ref != testCase.wantRef {
@@ -262,8 +293,8 @@ func TestReadTx(t *testing.T) {
 				if problem != nil {
 					t.Fatalf("rejected: %+v", problem)
 				}
-				if string(raw) != "^XA^FDSKU-1042^FS^XZ" {
-					t.Errorf("raw = %q, want the decoded bytes", raw)
+				if len(raw) == 0 {
+					t.Errorf("no bytes for a tx that was taken")
 				}
 				return
 			}
@@ -277,5 +308,13 @@ func TestReadTx(t *testing.T) {
 				t.Errorf("raw = %q for a tx that cannot be taken", raw)
 			}
 		})
+	}
+}
+
+// A good tx comes back as the bytes it carries.
+func TestReadTxDecodesTheBytes(t *testing.T) {
+	_, raw, problem := ReadTx([]byte(readTxCases()[0].payload))
+	if problem != nil || string(raw) != "^XA^FDSKU-1042^FS^XZ" {
+		t.Errorf("raw = %q, problem %+v; want the decoded bytes", raw, problem)
 	}
 }
