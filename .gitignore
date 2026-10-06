@@ -31,5 +31,8 @@ go.work.sum
 # .idea/
 # .vscode/
 
+# macOS Finder metadata, in any directory
+.DS_Store
+
 # Build output
 /dist/
