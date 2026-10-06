@@ -473,7 +473,7 @@ A group subscription the broker refuses therefore takes the whole agent off the
 broker, which it tries again once an interval; the permissions come before the
 configuration. The agent logs each refused topic as `subscription refused; no
 tx will arrive on this topic`, with the reason code
-(internal/transport/mqtt/client.go, subscribe). paho hands the SUBACK over
+(internal/transport/mqtt/subscribe.go, subscribe). paho hands the SUBACK over
 together with an error when a topic is refused (paho/client.go, Subscribe, in
 paho.golang v0.23.0); the agent reads the SUBACK, and logs that subscribing
 failed only when there is none.
