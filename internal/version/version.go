@@ -13,7 +13,7 @@ package version
 // of building this code agrees: "go build", "go test", an IDE and the Makefile
 // all report the same version, and there is no way to produce a binary whose
 // agent_version field is a lie about which source it came from.
-const version = "2.0.0"
+const version = "2.1.0"
 
 // Commit and date are the one part of the identity source cannot know, so they
 // are injected from cmd/skuhus-device-agent via Set, out of
