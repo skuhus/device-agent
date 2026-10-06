@@ -68,7 +68,7 @@ type Broker struct {
 	// broker's CONNACK, and the wait for its answer to the subscriptions.
 	ConnectTimeout Duration `yaml:"connect_timeout"`
 	// ReconnectInterval is the wait between attempts to connect, while the
-	// broker cannot be reached (#13 Q3).
+	// broker cannot be reached (#13 Q3), and after a lost connection (#38 Q1a).
 	ReconnectInterval Duration `yaml:"reconnect_interval"`
 	// ReconnectBackoff is off by default (#13 Q3).
 	ReconnectBackoff Backoff `yaml:"reconnect_backoff"`

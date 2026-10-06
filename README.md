@@ -134,8 +134,9 @@ answer. `validate` shows each group's topic.
 The station's broker user must be allowed to read its project's and its site's
 group topics before a station joins a group there. RabbitMQ 4.3.5 closes the
 connection of a client whose subscription it refuses, and the agent then
-reconnects at once and is refused again, without a pause: measured, 482
-connections in 5 s. DESIGN-V2.md, "Broadcast groups", has the rest.
+reconnects after `broker.reconnect_interval`, 1 s by default, and is refused
+again, until the permission is granted or the group removed (#38).
+DESIGN-V2.md, "Broadcast groups", has the rest.
 
 ## Build and test
 
@@ -299,9 +300,10 @@ Opens the configured devices, connects to the broker, publishes what each device
 reads, and writes the tx each is sent, until stopped. A device that is unplugged
 and a broker that is down are both expected conditions: the agent keeps running.
 It reopens the device after `reopen_interval`, 100 ms, and `reopen_backoff`
-makes that wait grow, up to 30 s by default. It tries the broker at once and
-then every second, `broker.reconnect_interval`; `broker.reconnect_backoff`
-makes that wait grow instead. Each failed attempt to open a device is a
+makes that wait grow, up to 30 s by default. It tries the broker at once at
+start, and then every second, `broker.reconnect_interval`, which it also waits
+after a lost connection; `broker.reconnect_backoff` makes that wait grow
+instead. Each failed attempt to open a device is a
 `port_open_failed` event with its error class, and is counted in the keepalive.
 
 SIGTERM and SIGINT stop it in this order: no tx is started any more, and one
@@ -545,11 +547,12 @@ flat.
 to it.
 
 An agent whose log repeats `broker connected`, `subscription refused; no tx will
-arrive on this topic` and `broker connection lost, reconnecting`, many times a
-second, subscribes to a topic its broker user may not read, usually a broadcast
-group's; the refused record names the topic. RabbitMQ 4.3.5 closes the
-connection over it, and the agent reconnects at once. Grant the read permission,
-or take the group out of `broadcast_groups` ("Writing to a device").
+arrive on this topic` and `broker connection lost, reconnecting`, once every
+`broker.reconnect_interval`, subscribes to a topic its broker user may not read,
+usually a broadcast group's; the refused record names the topic. RabbitMQ 4.3.5
+closes the connection over it, and the agent tries again after the interval.
+Grant the read permission, or take the group out of `broadcast_groups`
+("Writing to a device").
 
 ## Environment hazards on Linux
 

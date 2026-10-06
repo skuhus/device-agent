@@ -61,9 +61,12 @@ broker:
   # for the broker to answer the tx subscriptions, give up after this long.
   connect_timeout: 10s
 
-  # While the broker cannot be reached, the agent tries it at once and then
-  # every reconnect_interval. Every reading made while the connection is down
-  # fails, so a short interval keeps that window short.
+  # At start the agent tries the broker at once, and then every
+  # reconnect_interval while it cannot be reached. After a lost connection it
+  # waits reconnect_interval before trying again, so that a broker which drops
+  # each connection at once is not asked again without a pause. Every reading
+  # made while the connection is down fails, so a short interval keeps that
+  # window short.
   reconnect_interval: 1s
   # Off by default. Enabled, the wait doubles after each failed attempt, from
   # reconnect_interval up to max, and each wait is spread by jitter, a fraction
@@ -169,8 +172,8 @@ devices:
     # A group's name is a topic level, [a-z0-9-]+, listed once per scope. The
     # broker must let this station's user read its project and site group
     # topics: RabbitMQ 4.3.5 closes the connection of an agent whose
-    # subscription it refuses, and the agent reconnects at once and is refused
-    # again, which keeps it off the broker. For example:
+    # subscription it refuses, and the agent reconnects after reconnect_interval
+    # and is refused again, which keeps it off the broker. For example:
     #
     #   broadcast_groups: { project: [], site: [scales], station: [] }
     broadcast_groups: { project: [], site: [], station: [] }

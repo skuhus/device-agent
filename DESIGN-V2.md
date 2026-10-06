@@ -462,15 +462,15 @@ Measured on 2026-10-06 against RabbitMQ 4.3.5 (#35):
   refused, the broker closed the connection after the SUBACK, and the client
   received 0 of 10 tx sent to its own device. With every topic permitted, it
   received 10 of 10.
-- The agent, with a site group its station may not read: it connected 482
-  times in 5 s. Each time it logged the group's topic as refused, reason 0x87,
-  the broker closed the connection over it (`subscribe_error`), and the agent
-  reconnected at once, since the first attempt after a lost connection does not
-  wait ("Reconnecting to the broker"). With the permission in place it
-  connected once.
+- The agent, with a site group its station may not read: each time it logged
+  the group's topic as refused, reason 0x87, the broker closed the connection
+  over it (`subscribe_error`), and the agent connected again. Before #38 it did
+  so at once, 482 times in 5 s; since #38 it waits `reconnect_interval` first,
+  and connected 8 times, 1.01 s apart ("Reconnecting to the broker"). With the
+  permission in place it connected once.
 
 A group subscription the broker refuses therefore takes the whole agent off the
-broker, and makes it reconnect without a pause; the permissions come before the
+broker, which it tries again once an interval; the permissions come before the
 configuration. The agent logs each refused topic as `subscription refused; no
 tx will arrive on this topic`, with the reason code
 (internal/transport/mqtt/client.go, subscribe). paho hands the SUBACK over
@@ -1036,10 +1036,32 @@ after the broker was back. A reading made in that time failed, and the 8 events
 of an unplug during the outage were dropped as older than their 30 s message
 expiry. With a 1 s interval, it reconnected 0.85 s after the broker was back.
 
-The first attempt does not wait, at start and after a lost connection.
-autopaho asks for a wait before that attempt as well (autopaho/backoff.go,
-Backoff). The agent used to answer with its full first delay there, and took
-1.06 s to connect at every start.
+The first attempt at start does not wait. autopaho asks for a wait before that
+attempt as well (autopaho/backoff.go, Backoff). The agent used to answer with
+its full first delay there, and took 1.06 s to connect at every start.
+
+`[Decided]` After a lost connection, the first attempt waits
+`reconnect_interval`, as an attempt after a failed one does; only the first
+attempt at start goes at once. Source: maintainer, 2026-10-06 (#38 Q1a).
+autopaho asks for attempt 0 at start and again after a lost connection
+(autopaho/net.go, establishServerConnection), so the agent tells the two apart
+by whether a connection has come up (internal/transport/mqtt/client.go,
+reconnectDelay).
+
+Without that wait, a broker that drops each connection as it comes up makes
+the agent spin. Measured on 2026-10-06 against RabbitMQ 4.3.5, with a topic the
+station's user may not read: 482 connections in 5 s, and 208 KB of log a second
+(#38). With the wait, the same agent connected 8 times, 1.01 s apart. The cost
+is a connection dropped while the broker is still up: it comes back after the
+interval, 1 s by default, instead of at once. With the backoff on, the loop is
+the same: each of these connections succeeds, so every wait is the first
+retry's.
+
+`[Decided]` The agent subscribes to every configured topic on every
+connection, whether or not the broker refused it before. A refused topic is
+fixed in the broker's permissions or in the configuration; until then, against
+a broker that closes the connection over it, as RabbitMQ 4.3.5 does, the agent
+stays off the broker. Source: maintainer, 2026-10-06 (#38 Q2).
 
 With the backoff off, every wait is the interval exactly, with no jitter. With
 it on, the wait doubles from the interval up to `max`, and each wait is spread

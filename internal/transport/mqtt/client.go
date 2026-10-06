@@ -13,6 +13,7 @@ import (
 	"os"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/eclipse/paho.golang/autopaho"
@@ -61,8 +62,9 @@ type Options struct {
 	// broker's CONNACK, and the wait for the answer to the subscriptions.
 	ConnectTimeout time.Duration
 
-	// Reconnect is the wait after a failed attempt to connect. The first
-	// attempt, at start and after a connection is lost, goes at once.
+	// Reconnect is the wait after a failed attempt to connect, and after a
+	// lost connection. Only the first attempt at start goes at once
+	// (reconnectDelay).
 	Reconnect backoff.Policy
 
 	// Will composes the offline message the broker publishes on WillTopic if
@@ -170,6 +172,10 @@ func Dial(ctx context.Context, opts Options) (*Client, error) {
 // so that a test can check it without a broker.
 func clientConfig(opts Options, brokerURL *url.URL, tlsCfg *tls.Config, log *slog.Logger, lines *lineGate,
 	answers *subscribeAnswers) autopaho.ClientConfig {
+	// connectedBefore is set once a connection has come up, so that every
+	// attempt after it waits (reconnectDelay).
+	var connectedBefore atomic.Bool
+	delay := reconnectDelay(opts.Reconnect, connectedBefore.Load)
 	cfg := autopaho.ClientConfig{
 		ServerUrls: []*url.URL{brokerURL},
 		TlsCfg:     tlsCfg,
@@ -180,13 +186,18 @@ func clientConfig(opts Options, brokerURL *url.URL, tlsCfg *tls.Config, log *slo
 		SessionExpiryInterval:         0,
 		ConnectUsername:               opts.Username,
 		ConnectPassword:               []byte(opts.Password),
-		ReconnectBackoff:              reconnectDelay(opts.Reconnect),
-		ConnectTimeout:                opts.ConnectTimeout,
+		ReconnectBackoff: func(attempt int) time.Duration {
+			wait := delay(attempt)
+			log.Debug("waiting to connect", "attempt", attempt, "wait", wait.String(), "after_lost_connection", connectedBefore.Load())
+			return wait
+		},
+		ConnectTimeout: opts.ConnectTimeout,
 		// Queue stays nil on purpose. With a queue, a publish while
 		// disconnected is accepted and sent later, which is exactly the
 		// offline replay section 6 forbids. Nil makes it fail immediately.
 		Queue: nil,
 		OnConnectionUp: func(manager *autopaho.ConnectionManager, connack *paho.Connack) {
+			connectedBefore.Store(true)
 			log.Info("broker connected", "session_present", connack.SessionPresent)
 			// Begun here, in the order connections come up, so that answers
 			// from an earlier connection's late SUBACK are not recorded.
@@ -495,11 +506,18 @@ func keepaliveSeconds(delay time.Duration) uint16 {
 }
 
 // reconnectDelay returns autopaho's wait before each attempt to connect.
-// autopaho asks for attempt 0 before the first attempt, at start and after a
-// connection is lost, and that one goes at once (autopaho/backoff.go, Backoff).
-// Attempt n after it is retry n of the policy.
-func reconnectDelay(policy backoff.Policy) func(attempt int) time.Duration {
+// autopaho asks for attempt 0 before the first attempt, at start and again
+// after a connection is lost, and counts the attempts after it
+// (autopaho/net.go, establishServerConnection). At start the first attempt
+// goes at once, and attempt n waits what the policy gives retry n. Once a
+// connection has come up, every attempt waits, the first as retry 1 does, so
+// that a broker that drops each connection as it comes up is not asked again
+// at once (#38 Q1a). connectedBefore reports whether a connection has come up.
+func reconnectDelay(policy backoff.Policy, connectedBefore func() bool) func(attempt int) time.Duration {
 	return func(attempt int) time.Duration {
+		if connectedBefore() {
+			return policy.Wait(attempt + 1)
+		}
 		if attempt <= 0 {
 			return 0
 		}

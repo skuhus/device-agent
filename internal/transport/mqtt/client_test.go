@@ -54,12 +54,13 @@ func TestKeepaliveSeconds(t *testing.T) {
 	}
 }
 
-// The agent tries the broker at once, at start and after losing it: autopaho
-// asks for attempt 0 before the first attempt. After that, attempt n waits
-// what the policy gives retry n, which internal/backoff tests.
-func TestReconnectAtOnceThenAsThePolicySays(t *testing.T) {
-	fixed := reconnectDelay(backoff.Policy{Interval: time.Second})
-	growing := reconnectDelay(backoff.Policy{Interval: time.Second, Grow: true, Max: 8 * time.Second})
+// At start the agent tries the broker at once: autopaho asks for attempt 0
+// before the first attempt. After that, attempt n waits what the policy gives
+// retry n, which internal/backoff tests.
+func TestConnectAtOnceThenAsThePolicySays(t *testing.T) {
+	neverConnected := func() bool { return false }
+	fixed := reconnectDelay(backoff.Policy{Interval: time.Second}, neverConnected)
+	growing := reconnectDelay(backoff.Policy{Interval: time.Second, Grow: true, Max: 8 * time.Second}, neverConnected)
 	for _, delay := range []func(int) time.Duration{fixed, growing} {
 		if got := delay(0); got != 0 {
 			t.Errorf("wait before the first attempt = %s, want none", got)
@@ -76,6 +77,47 @@ func TestReconnectAtOnceThenAsThePolicySays(t *testing.T) {
 		if got := growing(attempt); got != expected {
 			t.Errorf("backoff on: wait before attempt %d = %s, want %s", attempt, got, expected)
 		}
+	}
+}
+
+// Once a connection has come up, the first attempt after losing it waits as
+// retry 1 does, and each after it as the next retry, so that a broker that
+// drops each connection at once is asked once an interval, not without a
+// pause (#38 Q1a).
+func TestReconnectAfterALostConnectionWaits(t *testing.T) {
+	connected := func() bool { return true }
+	fixed := reconnectDelay(backoff.Policy{Interval: time.Second}, connected)
+	growing := reconnectDelay(backoff.Policy{Interval: time.Second, Grow: true, Max: 8 * time.Second}, connected)
+	for attempt := 0; attempt <= 4; attempt++ {
+		if got := fixed(attempt); got != time.Second {
+			t.Errorf("backoff off: wait before attempt %d after a lost connection = %s, want 1s", attempt, got)
+		}
+	}
+	want := []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second, 8 * time.Second}
+	for attempt, expected := range want {
+		if got := growing(attempt); got != expected {
+			t.Errorf("backoff on: wait before attempt %d after a lost connection = %s, want %s", attempt, got, expected)
+		}
+	}
+}
+
+// The connection's own wait starts as at start, and turns to the wait after a
+// lost connection once a connection has come up.
+func TestConnectionWaitsOnceItHasBeenUp(t *testing.T) {
+	brokerURL, _ := url.Parse("tcp://broker:1883")
+	log, logged := logtest.New(t, "debug")
+	cfg := clientConfig(Options{ClientID: "pack-03", Reconnect: backoff.Policy{Interval: 1500 * time.Millisecond}}, brokerURL, nil, log,
+		&lineGate{}, &subscribeAnswers{})
+	if got := cfg.ReconnectBackoff(0); got != 0 {
+		t.Errorf("wait before the first attempt at start = %s, want none", got)
+	}
+	cfg.OnConnectionUp(nil, &paho.Connack{})
+	if got := cfg.ReconnectBackoff(0); got != 1500*time.Millisecond {
+		t.Errorf("wait before the first attempt after a lost connection = %s, want the 1.5s interval", got)
+	}
+	waits := logged.WithMessage(t, "waiting to connect")
+	if len(waits) != 2 || waits[0]["after_lost_connection"] != false || waits[1]["after_lost_connection"] != true || waits[1]["wait"] != "1.5s" {
+		t.Errorf("wait records = %v, want one at start and one after a lost connection, of 1.5s", waits)
 	}
 }
 
