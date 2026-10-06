@@ -674,7 +674,7 @@ dev/sendtx/                sends a tx and prints its results
 dev/internal/mqttconn/     connects and subscribes the dev tools
 dev/agent.local.yaml       agent config for a workstation and the local broker
 Dockerfile                 build stage plus an Alpine runtime
-.github/workflows/         ci and release
+.github/workflows/         ci, the agent's release and the protocol's
 spike/brokerinfo/          what a broker is and which MQTT levels it answers
 spike/mqtt5/               M0 broker property verification, not part of the agent
 spike/serialbench/         a serial printer's line settings and write timing, run on the host

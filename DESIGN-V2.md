@@ -77,6 +77,16 @@ the review on #42. README.md, "Upgrading", is not extended for it. Source:
 maintainer, 2026-10-06 ("v2.1.0 is ok"; "Upgrading section right now is not
 needed at all").
 
+`[Decided]` The protocol is released on its own: each protocol version gets a
+tag, `protocol-v<version>`, and a GitHub release with asyncapi.yaml,
+messages.schema.json, CHANGES.md and a rendered HTML page. A merge to master
+that sets `info.version` to a version with no tag releases it
+(.github/workflows/protocol.yml), as release.yml does for the agent. Source:
+maintainer, 2026-10-06 (#46 Q2). A protocol release is not marked Latest, so
+the agent's release stays the one GitHub shows, and release.yml's generated
+notes start from the previous agent tag, so that a `protocol-v*` tag between
+two agent releases does not cut them short (#46).
+
 `[Decided]` The image on GHCR, `ghcr.io/skuhus/skuhus-device-agent`, is public,
 so that a station pulls it without credentials. Source: maintainer, 2026-10-05
 (#18 Q2). The 0.3.0 image, `ghcr.io/skuhus/skuhus-device-serial-scanner`,

@@ -1,0 +1,98 @@
+# Merging to master releases the protocol when protocol/asyncapi.yaml carries
+# a version that has no tag yet, as release.yml does for the agent (#46 Q2).
+# The tag is protocol-v<version>, and the release carries the document, the
+# schemas, CHANGES.md and a rendered page.
+#
+# The version is info.version in asyncapi.yaml. make protocol-version reads it
+# from wire.ProtocolVersion, which a test holds to info.version, and that test
+# runs here before anything is released.
+name: protocol
+
+on:
+  push:
+    branches: [master]
+    paths: [protocol/**]
+  # For re-running a release whose publish step failed after the checks passed.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Tags are needed to tell a released version from a new one.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: read the version
+        id: version
+        run: |
+          set -eu
+          version="$(make protocol-version)"
+          if [ -z "$version" ]; then
+            echo "no ProtocolVersion in internal/wire/messages.go" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if git rev-parse -q --verify "refs/tags/protocol-v${version}" >/dev/null; then
+            echo "protocol-v${version} is already tagged; this merge checks but does not release"
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "protocol-v${version} is new; this merge releases if the checks pass"
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # The examples, the schemas and the version, held to the code.
+      - name: protocol tests
+        run: go test ./internal/wire/
+
+      - name: validate protocol/asyncapi.yaml
+        run: make protocol-check
+
+      - name: render it
+        run: make protocol-html
+
+      # The notes are the version's section of CHANGES.md, and a version
+      # without one is not released.
+      - name: collect the release
+        if: steps.version.outputs.release == 'true'
+        run: |
+          set -eu
+          version="${{ steps.version.outputs.version }}"
+          awk -v heading="## ${version}" '
+            /^## / { inside = ($0 == heading); next }
+            inside { print }
+          ' protocol/CHANGES.md > dist/protocol-notes.md
+          if ! grep -q '[^[:space:]]' dist/protocol-notes.md; then
+            echo "protocol/CHANGES.md has no section \"## ${version}\"" >&2
+            exit 1
+          fi
+          cat dist/protocol-notes.md
+          cp protocol/asyncapi.yaml protocol/messages.schema.json protocol/CHANGES.md dist/protocol/
+          cd dist/protocol && sha256sum ./* > checksums.txt && cat checksums.txt
+
+      # Not marked Latest, so that the agent's release stays the one GitHub
+      # shows. The tag is created by the release, as in release.yml, so that a
+      # failed publish leaves no tag behind.
+      - name: tag and release
+        if: steps.version.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          version="${{ steps.version.outputs.version }}"
+          gh release create "protocol-v${version}" \
+            --target "${GITHUB_SHA}" \
+            --title "protocol ${version}" \
+            --notes-file dist/protocol-notes.md \
+            --latest=false \
+            dist/protocol/*
+          echo "released protocol-v${version} from ${GITHUB_SHA}"
