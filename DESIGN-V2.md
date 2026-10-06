@@ -646,16 +646,15 @@ such field. encoding/json alone matches a name to a struct field regardless of
 case, and takes the long s for an s, so the agent used to write such a tx
 under an empty id or sender, with them null in its results (#47).
 
-The tx schema and `wire.ReadTx` differ in two ways, measured on 2026-10-06
-(internal/wire/messages_test.go, readTxCases):
+`[Decided]` A line break inside `raw_b64` fails the tx, as the tx schema says,
+so that the agent takes what the schema takes. Go's base64 decoder skips CR and
+LF even in its strict mode, so the agent checks for them itself. Source:
+maintainer, 2026-10-06 (#47 Q1). A sender that wraps its base64, as Python's
+`base64.encodebytes` does every 76 characters, gets `invalid_message`.
 
-- `"schema": 2.0`: the agent refuses it, and the schema takes it, since JSON
-  Schema compares numbers by value.
-- A line break inside `raw_b64`: the agent takes it, since Go's base64 decoder
-  skips CR and LF, and the schema refuses it.
-
-Of the cases tested, the only tx the schema takes and the agent refuses is the
-one that writes `schema` as `2.0`.
+The tx schema and `wire.ReadTx` differ in one way, measured on 2026-10-06
+(internal/wire/messages_test.go, readTxCases): `"schema": 2.0`, which the agent
+refuses and the schema takes, since JSON Schema compares numbers by value.
 
 ### tx results
 

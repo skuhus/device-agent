@@ -343,6 +343,11 @@ func ReadTx(payload []byte) (TxRef, []byte, *TxProblem) {
 	if sender == "" {
 		return invalid("sender is empty")
 	}
+	// Go's decoder skips CR and LF even in its strict mode, and the tx schema
+	// allows neither (#47 Q1).
+	if strings.ContainsAny(rawB64, "\r\n") {
+		return invalid("raw_b64 contains a line break; padded standard base64 has none")
+	}
 	raw, err := base64.StdEncoding.Strict().DecodeString(rawB64)
 	if err != nil {
 		return invalid("raw_b64 is not padded standard base64: %v", err)
