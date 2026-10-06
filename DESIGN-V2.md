@@ -640,17 +640,18 @@ All four fields are required and no other field is accepted, so a mistake in a
 sender gets a failed result instead of being ignored. Source: maintainer,
 2026-09-29 (#11 Q3). Senders set an MQTT message expiry on every tx (#23 Q19).
 
-The tx schema and `wire.ReadTx` differ in three ways, measured on 2026-10-06
-(internal/wire/messages_test.go, readTxCases, for the first two):
+A field's name is matched exactly, so `"ID"` is a field other than `id` and
+fails the tx. encoding/json alone matches names regardless of case, and the
+agent used to write such a tx under an empty id, with `tx_id` null in its
+results (#47).
+
+The tx schema and `wire.ReadTx` differ in two ways, measured on 2026-10-06
+(internal/wire/messages_test.go, readTxCases):
 
 - `"schema": 2.0`: the agent refuses it, and the schema takes it, since JSON
   Schema compares numbers by value.
 - A line break inside `raw_b64`: the agent takes it, since Go's base64 decoder
   skips CR and LF, and the schema refuses it.
-- A field name in another case, such as `"ID"`: the agent writes the tx, since
-  encoding/json matches names regardless of case, and its results carry
-  `tx_id` and `sender` null, since `readTxRef` reads the names as written. The
-  schema refuses it.
 
 Of the cases tested, the only tx the schema takes and the agent refuses is the
 one that writes `schema` as `2.0`.

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"slices"
 	"time"
 	"unicode/utf8"
@@ -267,6 +268,9 @@ type Tx struct {
 	RawB64 string `json:"raw_b64"`
 }
 
+// txFieldNames are the names of a tx's fields, exactly as a sender writes them.
+var txFieldNames = []string{"schema", "id", "sender", "raw_b64"}
+
 // TxProblem is why a tx cannot be taken: the code of its failed result, and
 // the reason as text.
 type TxProblem struct {
@@ -285,19 +289,29 @@ func ReadTx(payload []byte) (TxRef, []byte, *TxProblem) {
 	invalid := func(format string, args ...any) (TxRef, []byte, *TxProblem) {
 		return ref, nil, &TxProblem{Code: TxCodeInvalidMessage, Text: fmt.Sprintf(format, args...)}
 	}
+	var names map[string]json.RawMessage
+	dec := json.NewDecoder(bytes.NewReader(payload))
+	if err := dec.Decode(&names); err != nil {
+		return invalid("not a JSON object of schema, id, sender and raw_b64: %v", err)
+	}
+	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return invalid("more than one JSON value")
+	}
+	// The names are checked here, exactly, because encoding/json matches a
+	// name to a struct field regardless of case: "ID" would fill id (#47).
+	for _, name := range slices.Sorted(maps.Keys(names)) {
+		if !slices.Contains(txFieldNames, name) {
+			return invalid("unknown field %q; a tx has exactly schema, id, sender and raw_b64", name)
+		}
+	}
 	var fields struct {
 		Schema *int    `json:"schema"`
 		ID     *string `json:"id"`
 		Sender *string `json:"sender"`
 		RawB64 *string `json:"raw_b64"`
 	}
-	dec := json.NewDecoder(bytes.NewReader(payload))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&fields); err != nil {
-		return invalid("not a JSON object of schema, id, sender and raw_b64: %v", err)
-	}
-	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return invalid("more than one JSON value")
+	if err := json.Unmarshal(payload, &fields); err != nil {
+		return invalid("a field of the wrong type: %v", err)
 	}
 	var missing []string
 	for _, field := range []struct {

@@ -359,6 +359,35 @@ func TestTxThatCannotBeTakenFails(t *testing.T) {
 	}
 }
 
+// A tx whose field names are in another case fails, and is not written. Taken,
+// as encoding/json alone takes "ID" for id, it was written under an empty id,
+// and the next one like it, whatever its id, was rejected as in progress (#47).
+func TestTxWithFieldNamesInAnotherCaseFails(t *testing.T) {
+	transport := &fakeTransport{}
+	printer := newFakePrinter("printer-1", true)
+	run := startTxRun(t, transport, printer, 3, 10*time.Millisecond)
+	for _, id := range []string{txA, txB} {
+		run.sendRaw([]byte(`{"SCHEMA":2,"ID":"`+id+`","Sender":"label-service","Raw_B64":"XlhB"}`), 30*time.Second)
+	}
+	waitUntil(t, "a result for each tx", func() bool { return len(run.results()) >= 2 })
+	if counters := run.counters(); counters.TxWritten != 0 || counters.TxFailed != 2 {
+		t.Errorf("keepalive tx_written %d, tx_failed %d; want 0 and 2", counters.TxWritten, counters.TxFailed)
+	}
+	results := run.results()
+	if got := codes(results); got != "failed/invalid_message failed/invalid_message" {
+		t.Errorf("results = %s, want failed/invalid_message for each", got)
+	}
+	for _, result := range results {
+		if result.TxID != nil || result.Sender != nil || !strings.Contains(result.Text, `"ID"`) {
+			t.Errorf("result = tx_id %v, sender %v, text %q; want both null, and the text naming \"ID\"", result.TxID, result.Sender, result.Text)
+		}
+	}
+	if writes, _ := printer.snapshot(); len(writes) != 0 {
+		t.Errorf("writes = %q, want none", writes)
+	}
+	run.stop()
+}
+
 // A resend of a tx being written is rejected with where the first stands,
 // and the first is written once.
 func TestTxResendWhileWritingIsRejected(t *testing.T) {
