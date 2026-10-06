@@ -185,9 +185,6 @@ func (dev *Device) Kind() string { return "serial" }
 // Path is the configured device path.
 func (dev *Device) Path() string { return dev.opts.Path }
 
-// Direction is Inbound: a scanner produces data, it does not consume it.
-func (dev *Device) Direction() device.Direction { return device.Inbound }
-
 // Run opens the device, frames what it reads and sends frames to sink until
 // ctx is cancelled, reporting every port event to report, which may be nil.
 // Open failures and disconnects are retried as Options.Reopen says; Run

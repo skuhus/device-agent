@@ -241,10 +241,9 @@ func newFakeReader(id string, frames ...string) *fakeReader {
 	return reader
 }
 
-func (reader *fakeReader) ID() string                  { return reader.id }
-func (reader *fakeReader) Kind() string                { return "fake" }
-func (reader *fakeReader) Path() string                { return "/dev/null" }
-func (reader *fakeReader) Direction() device.Direction { return device.Inbound }
+func (reader *fakeReader) ID() string   { return reader.id }
+func (reader *fakeReader) Kind() string { return "fake" }
+func (reader *fakeReader) Path() string { return "/dev/null" }
 
 func (reader *fakeReader) Run(ctx context.Context, sink chan<- device.Frame, report func(device.Event)) error {
 	for _, event := range reader.events {
