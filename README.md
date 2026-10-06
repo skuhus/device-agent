@@ -652,13 +652,13 @@ Dependabot names its own branches and commits.
 
 ```
 cmd/skuhus-device-agent/   main, flags, and the run, validate, probe and version commands
-internal/config/           load, validate, defaults
+internal/config/           the file, the environment variables, validation and defaults
 internal/backoff/          the wait between attempts, for a device's reopen and the broker's reconnect
 internal/core/             runs the agent: each device's frames, status messages, tx, keepalive, shutdown
 internal/device/           Device interface
 internal/device/serial/    CDC / RS-232 implementation, framing, PTY harness
 internal/wire/             topics and the JSON of every message
-internal/transport/mqtt/   autopaho wiring, publish semantics
+internal/transport/mqtt/   the broker connection: autopaho wiring, publishing, subscribing
 internal/logging/          the common log and its file rotation
 internal/logging/logtest/  the log captured and checked in tests
 internal/version/          the release version, and the injected commit and date
@@ -666,6 +666,7 @@ test/integration/          the agent's binary end to end, behind the integration
 dev/rabbitmq/              local broker: compose, config, definitions
 dev/consumer/              subscribes and prints, for watching the wire
 dev/sendtx/                sends a tx and prints its results
+dev/internal/mqttconn/     connects and subscribes the dev tools
 dev/agent.local.yaml       agent config for a workstation and the local broker
 Dockerfile                 build stage plus an Alpine runtime
 .github/workflows/         ci and release
@@ -675,6 +676,7 @@ spike/serialbench/         a serial printer's line settings and write timing, ru
 docs/scanners/             per-model scanner measurements
 docs/printers/             per-model printer measurements
 docs/spikes/               spike results
+docs/rabbitmq/             an example RabbitMQ broker set up for a deployment
 ```
 
 dev/ and spike/ are Go modules of their own, so `go vet ./...` and `go test
