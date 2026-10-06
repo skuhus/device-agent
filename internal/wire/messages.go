@@ -268,9 +268,6 @@ type Tx struct {
 	RawB64 string `json:"raw_b64"`
 }
 
-// txFieldNames are the names of a tx's fields, exactly as a sender writes them.
-var txFieldNames = []string{"schema", "id", "sender", "raw_b64"}
-
 // TxProblem is why a tx cannot be taken: the code of its failed result, and
 // the reason as text.
 type TxProblem struct {
@@ -285,10 +282,13 @@ type TxProblem struct {
 // problem, and with its id and sender wherever they could be read, so that the
 // sender can tell which tx failed.
 func ReadTx(payload []byte) (TxRef, []byte, *TxProblem) {
-	ref := readTxRef(payload)
+	var ref TxRef
 	invalid := func(format string, args ...any) (TxRef, []byte, *TxProblem) {
 		return ref, nil, &TxProblem{Code: TxCodeInvalidMessage, Text: fmt.Sprintf(format, args...)}
 	}
+	// The tx is read by its names, exactly as written, and not into a struct:
+	// encoding/json matches a name to a struct field regardless of case, so
+	// "ID" would fill id (#47).
 	var names map[string]json.RawMessage
 	dec := json.NewDecoder(bytes.NewReader(payload))
 	if err := dec.Decode(&names); err != nil {
@@ -297,41 +297,42 @@ func ReadTx(payload []byte) (TxRef, []byte, *TxProblem) {
 	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return invalid("more than one JSON value")
 	}
-	// The names are checked here, exactly, because encoding/json matches a
-	// name to a struct field regardless of case: "ID" would fill id (#47).
+	ref = txRefOf(names)
+	var (
+		schema             int
+		id, sender, rawB64 string
+	)
+	type txField struct {
+		name   string
+		target any
+	}
+	fields := []txField{{"schema", &schema}, {"id", &id}, {"sender", &sender}, {"raw_b64", &rawB64}}
 	for _, name := range slices.Sorted(maps.Keys(names)) {
-		if !slices.Contains(txFieldNames, name) {
+		if !slices.ContainsFunc(fields, func(field txField) bool { return field.name == name }) {
 			return invalid("unknown field %q; a tx has exactly schema, id, sender and raw_b64", name)
 		}
 	}
-	var fields struct {
-		Schema *int    `json:"schema"`
-		ID     *string `json:"id"`
-		Sender *string `json:"sender"`
-		RawB64 *string `json:"raw_b64"`
-	}
-	if err := json.Unmarshal(payload, &fields); err != nil {
-		return invalid("a field of the wrong type: %v", err)
-	}
 	var missing []string
-	for _, field := range []struct {
-		name    string
-		missing bool
-	}{{"schema", fields.Schema == nil}, {"id", fields.ID == nil}, {"sender", fields.Sender == nil}, {"raw_b64", fields.RawB64 == nil}} {
-		if field.missing {
+	for _, field := range fields {
+		value, present := names[field.name]
+		if !present || string(value) == "null" {
 			missing = append(missing, field.name)
+			continue
+		}
+		if err := json.Unmarshal(value, field.target); err != nil {
+			return invalid("%s has the wrong type: %v", field.name, err)
 		}
 	}
 	if len(missing) > 0 {
 		return invalid("missing %v", missing)
 	}
-	if *fields.Schema != Schema {
-		return invalid("schema is %d; this agent reads schema %d", *fields.Schema, Schema)
+	if schema != Schema {
+		return invalid("schema is %d; this agent reads schema %d", schema, Schema)
 	}
-	if *fields.Sender == "" {
+	if sender == "" {
 		return invalid("sender is empty")
 	}
-	raw, err := base64.StdEncoding.Strict().DecodeString(*fields.RawB64)
+	raw, err := base64.StdEncoding.Strict().DecodeString(rawB64)
 	if err != nil {
 		return invalid("raw_b64 is not padded standard base64: %v", err)
 	}
@@ -340,22 +341,18 @@ func ReadTx(payload []byte) (TxRef, []byte, *TxProblem) {
 	}
 	// The hyphenated form only: uuid.Parse also takes braces, a urn: prefix
 	// and bare hex, none of which a sender means as an id.
-	if _, err := uuid.Parse(*fields.ID); err != nil || len(*fields.ID) != hyphenatedUUIDLength {
-		return ref, nil, &TxProblem{Code: TxCodeInvalidID, Text: fmt.Sprintf("the id %q is not a UUID", *fields.ID)}
+	if _, err := uuid.Parse(id); err != nil || len(id) != hyphenatedUUIDLength {
+		return ref, nil, &TxProblem{Code: TxCodeInvalidID, Text: fmt.Sprintf("the id %q is not a UUID", id)}
 	}
 	return ref, raw, nil
 }
 
-// readTxRef takes the id and sender from a tx wherever they are strings, so
-// that even a tx that fails names itself in its result.
-func readTxRef(payload []byte) TxRef {
-	var object map[string]json.RawMessage
-	if json.Unmarshal(payload, &object) != nil {
-		return TxRef{}
-	}
+// txRefOf takes the id and sender from a tx's fields wherever they are
+// strings, so that even a tx that fails names itself in its result.
+func txRefOf(names map[string]json.RawMessage) TxRef {
 	var ref TxRef
-	_ = json.Unmarshal(object["id"], &ref.ID)
-	_ = json.Unmarshal(object["sender"], &ref.Sender)
+	_ = json.Unmarshal(names["id"], &ref.ID)
+	_ = json.Unmarshal(names["sender"], &ref.Sender)
 	return ref
 }
 

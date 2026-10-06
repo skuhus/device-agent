@@ -262,6 +262,8 @@ func readTxCases() []readTxCase {
 			wantRef: TxRef{ID: id, Sender: "s"}},
 		{name: "null id", payload: `{"schema":2,"id":null,"sender":"s","raw_b64":"AA=="}`, code: TxCodeInvalidMessage,
 			wantRef: TxRef{Sender: "s"}},
+		{name: "null id, spaced", payload: "{\"schema\": 2, \"id\" :\n null , \"sender\": \"s\", \"raw_b64\": \"AA==\"}",
+			code: TxCodeInvalidMessage, wantRef: TxRef{Sender: "s"}},
 		{name: "schema 1", payload: strings.Replace(good, `"schema":2`, `"schema":1`, 1), code: TxCodeInvalidMessage,
 			wantRef: TxRef{ID: id, Sender: "label-service"}},
 		{name: "schema 2.0", payload: strings.Replace(good, `"schema":2`, `"schema":2.0`, 1), code: TxCodeInvalidMessage,
