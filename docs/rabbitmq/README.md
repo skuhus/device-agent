@@ -2,7 +2,8 @@
 
 An example of a RabbitMQ broker set up in advance for the agents and the
 services around them. Checked on 2026-10-05 against RabbitMQ 4.3.5 and agent
-2.0.0 (#34). dev/rabbitmq/ is the development broker. This example has the
+2.0.0 (#34), and its broadcast group permissions on 2026-10-06 with `make
+test-broker`. dev/rabbitmq/ is the development broker. This example has the
 same users and permissions, in a vhost of its own, `skuhus`, where the
 development broker uses `/`, and adds queues for an ingest service.
 
@@ -32,10 +33,13 @@ makes each subscriber's queue (`mqtt-subscription-<client id>qos1`) itself.
 **The users:**
 - `admin`, the administrator.
 - `station-pack-03`, one per station, for its agent. Its topic permissions
-  let it publish and subscribe under its own station's topics only.
+  let it publish under its own station's topics only. It reads those, and its
+  project's and its site's broadcast group tx topics (DESIGN-V2.md,
+  "Broadcast groups"), which it must be able to read before its devices join
+  a group there.
 - `ingest`, for the services that read what the agents publish and send tx.
-  It reads every topic and writes only device tx topics. It has the
-  `management` tag, which the HTTP API needs.
+  It reads every topic and writes only tx topics, a device's or a broadcast
+  group's. It has the `management` tag, which the HTTP API needs.
 
 **The queues**, durable quorum queues for the ingest service, each bound to
 `amq.topic`:
@@ -68,7 +72,7 @@ topic pattern:
 ```json
 { "user": "station-pack-04", "vhost": "skuhus", "exchange": "amq.topic",
   "write": "^skuhus\\.acme\\.vasby\\.pack-04\\..*$",
-  "read": "^skuhus\\.acme\\.vasby\\.pack-04\\..*$" }
+  "read": "^skuhus\\.acme\\.(vasby\\.pack-04\\..*|group\\.[^.]+\\.tx|vasby\\.group\\.[^.]+\\.tx)$" }
 ```
 
 A station that tries another station's topics is refused, and the broker closes
@@ -102,7 +106,9 @@ the TLS listener, port 1883 refused connections, and the agent connected with
 ## Sending a tx with curl
 
 curl speaks MQTT. A tx is the JSON DESIGN-V2.md, "tx", describes, published on
-the device's tx topic:
+the device's tx topic, or on a broadcast group's, such as
+`skuhus/acme/vasby/group/scales/tx` for the site's group `scales`, where each
+device in the group answers on its own status topic:
 
 ```
 curl -u ingest:<password> \
