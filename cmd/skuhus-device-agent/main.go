@@ -45,6 +45,10 @@ accepted as CLI arguments, because ps exposes them to every user on the host.
 // errUsage means the command line itself was wrong, which exits 2.
 var errUsage = errors.New("usage")
 
+// errReported means the command has already printed why it failed, so main
+// exits 1 without repeating it.
+var errReported = errors.New("reported")
+
 func main() {
 	buildinfo.Set(commit, date)
 
@@ -75,6 +79,9 @@ func main() {
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return
+		}
+		if errors.Is(err, errReported) {
+			os.Exit(1)
 		}
 		fmt.Fprintln(os.Stderr, "error: "+err.Error())
 		if errors.Is(err, errUsage) {

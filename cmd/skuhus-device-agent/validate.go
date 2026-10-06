@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -18,8 +19,9 @@ func validateCommand(args []string, stdout, stderr io.Writer) error {
 	flags.Usage = func() {
 		fmt.Fprint(flags.Output(), "Usage: skuhus-device-agent validate [flags]\n\n"+
 			"Loads the configuration, applies environment and flag overrides, and\n"+
-			"reports every problem found. Exits 0 only when the configuration is\n"+
-			"usable. Warnings do not affect the exit code.\n\n")
+			"states the result. OK, on stdout, is followed by every setting, and\n"+
+			"exits 0; ERROR, on stderr, is followed by every problem found, and\n"+
+			"exits 1. Warnings go to stderr and do not change the result.\n\n")
 		flags.PrintDefaults()
 	}
 
@@ -62,7 +64,7 @@ func validateCommand(args []string, stdout, stderr io.Writer) error {
 		fmt.Fprintln(stderr, "warning: "+warning.String())
 	}
 	if err != nil {
-		return err
+		return reportInvalid(stderr, err)
 	}
 
 	// Validation has checked every topic level, so building the topics cannot
@@ -80,7 +82,11 @@ func validateCommand(args []string, stdout, stderr io.Writer) error {
 	// that what validate shows can be compared with the file key by key.
 	broker := cfg.Broker
 	broker.URL = broker.RedactedURL()
-	fmt.Fprintf(stdout, "configuration is valid\n")
+	verdict := "OK: " + cfg.File + " is valid"
+	if len(warnings) > 0 {
+		verdict += ", with " + countOf(len(warnings), "warning") + " above"
+	}
+	fmt.Fprintln(stdout, verdict)
 	fmt.Fprintf(stdout, "  identity       %s\n", describeSettings(cfg.Identity))
 	fmt.Fprintf(stdout, "  agent status   %s\n", agentTopics.Status())
 	fmt.Fprintf(stdout, "  broker         %s\n", describeSettings(broker))
@@ -103,10 +109,34 @@ func validateCommand(args []string, stdout, stderr io.Writer) error {
 	fmt.Fprintf(stdout, "  delivery       %s\n", describeSettings(cfg.Delivery))
 	fmt.Fprintf(stdout, "  status         %s\n", describeSettings(cfg.Status))
 	fmt.Fprintf(stdout, "  logging        %s\n", describeSettings(cfg.Logging))
-	if len(warnings) > 0 {
-		fmt.Fprintf(stdout, "  warnings       %d (listed on stderr)\n", len(warnings))
-	}
 	return nil
+}
+
+// reportInvalid prints validate's ERROR result: the file and how many
+// problems it has, then each problem on its own line. An error that is not a
+// configuration's is returned as it is, for main to print.
+func reportInvalid(stderr io.Writer, err error) error {
+	var loadErr *config.LoadError
+	if !errors.As(err, &loadErr) {
+		return err
+	}
+	file := loadErr.Path
+	if file == "" {
+		file = "the configuration"
+	}
+	fmt.Fprintf(stderr, "ERROR: %s is not valid: %s\n", file, countOf(len(loadErr.Problems), "problem"))
+	for _, problem := range loadErr.Problems {
+		fmt.Fprintln(stderr, "  - "+strings.ReplaceAll(problem.Error(), "\n", "\n    "))
+	}
+	return errReported
+}
+
+// countOf is count of noun, in the singular for one.
+func countOf(count int, noun string) string {
+	if count == 1 {
+		return "1 " + noun
+	}
+	return fmt.Sprintf("%d %ss", count, noun)
 }
 
 // describeSettings is a section of the configuration, or a device entry, as

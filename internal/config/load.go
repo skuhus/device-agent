@@ -69,11 +69,43 @@ type Options struct {
 	SkipValidate bool
 }
 
+// LoadError is why Load failed: every problem it found, each on its own, and
+// the file, once Load had chosen one. Its text is what run and probe print:
+// what failed, then one problem a line.
+type LoadError struct {
+	// Path is the configuration file, or empty when loading stopped before
+	// choosing one.
+	Path     string
+	Problems []error
+	// failed says what failed, such as "invalid config /etc/x.yaml"; it comes
+	// before the problems in the text, and is empty when they say it.
+	failed string
+}
+
+func (loadErr *LoadError) Error() string {
+	text := errors.Join(loadErr.Problems...).Error()
+	if loadErr.failed == "" {
+		return text
+	}
+	return loadErr.failed + ": " + text
+}
+
+// Unwrap gives the problems to errors.Is and errors.As.
+func (loadErr *LoadError) Unwrap() []error { return loadErr.Problems }
+
+// problemsOf splits an error that joins several problems into them.
+func problemsOf(err error) []error {
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		return joined.Unwrap()
+	}
+	return []error{err}
+}
+
 // Load reads, merges and validates configuration.
 //
-// It returns the merged configuration and any non-fatal warnings. An error is
-// returned for a missing or unreadable file, an unknown key, an unrecognised
-// SH_DEV_AGENT_* variable, or any validation failure; the error text names
+// It returns the merged configuration and any non-fatal warnings. It fails,
+// with a *LoadError, for a missing or unreadable file, an unknown key, an
+// unrecognised SH_DEV_AGENT_* variable, or any validation failure, and names
 // every problem found rather than only the first.
 func Load(opts Options) (*Config, []Warning, error) {
 	environ := opts.Environ
@@ -85,7 +117,7 @@ func Load(opts Options) (*Config, []Warning, error) {
 	// would otherwise send loading to the default path and fail there, with an
 	// error about a missing file rather than about the variable.
 	if err := rejectLegacyEnvironment(variables); err != nil {
-		return nil, nil, err
+		return nil, nil, &LoadError{Problems: problemsOf(err)}
 	}
 	env := envMap(variables)
 
@@ -102,19 +134,21 @@ func Load(opts Options) (*Config, []Warning, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) && !explicit {
-			return nil, nil, fmt.Errorf("no config file at the default location %s: create it or pass --config", path)
+			return nil, nil, &LoadError{Path: path, Problems: []error{
+				fmt.Errorf("no config file at the default location %s: create it or pass --config", path)}}
 		}
-		return nil, nil, fmt.Errorf("open config %s: %w", path, err)
+		return nil, nil, &LoadError{Path: path, Problems: []error{err}, failed: "open config " + path}
 	}
 	defer file.Close()
 
 	cfg, err := decode(file)
 	if err != nil {
-		return nil, nil, fmt.Errorf("parse config %s: %w", path, err)
+		return nil, nil, &LoadError{Path: path, Problems: problemsOf(err), failed: "parse config " + path}
 	}
+	cfg.File = path
 
 	if err := applyEnv(cfg, env); err != nil {
-		return nil, nil, err
+		return nil, nil, &LoadError{Path: path, Problems: problemsOf(err)}
 	}
 	applyOverrides(cfg, opts.Overrides)
 	applyDerivedDefaults(cfg)
@@ -124,7 +158,7 @@ func Load(opts Options) (*Config, []Warning, error) {
 	}
 	warnings, err := Validate(cfg, env)
 	if err != nil {
-		return nil, warnings, fmt.Errorf("invalid config %s: %w", path, err)
+		return nil, warnings, &LoadError{Path: path, Problems: problemsOf(err), failed: "invalid config " + path}
 	}
 	return cfg, warnings, nil
 }

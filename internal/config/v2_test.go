@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -518,5 +519,45 @@ func TestTxIntakeSize(t *testing.T) {
 	_, _, err = load(t, newFixture(t, zero).path, noEnv(), Overrides{})
 	if want := "delivery.tx_intake_size must be at least 1, got 0"; err == nil || !strings.Contains(err.Error(), want) {
 		t.Errorf("error = %v, want %q", err, want)
+	}
+}
+
+// Load's failure carries each problem on its own and the file it read, so
+// that validate can count and list them; its text is still the one run
+// prints, what failed and then a problem a line. A loaded configuration
+// records its file.
+func TestLoadErrorListsEachProblem(t *testing.T) {
+	bad := strings.Replace(strings.Replace(validConfig, "station: pack-03", "station: pack_03", 1),
+		"    baud: 9600\n", "    baud: 0\n", 1)
+	if !strings.Contains(bad, "baud: 0") {
+		t.Fatal("validConfig no longer sets baud: 9600; this test needs another way to set a bad baud")
+	}
+	fixture := newFixture(t, bad)
+	_, _, err := load(t, fixture.path, noEnv(), Overrides{})
+	var loadErr *LoadError
+	if !errors.As(err, &loadErr) {
+		t.Fatalf("err = %v, want a *LoadError", err)
+	}
+	if loadErr.Path != fixture.path {
+		t.Errorf("path = %q, want %q", loadErr.Path, fixture.path)
+	}
+	var texts []string
+	for _, problem := range loadErr.Problems {
+		texts = append(texts, problem.Error())
+	}
+	if len(texts) != 3 || !strings.HasPrefix(texts[0], "identity.station") ||
+		!strings.HasPrefix(texts[1], "identity.instance") || !strings.HasPrefix(texts[2], "devices.scanner-main.baud") {
+		t.Errorf("problems = %q, want the station, the instance it defaults to, and the baud", texts)
+	}
+	if want := "invalid config " + fixture.path + ": " + strings.Join(texts, "\n"); err.Error() != want {
+		t.Errorf("text = %q\nwant %q", err.Error(), want)
+	}
+
+	cfg, _, err := load(t, newFixture(t, validConfig).path, noEnv(), Overrides{})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.File == "" || !strings.HasSuffix(cfg.File, "config.yaml") {
+		t.Errorf("File = %q, want the file Load read", cfg.File)
 	}
 }
