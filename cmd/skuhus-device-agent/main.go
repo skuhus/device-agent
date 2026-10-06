@@ -8,7 +8,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"strconv"
 
 	buildinfo "github.com/skuhus/device-agent/internal/version"
 )
@@ -90,60 +89,3 @@ func main() {
 		os.Exit(1)
 	}
 }
-
-// parseCommandLine parses a command's flags and refuses positional arguments.
-// A flag that does not parse, or an argument no command takes, is a usage
-// error, which exits 2; -h stays flag.ErrHelp, which exits 0.
-func parseCommandLine(flags *flag.FlagSet, args []string) error {
-	if err := flags.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return err
-		}
-		return fmt.Errorf("%w: %v", errUsage, err)
-	}
-	if flags.NArg() > 0 {
-		return fmt.Errorf("%w: %s takes no positional arguments, got %q", errUsage, flags.Name(), flags.Arg(0))
-	}
-	return nil
-}
-
-// stringFlag records whether a flag was set, which is what keeps flags above
-// the environment above the config file. The flag package has no built-in way
-// to distinguish "set to the zero value" from "not set".
-type stringFlag struct {
-	value *string
-}
-
-func (flagValue *stringFlag) String() string {
-	if flagValue == nil || flagValue.value == nil {
-		return ""
-	}
-	return *flagValue.value
-}
-
-func (flagValue *stringFlag) Set(raw string) error {
-	flagValue.value = &raw
-	return nil
-}
-
-type boolFlag struct {
-	value *bool
-}
-
-func (flagValue *boolFlag) String() string {
-	if flagValue == nil || flagValue.value == nil {
-		return "false"
-	}
-	return strconv.FormatBool(*flagValue.value)
-}
-
-func (flagValue *boolFlag) Set(raw string) error {
-	parsed, err := strconv.ParseBool(raw)
-	if err != nil {
-		return fmt.Errorf("expected a boolean, got %q", raw)
-	}
-	flagValue.value = &parsed
-	return nil
-}
-
-func (flagValue *boolFlag) IsBoolFlag() bool { return true }
