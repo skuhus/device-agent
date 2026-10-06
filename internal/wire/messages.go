@@ -15,8 +15,14 @@ import (
 )
 
 // Schema is the version every message in this package carries. v1's messages
-// are schema 1 (internal/event); consumers switch on it.
+// are schema 1 (internal/event); consumers switch on it. It is the major
+// version of ProtocolVersion.
 const Schema = 2
+
+// ProtocolVersion is the version of the protocol in protocol/asyncapi.yaml
+// that this package speaks, its info.version. The keepalive carries it, and a
+// test holds the two to each other.
+const ProtocolVersion = "2.2.0"
 
 // hyphenatedUUIDLength is the length of a UUID in its hyphenated form,
 // 8-4-4-4-12 hex digits (RFC 9562, section 4).
@@ -465,6 +471,9 @@ type KeepaliveDevice struct {
 // how a consumer learns the agent is alive, and every device's state.
 type Keepalive struct {
 	header
+	// ProtocolVersion says which protocol version the agent speaks, so that a
+	// consumer need not map agent_version to it.
+	ProtocolVersion string `json:"protocol_version"`
 	// UptimeS counts from process start, so a restart loop shows as a counter
 	// that keeps returning to zero.
 	UptimeS int64 `json:"uptime_s"`
@@ -676,11 +685,12 @@ func (builder *Builder) Keepalive(started, at time.Time, interval time.Duration,
 		})
 	}
 	return Keepalive{
-		header:     builder.header(KindKeepalive, at),
-		UptimeS:    int64(at.Sub(started) / time.Second),
-		IntervalS:  int64(interval / time.Second),
-		GoneAfterS: int64(interval/time.Second) * int64(missed),
-		Devices:    entries,
+		header:          builder.header(KindKeepalive, at),
+		ProtocolVersion: ProtocolVersion,
+		UptimeS:         int64(at.Sub(started) / time.Second),
+		IntervalS:       int64(interval / time.Second),
+		GoneAfterS:      int64(interval/time.Second) * int64(missed),
+		Devices:         entries,
 	}
 }
 

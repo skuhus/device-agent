@@ -838,6 +838,7 @@ rather than a number of its own. Source: maintainer, 2026-09-29 (#11 Q7).
   "instance_id": "pack-03",
   "agent_version": "2.0.0",
   "agent_ts": "2026-09-29T08:00:00.123Z",
+  "protocol_version": "2.2.0",
   "uptime_s": 3600,
   "interval_s": 15,
   "gone_after_s": 45,
@@ -924,6 +925,7 @@ rather than a number of its own. Source: maintainer, 2026-09-29 (#11 Q7).
 
 | Field | Type | Null | Meaning |
 |---|---|---|---|
+| protocol_version | string | no | The protocol version the agent speaks (#46 Q4). |
 | uptime_s | integer | no | Seconds since the process started. A restart loop shows as a count that keeps returning to zero. |
 | interval_s | integer | no | Seconds until the next keepalive. |
 | gone_after_s | integer | no | Seconds without a keepalive after which a consumer treats the agent as gone: the configured number of missed intervals. |
