@@ -93,6 +93,10 @@ func New(opts Options) (*slog.Logger, error) {
 	), nil
 }
 
+// callersAboveRecord is how many frames Record skips to find the line that
+// called it: runtime.Callers and Record itself.
+const callersAboveRecord = 2
+
 // Record writes a record whatever the log's level says, with its caller as the
 // source. It is for the records the log keeps for a reason other than
 // diagnosis: every reading gets a record of what happened to it (DESIGN-V2.md,
@@ -100,7 +104,7 @@ func New(opts Options) (*slog.Logger, error) {
 // governed.
 func Record(log *slog.Logger, level slog.Level, msg string, args ...any) {
 	var pcs [1]uintptr
-	runtime.Callers(2, pcs[:]) // skip Callers and Record
+	runtime.Callers(callersAboveRecord, pcs[:])
 	record := slog.NewRecord(time.Now(), level, msg, pcs[0])
 	record.Add(args...)
 	// The handler reports a record it could not write itself.

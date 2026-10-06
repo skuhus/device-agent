@@ -1,10 +1,8 @@
-// Package device defines the transport-independent view of an attached device.
-//
-// The interface is kept generic on purpose. A printer is not a scanner - it is
-// network-to-device, its jobs are durable rather than perishable, and its
-// errors (out of paper, head open) are routine rather than exceptional - so the
-// abstraction is not unified yet. Keeping Device an interface is what allows one
-// to be added without reworking the supervisor.
+// Package device defines what the core needs of an attached device, whatever
+// its transport: a Device reads, frames what the port sends and reports what
+// happens to the port, and a device that can be written is also a Writer,
+// which writes through the port the reader holds open. internal/device/serial
+// is the one transport.
 package device
 
 import (
@@ -13,17 +11,6 @@ import (
 	"time"
 
 	"github.com/skuhus/device-agent/internal/wire"
-)
-
-// Direction says which way data flows for a device kind. Scanners are Inbound.
-// It exists so a future outbound device does not have to redefine the model.
-type Direction string
-
-const (
-	// Inbound is device to network.
-	Inbound Direction = "inbound"
-	// Outbound is network to device.
-	Outbound Direction = "outbound"
 )
 
 // EventKind names what happened to a device's port.
@@ -84,8 +71,6 @@ type Device interface {
 	Kind() string
 	// Path is the configured device path.
 	Path() string
-	// Direction is the data flow direction.
-	Direction() Direction
 	// Run reads until ctx is cancelled, sending each complete frame to sink and
 	// every port event to report. report is called inline and must not block.
 	//

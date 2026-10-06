@@ -4,10 +4,10 @@
 // which stations are still running an old build.
 package version
 
-// Reported as agent_version in every message the agent publishes
-// (DESIGN-V2.md, "Fields in every message the agent publishes"), and by the
-// version subcommand. This is the only place it is written down: edit it, then
-// tag.
+// version is the agent's version, reported as agent_version in every message
+// the agent publishes (DESIGN-V2.md, "Fields in every message the agent
+// publishes"), and by the version subcommand. This is the only place it is
+// written down: edit it, then tag.
 //
 // It is a constant rather than a value injected by the linker so that every way
 // of building this code agrees: "go build", "go test", an IDE and the Makefile

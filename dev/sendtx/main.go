@@ -17,13 +17,13 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"net"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/eclipse/paho.golang/paho"
+	"github.com/skuhus/device-agent/dev/internal/mqttconn"
 )
 
 func main() {
@@ -127,17 +127,12 @@ func newUUID() (string, error) {
 func run(broker, username, password, topic, id, sender string, data []byte, expiry, wait time.Duration) error {
 	ctx, cancel := context.WithTimeout(context.Background(), wait+10*time.Second)
 	defer cancel()
-	conn, err := net.DialTimeout("tcp", broker, 10*time.Second)
-	if err != nil {
-		return fmt.Errorf("connect to %s: %w", broker, err)
-	}
 	results := make(chan map[string]any, 16)
 	// Named after the tx, not the process: in a container every process is
 	// pid 1, and two senders sharing a client id disconnect each other.
 	clientID := "sendtx-" + id
-	client := paho.NewClient(paho.ClientConfig{
+	client, err := mqttconn.Connect(ctx, broker, username, password, paho.ClientConfig{
 		ClientID: clientID,
-		Conn:     conn,
 		OnPublishReceived: []func(paho.PublishReceived) (bool, error){
 			func(received paho.PublishReceived) (bool, error) {
 				var message map[string]any
@@ -148,26 +143,15 @@ func run(broker, username, password, topic, id, sender string, data []byte, expi
 			},
 		},
 	})
-	connack, err := client.Connect(ctx, &paho.Connect{
-		ClientID: clientID, KeepAlive: 30, CleanStart: true,
-		Username: username, UsernameFlag: true, Password: []byte(password), PasswordFlag: true,
-	})
 	if err != nil {
-		return fmt.Errorf("MQTT connect: %w", err)
-	}
-	if connack.ReasonCode != 0 {
-		return fmt.Errorf("MQTT connect refused with reason %d", connack.ReasonCode)
+		return err
 	}
 	defer client.Disconnect(&paho.Disconnect{ReasonCode: 0})
 
 	// Subscribed before the tx goes out, so that no result is missed.
 	status, group := resultsFilter(topic)
-	suback, err := client.Subscribe(ctx, &paho.Subscribe{Subscriptions: []paho.SubscribeOptions{{Topic: status, QoS: 1}}})
-	if err != nil {
-		return fmt.Errorf("subscribe to %s: %w", status, err)
-	}
-	if len(suback.Reasons) != 1 || suback.Reasons[0] > 2 {
-		return fmt.Errorf("subscription to %s refused: %v", status, suback.Reasons)
+	if err := mqttconn.Subscribe(ctx, client, status, 1); err != nil {
+		return err
 	}
 
 	body, err := json.Marshal(map[string]any{"schema": 2, "id": id, "sender": sender, "raw_b64": base64.StdEncoding.EncodeToString(data)})

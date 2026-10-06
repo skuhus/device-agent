@@ -35,40 +35,13 @@ func runCommand(args []string, stdout, stderr io.Writer) error {
 		flags.PrintDefaults()
 	}
 
-	path := flags.String("config", "", "config file path (default "+config.DefaultPath()+")")
-	var project, site, station, instance stringFlag
-	var brokerURL, credentialsFile, caFile, logLevel stringFlag
-	var insecure, logPayloads boolFlag
-	flags.Var(&project, "project", "override identity.project")
-	flags.Var(&site, "site", "override identity.site")
-	flags.Var(&station, "station", "override identity.station")
-	flags.Var(&instance, "instance", "override identity.instance, the MQTT client id (default: the station id)")
-	flags.Var(&brokerURL, "broker-url", "override broker.url")
-	flags.Var(&credentialsFile, "broker-credentials-file", "override broker.credentials_file")
-	flags.Var(&caFile, "broker-ca-file", "override broker.ca_file")
-	flags.Var(&insecure, "broker-insecure", "override broker.insecure (development only)")
-	flags.Var(&logLevel, "log-level", "override logging.level")
-	flags.Var(&logPayloads, "log-payloads", "override logging.log_payloads")
+	shared := newConfigFlags(flags)
 
 	if err := parseCommandLine(flags, args); err != nil {
 		return err
 	}
 
-	cfg, warnings, err := config.Load(config.Options{
-		Path: *path,
-		Overrides: config.Overrides{
-			Project:               project.value,
-			Site:                  site.value,
-			Station:               station.value,
-			Instance:              instance.value,
-			BrokerURL:             brokerURL.value,
-			BrokerCredentialsFile: credentialsFile.value,
-			BrokerCAFile:          caFile.value,
-			BrokerInsecure:        insecure.value,
-			LogLevel:              logLevel.value,
-			LogPayloads:           logPayloads.value,
-		},
-	})
+	cfg, warnings, err := config.Load(shared.loadOptions())
 	if err != nil {
 		// There is no log yet, so the warnings go with the error to stderr.
 		// Once the configuration loads, runAgent writes them to the log.

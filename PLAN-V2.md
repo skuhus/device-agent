@@ -477,9 +477,11 @@ Depends on: T3 to T11.
 
 ### T13. Release 2.0.0
 
-Status: in progress on branch gh-18-release. The version is 2.0.0, the release
-build was run locally, and #18 Q1 and Q2 are answered and applied; the release
-itself waits for the merge.
+Status: released as v2.0.0 from #32 (d112631) on 2026-10-05; the checks after
+the merge are on #18. Open there: the image package is still private, so the
+anonymous pull is not checked yet (an anonymous token request was refused on
+2026-10-06), and README.md does not say that a downloaded bare binary needs
+`chmod +x`.
 
 2.0.0 releases reading and writing together (maintainer, 2026-10-04). Phase 2
 merged to master in #31, so this task's pull request carries the release alone.
@@ -652,6 +654,8 @@ Recorded so they are not lost:
 - #27: restricting tx ids to UUID version 4.
 - #28: asking the agent where a tx stands; until then a resend with the same id
   is the enquiry (#11 Q5).
+- #36: describing a device beyond `device_type`: its model, description, serial
+  and part number.
 
 - Exchange sessions and polling (DESIGN-V2.md, "Deferred beyond #4").
 - Port locking between processes (same).

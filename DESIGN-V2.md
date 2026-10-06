@@ -120,9 +120,9 @@ A tx can also reach every device in a broadcast group, on the group's own topic
     skuhus/<project>/<site>/<station>/agent/<instance>/status   will, keepalive, counters
     skuhus/<project>/<site>/<station>/<device>/status           device events, tx results
 
-- A will is registered on one topic per connection
-  (internal/transport/mqtt/client.go:143), so "this agent is gone" cannot be
-  published on each device's topic.
+- A will is registered on one topic per connection (MQTT 5.0, CONNECT; the
+  agent's in internal/transport/mqtt/client.go, clientConfig), so "this agent
+  is gone" cannot be published on each device's topic.
 - The instance is in the path because a station-level status collided when two
   agents shared a station: one instance shutting down published a retained
   offline for a station whose other instance was running and scanning
@@ -131,7 +131,7 @@ A tx can also reach every device in a broadcast group, on the group's own topic
   be configured into the agent's topics.
 
 `[Decided]` A device id is now a topic segment, so it follows the topic-segment
-rule `[a-z0-9-]+` (internal/config/validate.go:24). v1 allows `[A-Za-z0-9._-]+`
+rule `[a-z0-9-]+` (internal/config/validate.go, topicSegment). v1 allows `[A-Za-z0-9._-]+`
 (validate.go:27), which was acceptable while the id only appeared inside
 payloads. Source: maintainer, 2026-09-29 (#23 Q1).
 
@@ -473,7 +473,7 @@ A group subscription the broker refuses therefore takes the whole agent off the
 broker, which it tries again once an interval; the permissions come before the
 configuration. The agent logs each refused topic as `subscription refused; no
 tx will arrive on this topic`, with the reason code
-(internal/transport/mqtt/client.go, subscribe). paho hands the SUBACK over
+(internal/transport/mqtt/subscribe.go, subscribe). paho hands the SUBACK over
 together with an error when a topic is refused (paho/client.go, Subscribe, in
 paho.golang v0.23.0); the agent reads the SUBACK, and logs that subscribing
 failed only when there is none.

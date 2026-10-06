@@ -8,7 +8,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"strconv"
 
 	buildinfo "github.com/skuhus/device-agent/internal/version"
 )
@@ -42,11 +41,18 @@ variables, then the config file, then defaults. Broker credentials are never
 accepted as CLI arguments, because ps exposes them to every user on the host.
 `
 
-// errUsage means the command line itself was wrong, which exits 2.
+// The exit codes: a failure, and a command line that is itself wrong, as the
+// flag package and most commands use them.
+const (
+	exitFailure = 1
+	exitUsage   = 2
+)
+
+// errUsage means the command line itself was wrong, which exits exitUsage.
 var errUsage = errors.New("usage")
 
 // errReported means the command has already printed why it failed, so main
-// exits 1 without repeating it.
+// exits exitFailure without repeating it.
 var errReported = errors.New("reported")
 
 func main() {
@@ -54,7 +60,7 @@ func main() {
 
 	if len(os.Args) < 2 {
 		fmt.Fprint(os.Stderr, usage)
-		os.Exit(2)
+		os.Exit(exitUsage)
 	}
 
 	var err error
@@ -73,7 +79,7 @@ func main() {
 		return
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %q\n\n%s", os.Args[1], usage)
-		os.Exit(2)
+		os.Exit(exitUsage)
 	}
 
 	if err != nil {
@@ -81,69 +87,12 @@ func main() {
 			return
 		}
 		if errors.Is(err, errReported) {
-			os.Exit(1)
+			os.Exit(exitFailure)
 		}
 		fmt.Fprintln(os.Stderr, "error: "+err.Error())
 		if errors.Is(err, errUsage) {
-			os.Exit(2)
+			os.Exit(exitUsage)
 		}
-		os.Exit(1)
+		os.Exit(exitFailure)
 	}
 }
-
-// parseCommandLine parses a command's flags and refuses positional arguments.
-// A flag that does not parse, or an argument no command takes, is a usage
-// error, which exits 2; -h stays flag.ErrHelp, which exits 0.
-func parseCommandLine(flags *flag.FlagSet, args []string) error {
-	if err := flags.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return err
-		}
-		return fmt.Errorf("%w: %v", errUsage, err)
-	}
-	if flags.NArg() > 0 {
-		return fmt.Errorf("%w: %s takes no positional arguments, got %q", errUsage, flags.Name(), flags.Arg(0))
-	}
-	return nil
-}
-
-// stringFlag records whether a flag was set, which is what keeps flags above
-// the environment above the config file. The flag package has no built-in way
-// to distinguish "set to the zero value" from "not set".
-type stringFlag struct {
-	value *string
-}
-
-func (flagValue *stringFlag) String() string {
-	if flagValue == nil || flagValue.value == nil {
-		return ""
-	}
-	return *flagValue.value
-}
-
-func (flagValue *stringFlag) Set(raw string) error {
-	flagValue.value = &raw
-	return nil
-}
-
-type boolFlag struct {
-	value *bool
-}
-
-func (flagValue *boolFlag) String() string {
-	if flagValue == nil || flagValue.value == nil {
-		return "false"
-	}
-	return strconv.FormatBool(*flagValue.value)
-}
-
-func (flagValue *boolFlag) Set(raw string) error {
-	parsed, err := strconv.ParseBool(raw)
-	if err != nil {
-		return fmt.Errorf("expected a boolean, got %q", raw)
-	}
-	flagValue.value = &parsed
-	return nil
-}
-
-func (flagValue *boolFlag) IsBoolFlag() bool { return true }

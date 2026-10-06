@@ -70,58 +70,27 @@ func probeCommand(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	// The identity is filled from the config below when --device names one, so
-	// that --json prints the message run would publish rather than a lookalike.
-	identity := wire.Agent{InstanceID: "probe", AgentVersion: buildinfo.Version()}
 	// Without --device, the flags set what they name and every other key
 	// keeps the configuration's default, as an entry that leaves it out does.
-	dev := config.DefaultDevice()
-	dev.ID = "probe"
-	dev.Path = *path
-	dev.Baud = *baud
-	dev.DataBits = *dataBits
-	dev.Parity = config.Parity(*parity)
-	dev.StopBits = config.StopBits(*stopBits)
-	dev.MaxFrameBytes = *maxFrame
-	dev.InterCharTimeout = config.Duration(*interChar)
-
-	if *deviceID != "" {
-		cfg, _, err := config.Load(config.Options{Path: *cfgPath, SkipValidate: true})
-		if err != nil {
-			return err
-		}
-		found := false
-		for _, deviceCfg := range cfg.Devices {
-			if deviceCfg.ID == *deviceID {
-				dev, found = deviceCfg, true
-				break
-			}
-		}
-		if !found {
-			ids := make([]string, 0, len(cfg.Devices))
-			for _, deviceCfg := range cfg.Devices {
-				ids = append(ids, deviceCfg.ID)
-			}
-			return fmt.Errorf("no device %q in the config file (have: %s)", *deviceID, strings.Join(ids, ", "))
-		}
-		identity.Project = cfg.Identity.Project
-		identity.Site = cfg.Identity.Site
-		identity.Station = cfg.Identity.Station
-		identity.InstanceID = cfg.Identity.Instance
-	} else {
-		sep, err := parseSeparator(*separator)
-		if err != nil {
-			return fmt.Errorf("%w: %s", errUsage, err)
-		}
-		dev.Separator = string(sep)
-	}
-
-	if warnings, err := config.ValidateDevice(dev); err != nil {
+	flagged := config.DefaultDevice()
+	flagged.ID = "probe"
+	flagged.Path = *path
+	flagged.Baud = *baud
+	flagged.DataBits = *dataBits
+	flagged.Parity = config.Parity(*parity)
+	flagged.StopBits = config.StopBits(*stopBits)
+	flagged.MaxFrameBytes = *maxFrame
+	flagged.InterCharTimeout = config.Duration(*interChar)
+	dev, identity, err := probedDevice(*cfgPath, *deviceID, flagged, *separator)
+	if err != nil {
 		return err
-	} else {
-		for _, warning := range warnings {
-			fmt.Fprintln(stderr, "warning: "+warning.String())
-		}
+	}
+	warnings, err := config.ValidateDevice(dev)
+	if err != nil {
+		return err
+	}
+	for _, warning := range warnings {
+		fmt.Fprintln(stderr, "warning: "+warning.String())
 	}
 
 	log, err := logging.New(logging.Options{
@@ -136,7 +105,6 @@ func probeCommand(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-
 	reader, err := newSerialReader(dev, *logPayloads, log)
 	if err != nil {
 		return err
@@ -149,7 +117,47 @@ func probeCommand(args []string, stdout, stderr io.Writer) error {
 		ctx, cancel = context.WithTimeout(ctx, *duration)
 		defer cancel()
 	}
+	fmt.Fprintf(stdout, "probing %s (%d baud %d/%s/%s, separator %q, max frame %d, inter-char %s); press Ctrl-C to stop\n",
+		dev.Path, dev.Baud, dev.DataBits, dev.Parity, dev.StopBits, dev.Separator, dev.MaxFrameBytes, dev.InterCharTimeout)
+	return printReadings(ctx, reader, dev, identity, log, *asJSON, stdout)
+}
 
+// probedDevice is the device probe opens, and the identity of the messages
+// --json prints. With --device both come from the config file, so that --json
+// prints the message run would publish rather than a lookalike. With --path the
+// device is flagged, the flags' settings on a device entry's defaults, with the
+// separator decoded from separator.
+func probedDevice(configPath, deviceID string, flagged config.Device, separator string) (config.Device, wire.Agent, error) {
+	identity := wire.Agent{InstanceID: "probe", AgentVersion: buildinfo.Version()}
+	if deviceID == "" {
+		decoded, err := parseSeparator(separator)
+		if err != nil {
+			return config.Device{}, wire.Agent{}, fmt.Errorf("%w: %s", errUsage, err)
+		}
+		flagged.Separator = string(decoded)
+		return flagged, identity, nil
+	}
+	cfg, _, err := config.Load(config.Options{Path: configPath, SkipValidate: true})
+	if err != nil {
+		return config.Device{}, wire.Agent{}, err
+	}
+	ids := make([]string, 0, len(cfg.Devices))
+	for _, deviceCfg := range cfg.Devices {
+		if deviceCfg.ID == deviceID {
+			identity.Project, identity.Site, identity.Station = cfg.Identity.Project, cfg.Identity.Site, cfg.Identity.Station
+			identity.InstanceID = cfg.Identity.Instance
+			return deviceCfg, identity, nil
+		}
+		ids = append(ids, deviceCfg.ID)
+	}
+	return config.Device{}, wire.Agent{}, fmt.Errorf("no device %q in the config file (have: %s)", deviceID, strings.Join(ids, ", "))
+}
+
+// printReadings runs the reader until ctx ends, and prints each frame it
+// reads, as the rx message run would publish when asJSON is set. Whether the
+// device is there is logged once per change.
+func printReadings(ctx context.Context, reader device.Device, dev config.Device, identity wire.Agent, log *slog.Logger,
+	asJSON bool, stdout io.Writer) error {
 	presence := &presenceLog{log: log.With("device_id", dev.ID, "device_path", dev.Path)}
 	frames := make(chan device.Frame, config.DefaultBufferSize)
 	done := make(chan error, 1)
@@ -158,10 +166,6 @@ func probeCommand(args []string, stdout, stderr io.Writer) error {
 	builder := wire.NewBuilder(identity, nil)
 	wireDevice := wire.Device{ID: dev.ID, Type: dev.DeviceType, Expiry: dev.MessageExpiry.Duration()}
 	var seq uint64
-
-	fmt.Fprintf(stdout, "probing %s (%d baud %d/%s/%s, separator %q, max frame %d, inter-char %s); press Ctrl-C to stop\n",
-		dev.Path, dev.Baud, dev.DataBits, dev.Parity, dev.StopBits, dev.Separator, dev.MaxFrameBytes, dev.InterCharTimeout)
-
 	for {
 		select {
 		case <-ctx.Done():
@@ -169,7 +173,7 @@ func probeCommand(args []string, stdout, stderr io.Writer) error {
 			return nil
 		case frame := <-frames:
 			seq++
-			if err := printReading(stdout, builder.Rx(wireDevice, seq, frame.Raw, frame.At), frame.Raw, *asJSON); err != nil {
+			if err := printReading(stdout, builder.Rx(wireDevice, seq, frame.Raw, frame.At), frame.Raw, asJSON); err != nil {
 				return err
 			}
 		}
@@ -274,7 +278,7 @@ func listDevices(out io.Writer) error {
 	}
 	for _, portName := range ports {
 		note := ""
-		if strings.HasPrefix(portName, "/dev/tty.") {
+		if config.IsCallinDevice(portName) {
 			note = "  [unusable: macOS callin device, opening it blocks on carrier detect; use the /dev/cu.* twin]"
 		}
 		fmt.Fprintf(out, "  %s%s\n", portName, note)

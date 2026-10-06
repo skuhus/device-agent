@@ -41,7 +41,8 @@ const (
 	// before it was a setting.
 	DefaultConnectTimeout = 10 * time.Second
 	// DefaultReconnectInterval is how often the agent tries the broker while it
-	// cannot be reached, with the backoff off, which is its default (#13 Q3).
+	// cannot be reached, with the backoff off, which is its default (#13 Q3),
+	// and how long it waits after a lost connection (#38 Q1a).
 	DefaultReconnectInterval = 1 * time.Second
 	// DefaultReconnectBackoffMax and DefaultReconnectBackoffJitter apply once
 	// the backoff is enabled. They are the specification's connect_backoff
