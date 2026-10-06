@@ -71,6 +71,12 @@ the release's tag, above the notes GitHub generates; that section says what a
 station and a consumer change for each release. Source: maintainer, 2026-10-05
 (#18 Q1). For 2.0.0 it lists what changed from 0.3.0.
 
+`[Decided]` 2.1.0 follows 2.0.0, from #44: broadcast groups (#35), the OK or
+ERROR result of `validate` (#33), the wait after a lost connection (#38) and
+the review on #42. README.md, "Upgrading", is not extended for it. Source:
+maintainer, 2026-10-06 ("v2.1.0 is ok"; "Upgrading section right now is not
+needed at all").
+
 `[Decided]` The image on GHCR, `ghcr.io/skuhus/skuhus-device-agent`, is public,
 so that a station pulls it without credentials. Source: maintainer, 2026-10-05
 (#18 Q2). The 0.3.0 image, `ghcr.io/skuhus/skuhus-device-serial-scanner`,
