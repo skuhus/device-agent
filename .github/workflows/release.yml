@@ -146,7 +146,9 @@ jobs:
       # appear together: a tag pushed separately would survive a failed publish
       # and make the next merge skip a release that never happened. The notes
       # start with a link to README.md's "Upgrading", at this release's tag,
-      # above the generated notes (#18 Q1).
+      # above the generated notes (#18 Q1). The generated notes start from the
+      # previous agent tag, v*, so that a protocol-v* tag released between the
+      # two does not cut them short (#46).
       - name: tag and release
         if: steps.version.outputs.release == 'true'
         env:
@@ -154,10 +156,16 @@ jobs:
         run: |
           set -eu
           version="${{ steps.version.outputs.version }}"
+          start=()
+          if previous="$(git describe --tags --abbrev=0 --match 'v*' "${GITHUB_SHA}")"; then
+            echo "notes start from ${previous}"
+            start=(--notes-start-tag "${previous}")
+          fi
           gh release create "v${version}" \
             --target "${GITHUB_SHA}" \
             --title "v${version}" \
             --notes "Upgrading from an earlier release: [README.md, \"Upgrading\"](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/v${version}/README.md#upgrading)." \
             --generate-notes \
+            "${start[@]}" \
             dist/*
           echo "released v${version} from ${GITHUB_SHA}"

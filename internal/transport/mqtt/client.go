@@ -18,7 +18,7 @@ import (
 	"github.com/skuhus/device-agent/internal/backoff"
 )
 
-// QoS levels, as DESIGN-V2.md, "Message formats", assigns them.
+// QoS levels, as protocol/asyncapi.yaml assigns them.
 const (
 	// qosAtLeastOnce is used for readings, events, tx results and the offline
 	// message. The broker measured in docs/spikes/m0-mqtt5.md offers no QoS 2,
@@ -280,7 +280,7 @@ func (client *Client) PublishRx(ctx context.Context, topic string, payload []byt
 }
 
 // PublishEvent publishes a device event at QoS 1, with the device's message
-// expiry, as DESIGN-V2.md, "Publishing", assigns it. Like a reading, an event
+// expiry, as protocol/asyncapi.yaml assigns it. Like a reading, an event
 // is not retried: the keepalive counts what it reported either way.
 func (client *Client) PublishEvent(ctx context.Context, topic string, payload []byte, expiry time.Duration) error {
 	seconds := messageExpiryInterval(expiry)

@@ -1,0 +1,501 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "skuhus device agent messages",
+  "description": "Every message of the skuhus device agent's MQTT protocol, one definition per message under definitions, with the parts they share. asyncapi.yaml, beside this file, says which topic carries each. A message from the agent may carry a field this version does not declare, and a consumer ignores it. A value listed under x-extensible-enum is one known to this version; a later minor version can add values, and a consumer handles a value it does not know. A field added after 2.0.0 is not required, and says since when it is sent: a message without it comes from an older agent.",
+  "definitions": {
+    "rx": {
+      "title": "rx",
+      "description": "One frame read from a device's port, published on the device's rx topic.",
+      "type": "object",
+      "required": ["schema", "kind", "id", "project", "site", "station", "instance_id", "agent_version", "agent_ts", "device_id", "device_type", "seq", "raw_b64", "text", "text_valid"],
+      "properties": {
+        "schema": { "$ref": "#/definitions/schema" },
+        "kind": { "const": "rx" },
+        "id": { "$ref": "#/definitions/message_id" },
+        "project": { "$ref": "#/definitions/project" },
+        "site": { "$ref": "#/definitions/site" },
+        "station": { "$ref": "#/definitions/station" },
+        "instance_id": { "$ref": "#/definitions/instance_id" },
+        "agent_version": { "$ref": "#/definitions/agent_version" },
+        "agent_ts": { "$ref": "#/definitions/agent_ts" },
+        "device_id": { "$ref": "#/definitions/device_id" },
+        "device_type": { "$ref": "#/definitions/device_type" },
+        "seq": {
+          "description": "Counts this device's frames from 1 at process start. A gap between two received values means frames were lost between them. It does not survive a restart and is not a dedup key; id is.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "raw_b64": {
+          "description": "The whole frame, separator excluded, in padded standard base64 (RFC 4648). Nothing is stripped.",
+          "allOf": [{ "$ref": "#/definitions/base64" }]
+        },
+        "text": {
+          "description": "The frame when it is valid UTF-8; null otherwise, rather than a lossy rendering.",
+          "type": ["string", "null"]
+        },
+        "text_valid": {
+          "description": "Whether text is set.",
+          "type": "boolean"
+        }
+      },
+      "if": { "required": ["text_valid"], "properties": { "text_valid": { "const": true } } },
+      "then": { "properties": { "text": { "type": "string" } } },
+      "else": { "properties": { "text": { "type": "null" } } }
+    },
+    "event": {
+      "title": "event",
+      "description": "Something that happened to a device, published on the device's status topic. The detail keys of each known code are in the conditions under allOf.",
+      "type": "object",
+      "required": ["schema", "kind", "id", "project", "site", "station", "instance_id", "agent_version", "agent_ts", "device_id", "device_type", "device_open", "message_expiry_s", "code", "text", "detail"],
+      "properties": {
+        "schema": { "$ref": "#/definitions/schema" },
+        "kind": { "const": "event" },
+        "id": { "$ref": "#/definitions/message_id" },
+        "project": { "$ref": "#/definitions/project" },
+        "site": { "$ref": "#/definitions/site" },
+        "station": { "$ref": "#/definitions/station" },
+        "instance_id": { "$ref": "#/definitions/instance_id" },
+        "agent_version": { "$ref": "#/definitions/agent_version" },
+        "agent_ts": { "$ref": "#/definitions/agent_ts" },
+        "device_id": { "$ref": "#/definitions/device_id" },
+        "device_type": { "$ref": "#/definitions/device_type" },
+        "device_open": {
+          "description": "Whether the agent holds the port open after this event: what the agent knows, not what the hardware does.",
+          "type": "boolean"
+        },
+        "message_expiry_s": { "$ref": "#/definitions/message_expiry_s" },
+        "code": {
+          "description": "What happened. Codes are added, never renamed.",
+          "type": "string",
+          "x-extensible-enum": ["port_opened", "port_closed", "port_lost", "port_open_failed", "bytes_discarded"]
+        },
+        "text": {
+          "description": "A sentence for a person. Nothing should parse it.",
+          "type": "string"
+        },
+        "detail": {
+          "description": "Keys that depend on the code; an empty object for a code with none, never null.",
+          "type": "object"
+        }
+      },
+      "allOf": [
+        {
+          "description": "port_opened: the agent opened the device's port.",
+          "if": { "required": ["code"], "properties": { "code": { "const": "port_opened" } } },
+          "then": { "properties": { "detail": { "type": "object", "required": ["path"], "properties": { "path": { "$ref": "#/definitions/port_path" } } } } }
+        },
+        {
+          "description": "port_closed: the agent closed the device's port on purpose.",
+          "if": { "required": ["code"], "properties": { "code": { "const": "port_closed" } } },
+          "then": { "properties": { "detail": { "type": "object", "required": ["path"], "properties": { "path": { "$ref": "#/definitions/port_path" } } } } }
+        },
+        {
+          "description": "port_lost: an open port failed under the agent.",
+          "if": { "required": ["code"], "properties": { "code": { "const": "port_lost" } } },
+          "then": { "properties": { "detail": { "type": "object", "required": ["path", "error_class", "error"], "properties": { "path": { "$ref": "#/definitions/port_path" }, "error_class": { "$ref": "#/definitions/error_class" }, "error": { "$ref": "#/definitions/os_error" } } } } }
+        },
+        {
+          "description": "port_open_failed: one failed attempt to open the port. It is published on every attempt (#11 Q8): with the default reopen_backoff, a device unplugged for 12 hours, retried every 30 s at most, publishes about 1,440 of them.",
+          "if": { "required": ["code"], "properties": { "code": { "const": "port_open_failed" } } },
+          "then": { "properties": { "detail": { "type": "object", "required": ["path", "error_class", "error"], "properties": { "path": { "$ref": "#/definitions/port_path" }, "error_class": { "$ref": "#/definitions/error_class" }, "error": { "$ref": "#/definitions/os_error" } } } } }
+        },
+        {
+          "description": "bytes_discarded: bytes the framer threw away instead of publishing them as a frame. The port is open, since the bytes were read from it.",
+          "if": { "required": ["code"], "properties": { "code": { "const": "bytes_discarded" } } },
+          "then": { "properties": { "detail": { "type": "object", "required": ["reason", "bytes"], "properties": { "reason": { "$ref": "#/definitions/discard_reason" }, "bytes": { "description": "How many bytes were discarded.", "type": "integer", "minimum": 1 } } } } }
+        }
+      ]
+    },
+    "tx": {
+      "title": "tx",
+      "description": "Bytes a sender wants written to a device, published by the sender on the device's tx topic or on a broadcast group's. All four fields are required and no other field is accepted, so a mistake in a sender gets a failed result instead of being ignored (#11 Q3). A sender sets an MQTT message expiry on every tx (#23 Q19).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "id", "sender", "raw_b64"],
+      "properties": {
+        "schema": {
+          "description": "2, written as the integer 2: the agent refuses 2.0, which a JSON Schema validator cannot tell from 2.",
+          "allOf": [{ "$ref": "#/definitions/schema" }]
+        },
+        "id": {
+          "description": "A UUID of any RFC 9562 version, in its hyphenated form, and the tx's idempotency key: a tx whose id was written recently is not written again (#23 Q15, Q15a).",
+          "allOf": [{ "$ref": "#/definitions/uuid" }]
+        },
+        "sender": {
+          "description": "Who sent it. Recorded; nothing trusts it (#23 Q3).",
+          "type": "string",
+          "minLength": 1
+        },
+        "raw_b64": {
+          "description": "The bytes to write, at least one, in padded standard base64 (RFC 4648) with no line breaks.",
+          "allOf": [{ "$ref": "#/definitions/base64" }]
+        }
+      }
+    },
+    "tx_result": {
+      "title": "tx_result",
+      "description": "What happened to one tx, published on the status topic of each device the tx reached. The state and the detail keys of each known code are in the conditions under allOf.",
+      "type": "object",
+      "required": ["schema", "kind", "id", "project", "site", "station", "instance_id", "agent_version", "agent_ts", "device_id", "device_type", "device_open", "message_expiry_s", "tx_id", "sender", "state", "code", "text", "detail"],
+      "properties": {
+        "schema": { "$ref": "#/definitions/schema" },
+        "kind": { "const": "tx_result" },
+        "id": { "$ref": "#/definitions/message_id" },
+        "project": { "$ref": "#/definitions/project" },
+        "site": { "$ref": "#/definitions/site" },
+        "station": { "$ref": "#/definitions/station" },
+        "instance_id": { "$ref": "#/definitions/instance_id" },
+        "agent_version": { "$ref": "#/definitions/agent_version" },
+        "agent_ts": { "$ref": "#/definitions/agent_ts" },
+        "device_id": { "$ref": "#/definitions/device_id" },
+        "device_type": { "$ref": "#/definitions/device_type" },
+        "device_open": {
+          "description": "Whether the agent holds the device's port open: what the agent knows, not what the hardware does.",
+          "type": "boolean"
+        },
+        "message_expiry_s": { "$ref": "#/definitions/message_expiry_s" },
+        "tx_id": {
+          "description": "The tx's id, as the tx carried it; null when the tx could not be read.",
+          "type": ["string", "null"],
+          "minLength": 1
+        },
+        "sender": {
+          "description": "The tx's sender; null when the tx could not be read.",
+          "type": ["string", "null"],
+          "minLength": 1
+        },
+        "state": {
+          "description": "How far the tx got: accepted, written or failed (#23 Q2), or rejected for a tx whose id belongs to one still queued or being written (#11 Q6).",
+          "type": "string",
+          "x-extensible-enum": ["accepted", "written", "failed", "rejected"]
+        },
+        "code": {
+          "description": "Why the result has its state.",
+          "type": "string",
+          "x-extensible-enum": ["accepted", "written", "already_written", "in_progress", "invalid_message", "invalid_id", "port_unavailable", "write_failed", "expired", "agent_stopping"]
+        },
+        "text": {
+          "description": "A sentence for a person, with the cause when there is one.",
+          "type": "string"
+        },
+        "detail": {
+          "description": "Keys that depend on the code; an empty object for a code with none, never null.",
+          "type": "object"
+        }
+      },
+      "allOf": [
+        {
+          "description": "accepted: received and queued for the port.",
+          "if": { "required": ["code"], "properties": { "code": { "const": "accepted" } } },
+          "then": { "properties": { "state": { "const": "accepted" }, "detail": { "type": "object", "properties": {} } } }
+        },
+        {
+          "description": "written: every byte reached the port. It says nothing about the device: the operating system took the bytes.",
+          "if": { "required": ["code"], "properties": { "code": { "const": "written" } } },
+          "then": { "properties": { "state": { "const": "written" }, "detail": { "type": "object", "required": ["bytes_written", "open_attempts"], "properties": { "bytes_written": { "$ref": "#/definitions/bytes_written" }, "open_attempts": { "$ref": "#/definitions/open_attempts" } } } } }
+        },
+        {
+          "description": "already_written: a tx with this id was written before, so this one was not (#23 Q15). The agent remembers the ids of the last tx_remembered_ids tx written to each device, 1024 by default, in memory, and a restart forgets them.",
+          "if": { "required": ["code"], "properties": { "code": { "const": "already_written" } } },
+          "then": { "properties": { "state": { "const": "written" }, "detail": { "type": "object", "required": ["written_at"], "properties": { "written_at": { "description": "When the earlier tx was written.", "allOf": [{ "$ref": "#/definitions/timestamp" }] } } } } }
+        },
+        {
+          "description": "in_progress: a tx with this id is queued or being written, so this one is not taken, and the earlier one carries on (#11 Q6).",
+          "if": { "required": ["code"], "properties": { "code": { "const": "in_progress" } } },
+          "then": { "properties": { "state": { "const": "rejected" }, "detail": { "type": "object", "required": ["stage", "since", "bytes_written"], "properties": { "stage": { "description": "Where the earlier tx stands.", "type": "string", "x-extensible-enum": ["queued", "writing"] }, "since": { "description": "When the earlier tx entered that stage.", "allOf": [{ "$ref": "#/definitions/timestamp" }] }, "bytes_written": { "$ref": "#/definitions/bytes_written" } } } } }
+        },
+        {
+          "description": "invalid_message: the tx is not one JSON object of exactly schema, id, sender and raw_b64; or schema is not 2, sender is empty, or raw_b64 is not padded standard base64 or holds no bytes.",
+          "if": { "required": ["code"], "properties": { "code": { "const": "invalid_message" } } },
+          "then": { "properties": { "state": { "const": "failed" }, "detail": { "type": "object", "required": ["error"], "properties": { "error": { "description": "Why the tx could not be read.", "type": "string" } } } } }
+        },
+        {
+          "description": "invalid_id: the tx's id is not a UUID in its hyphenated form.",
+          "if": { "required": ["code"], "properties": { "code": { "const": "invalid_id" } } },
+          "then": { "properties": { "state": { "const": "failed" }, "detail": { "type": "object", "properties": {} } } }
+        },
+        {
+          "description": "port_unavailable: the port could not be opened in the configured number of attempts (#23 Q17).",
+          "if": { "required": ["code"], "properties": { "code": { "const": "port_unavailable" } } },
+          "then": { "properties": { "state": { "const": "failed" }, "detail": { "type": "object", "required": ["error_class", "error", "open_attempts"], "properties": { "error_class": { "$ref": "#/definitions/error_class" }, "error": { "$ref": "#/definitions/os_error" }, "open_attempts": { "$ref": "#/definitions/open_attempts" } } } } }
+        },
+        {
+          "description": "write_failed: writing started and failed. It is not retried, since a retry could print a job twice, and bytes_written says how far it got (#23 Q17a).",
+          "if": { "required": ["code"], "properties": { "code": { "const": "write_failed" } } },
+          "then": { "properties": { "state": { "const": "failed" }, "detail": { "type": "object", "required": ["error_class", "error", "bytes_written", "open_attempts"], "properties": { "error_class": { "$ref": "#/definitions/error_class" }, "error": { "$ref": "#/definitions/os_error" }, "bytes_written": { "$ref": "#/definitions/bytes_written" }, "open_attempts": { "$ref": "#/definitions/open_attempts" } } } } }
+        },
+        {
+          "description": "expired: the tx's message expiry passed before an attempt to write it could start (#23 Q17a).",
+          "if": { "required": ["code"], "properties": { "code": { "const": "expired" } } },
+          "then": { "properties": { "state": { "const": "failed" }, "detail": { "type": "object", "required": ["open_attempts"], "properties": { "open_attempts": { "$ref": "#/definitions/open_attempts" } } } } }
+        },
+        {
+          "description": "agent_stopping: the agent stopped before the tx was written, with bytes_written 0, or part way through (#19 Q1).",
+          "if": { "required": ["code"], "properties": { "code": { "const": "agent_stopping" } } },
+          "then": { "properties": { "state": { "const": "failed" }, "detail": { "type": "object", "required": ["bytes_written"], "properties": { "bytes_written": { "$ref": "#/definitions/bytes_written" } } } } }
+        }
+      ]
+    },
+    "keepalive": {
+      "title": "keepalive",
+      "description": "The agent's periodic report, on the agent's status topic: how a consumer learns that the agent is alive, and every device's state and counters.",
+      "type": "object",
+      "required": ["schema", "kind", "id", "project", "site", "station", "instance_id", "agent_version", "agent_ts", "uptime_s", "interval_s", "gone_after_s", "devices"],
+      "properties": {
+        "schema": { "$ref": "#/definitions/schema" },
+        "kind": { "const": "keepalive" },
+        "id": { "$ref": "#/definitions/message_id" },
+        "project": { "$ref": "#/definitions/project" },
+        "site": { "$ref": "#/definitions/site" },
+        "station": { "$ref": "#/definitions/station" },
+        "instance_id": { "$ref": "#/definitions/instance_id" },
+        "agent_version": { "$ref": "#/definitions/agent_version" },
+        "agent_ts": { "$ref": "#/definitions/agent_ts" },
+        "protocol_version": {
+          "description": "The version of this protocol the agent speaks, as info.version in asyncapi.yaml. Since 2.2.0. A keepalive without it comes from an agent that speaks 2.0.0 or 2.1.0; CHANGES.md tells them apart by agent_version.",
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+        },
+        "uptime_s": {
+          "description": "Seconds since the process started. A restart loop shows as a count that keeps returning to zero.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "interval_s": {
+          "description": "Seconds until the next keepalive.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "gone_after_s": {
+          "description": "Seconds without a keepalive after which a consumer treats the agent as gone: the configured number of missed intervals. A consumer applies this rather than a number of its own (#11 Q7).",
+          "type": "integer",
+          "minimum": 0
+        },
+        "devices": {
+          "description": "One entry per configured device, in configuration order; empty with none.",
+          "type": "array",
+          "items": { "$ref": "#/definitions/keepalive_device" }
+        }
+      }
+    },
+    "offline": {
+      "title": "offline",
+      "description": "The agent stopped, or its connection was lost, on the agent's status topic.",
+      "type": "object",
+      "required": ["schema", "kind", "id", "project", "site", "station", "instance_id", "agent_version", "agent_ts", "reason"],
+      "properties": {
+        "schema": { "$ref": "#/definitions/schema" },
+        "kind": { "const": "offline" },
+        "id": { "$ref": "#/definitions/message_id" },
+        "project": { "$ref": "#/definitions/project" },
+        "site": { "$ref": "#/definitions/site" },
+        "station": { "$ref": "#/definitions/station" },
+        "instance_id": { "$ref": "#/definitions/instance_id" },
+        "agent_version": { "$ref": "#/definitions/agent_version" },
+        "agent_ts": {
+          "description": "When the agent built the message, by the host clock. In a will it is when the lost connection was made, not when it died: the agent composes the will for each connection, and the broker sends the one it was given.",
+          "allOf": [{ "$ref": "#/definitions/timestamp" }]
+        },
+        "reason": {
+          "description": "shutdown: the agent published it itself, stopping cleanly, because a clean disconnect discards the will. will: the broker published the agent's will, because the connection was lost without a disconnect. A will says that a connection was lost, not that the agent stopped; liveness comes from the keepalive.",
+          "type": "string",
+          "x-extensible-enum": ["shutdown", "will"]
+        }
+      }
+    },
+    "keepalive_device": {
+      "description": "One device's entry in a keepalive. The counters count since the process started, and every key of discards and failed_opens is present, at 0 when nothing happened, so a consumer can difference two keepalives without handling a missing key.",
+      "type": "object",
+      "required": ["device_id", "device_type", "device_open", "message_expiry_s", "rx_frames", "rx_bytes", "discards", "failed_opens", "publish_failures", "tx_written", "tx_failed", "buffer_depth"],
+      "properties": {
+        "device_id": { "$ref": "#/definitions/device_id" },
+        "device_type": { "$ref": "#/definitions/device_type" },
+        "device_open": {
+          "description": "Whether the agent holds the port open: what the agent knows, not what the hardware does.",
+          "type": "boolean"
+        },
+        "message_expiry_s": { "$ref": "#/definitions/message_expiry_s" },
+        "tx_topics": {
+          "description": "Every topic that reaches the device's tx: its own first, then its broadcast groups' in the order project, site, station (#35 Q3). Since 2.1.0.",
+          "type": "array",
+          "items": { "$ref": "#/definitions/tx_topic" }
+        },
+        "rx_frames": {
+          "description": "Frames taken for publishing, whatever became of them: the last rx seq.",
+          "allOf": [{ "$ref": "#/definitions/count" }]
+        },
+        "rx_bytes": {
+          "description": "Every byte read from the port, separators and discarded bytes included, so that it rises while rx_frames stays flat when nothing is framed (#23 Q5). An unmatched separator shows as discards.inter_char_timeout and rx_bytes rising while rx_frames stays flat.",
+          "allOf": [{ "$ref": "#/definitions/count" }]
+        },
+        "discards": {
+          "description": "Discards by reason, one per bytes_discarded event.",
+          "type": "object",
+          "required": ["oversize", "inter_char_timeout", "resync", "empty_frame"],
+          "properties": {
+            "oversize": { "$ref": "#/definitions/count" },
+            "inter_char_timeout": { "$ref": "#/definitions/count" },
+            "resync": { "$ref": "#/definitions/count" },
+            "empty_frame": { "$ref": "#/definitions/count" }
+          }
+        },
+        "failed_opens": {
+          "description": "Failed attempts to open the port by error class, one per port_open_failed event.",
+          "type": "object",
+          "required": ["absent", "busy", "permission_denied", "read_only", "disconnected", "port_error", "unknown"],
+          "properties": {
+            "absent": { "$ref": "#/definitions/count" },
+            "busy": { "$ref": "#/definitions/count" },
+            "permission_denied": { "$ref": "#/definitions/count" },
+            "read_only": { "$ref": "#/definitions/count" },
+            "disconnected": { "$ref": "#/definitions/count" },
+            "port_error": { "$ref": "#/definitions/count" },
+            "unknown": { "$ref": "#/definitions/count" }
+          }
+        },
+        "publish_failures": {
+          "description": "Readings the broker did not take: failed, or dropped at the shutdown drain. Each has a record in the agent's log file.",
+          "allOf": [{ "$ref": "#/definitions/count" }]
+        },
+        "tx_written": {
+          "description": "Tx written: results with code written. An already_written answer is not counted.",
+          "allOf": [{ "$ref": "#/definitions/count" }]
+        },
+        "tx_failed": {
+          "description": "Tx results with state failed.",
+          "allOf": [{ "$ref": "#/definitions/count" }]
+        },
+        "buffer_depth": {
+          "description": "Frames waiting to be published now.",
+          "allOf": [{ "$ref": "#/definitions/count" }]
+        }
+      }
+    },
+    "tx_topic": {
+      "description": "One topic that reaches a device's tx, as the agent subscribed to it, with the broker's answer. The value used to subscribe is the value reported, so it cannot drift from what was subscribed (#35 Q3a, Q3b).",
+      "type": "object",
+      "required": ["topic", "scope", "group", "suback"],
+      "properties": {
+        "topic": {
+          "description": "The topic filter as it went into the SUBSCRIBE packet.",
+          "type": "string"
+        },
+        "scope": {
+          "description": "device for the device's own topic; project, site or station for a broadcast group's.",
+          "type": "string",
+          "x-extensible-enum": ["device", "project", "site", "station"]
+        },
+        "group": {
+          "description": "The broadcast group's name; null for the device's own topic.",
+          "anyOf": [{ "$ref": "#/definitions/topic_level" }, { "type": "null" }]
+        },
+        "suback": {
+          "description": "The broker's SUBACK reason code for the topic on the current connection: 0 to 2 grant that QoS, 128 and above refuse it. Null until the broker has answered on this connection.",
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 255
+        }
+      }
+    },
+    "schema": {
+      "description": "2, the protocol's major version. It changes only with a breaking change. v1's messages were schema 1; a consumer switches on it.",
+      "type": "integer",
+      "const": 2
+    },
+    "message_id": {
+      "description": "A UUID, new for every message; the agent makes version 4. At QoS 1 a message can arrive twice, and a consumer that has seen the id drops the copy.",
+      "allOf": [{ "$ref": "#/definitions/uuid" }]
+    },
+    "project": {
+      "description": "The station's project, as in the topic. The identity repeats the topic because a message copied into a log, a ticket or a database row loses its topic.",
+      "allOf": [{ "$ref": "#/definitions/topic_level" }]
+    },
+    "site": {
+      "description": "The station's site, as in the topic.",
+      "allOf": [{ "$ref": "#/definitions/topic_level" }]
+    },
+    "station": {
+      "description": "The station, as in the topic. Never group, which is reserved for the site's broadcast group topics.",
+      "allOf": [{ "$ref": "#/definitions/topic_level" }]
+    },
+    "instance_id": {
+      "description": "The agent instance: the MQTT client id, and the instance level of the agent's status topic.",
+      "allOf": [{ "$ref": "#/definitions/topic_level" }]
+    },
+    "agent_version": {
+      "description": "The agent's version. CHANGES.md says which protocol version each agent version speaks.",
+      "type": "string",
+      "minLength": 1
+    },
+    "agent_ts": {
+      "description": "When the agent built the message, by the host clock, which nothing vouches for.",
+      "allOf": [{ "$ref": "#/definitions/timestamp" }]
+    },
+    "device_id": {
+      "description": "The device's topic level. Never agent, which is reserved for the agent's own topics.",
+      "allOf": [{ "$ref": "#/definitions/topic_level" }]
+    },
+    "device_type": {
+      "description": "The configured device_type, null when none is configured. The agent does not interpret it (#23 Q7).",
+      "type": ["string", "null"],
+      "minLength": 1
+    },
+    "message_expiry_s": {
+      "description": "The device's MQTT message expiry in seconds, which the agent sets on the device's rx and status messages (#23 Q6).",
+      "type": "integer",
+      "minimum": 0
+    },
+    "port_path": {
+      "description": "The device's port, as configured.",
+      "type": "string"
+    },
+    "error_class": {
+      "description": "What kind of port failure it was. Each class has its counter in the keepalive's failed_opens, under the same name.",
+      "type": "string",
+      "x-extensible-enum": ["absent", "busy", "permission_denied", "read_only", "disconnected", "port_error", "unknown"]
+    },
+    "os_error": {
+      "description": "The operating system's message.",
+      "type": "string"
+    },
+    "discard_reason": {
+      "description": "Why the framer threw bytes away: oversize, max_frame_bytes reached with no separator; inter_char_timeout, the inter-character timeout expired with a partial frame buffered; resync, bytes dropped while recovering to the next separator after an earlier discard; empty_frame, two separators back to back. Each reason has its counter in the keepalive's discards, under the same name.",
+      "type": "string",
+      "x-extensible-enum": ["oversize", "inter_char_timeout", "resync", "empty_frame"]
+    },
+    "bytes_written": {
+      "description": "How many bytes of the tx reached the port; for in_progress, so far.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "open_attempts": {
+      "description": "The attempts to open the port for this tx; 0 when it was open.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "topic_level": {
+      "description": "One MQTT topic level: lower-case letters, digits and hyphens, since a level is put into topic names unescaped.",
+      "type": "string",
+      "pattern": "^[a-z0-9-]+$"
+    },
+    "timestamp": {
+      "description": "RFC 3339 in UTC with milliseconds.",
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+    },
+    "uuid": {
+      "description": "A UUID in its hyphenated form, 8-4-4-4-12 hexadecimal digits (RFC 9562).",
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    },
+    "base64": {
+      "description": "At least one byte in padded standard base64 (RFC 4648), with the pad bits zero: the canonical encoding of RFC 4648, section 3.5. The agent refuses non-zero pad bits.",
+      "type": "string",
+      "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{4}|[A-Za-z0-9+/][AQgw]==|[A-Za-z0-9+/]{2}[AEIMQUYcgkosw048]=)$"
+    }
+  }
+}

@@ -25,8 +25,8 @@ import (
 )
 
 // Transport is the broker connection as the core uses it. Each method publishes
-// one kind of message with the QoS and expiry DESIGN-V2.md, "Publishing",
-// assigns it.
+// one kind of message with the QoS and expiry protocol/asyncapi.yaml assigns
+// it.
 type Transport interface {
 	// AwaitConnection blocks until the connection is up or ctx ends.
 	AwaitConnection(ctx context.Context) error

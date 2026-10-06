@@ -77,8 +77,8 @@ func runAgent(ctx context.Context, cfg *config.Config, warnings []config.Warning
 			log.Error("agent stopped on an error", "error", err.Error())
 		}
 	}()
-	log.Info("starting", "version", buildinfo.Version(), "commit", buildinfo.Commit(), "built", buildinfo.Date(),
-		"devices", len(cfg.Devices), "broker", cfg.Broker.RedactedURL())
+	log.Info("starting", "version", buildinfo.Version(), "protocol_version", wire.ProtocolVersion,
+		"commit", buildinfo.Commit(), "built", buildinfo.Date(), "devices", len(cfg.Devices), "broker", cfg.Broker.RedactedURL())
 	log.Info("log destinations", "file", cfg.Logging.File, "max_size_mb", cfg.Logging.MaxSizeMB, "keep", cfg.Logging.Keep,
 		"stdout", cfg.Logging.Stdout, "log_level", cfg.Logging.Level, "log_payloads", cfg.Logging.LogPayloads)
 	for _, warning := range warnings {

@@ -81,6 +81,21 @@ jobs:
         if: failure()
         run: make broker-logs
 
+  # The protocol's document, checked by the AsyncAPI CLI, and rendered as
+  # protocol.yml renders it for a release, so that a page the template cannot
+  # render fails here rather than after the merge. The examples and the schemas
+  # are checked against the code by the test job (internal/wire).
+  protocol:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: validate protocol/asyncapi.yaml
+        run: make protocol-check
+
+      - name: render it
+        run: make protocol-html
+
   # Cross-compiling on every pull request is cheap, and catches an arm-only
   # breakage before a tag rather than after one.
   build:

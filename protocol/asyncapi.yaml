@@ -1,0 +1,717 @@
+asyncapi: 3.1.0
+info:
+  title: skuhus device agent
+  version: 2.2.0
+  description: |
+    The MQTT 5 protocol of the skuhus device agent. The agent connects serial
+    devices, such as barcode scanners, scales and label printers, to an MQTT
+    broker: it publishes what it reads from each device, writes to each device
+    what senders publish for it, and reports every device's state.
+
+    This document is written from the agent's side: it sends readings, events,
+    tx results, keepalives and offline messages, and it receives tx.
+    messages.schema.json, beside this file, defines every field. CHANGES.md
+    lists the versions, and which agent versions speak each.
+
+    ## Topics
+
+    ```
+    skuhus/<project>/<site>/<station>/<device>/rx               agent -> consumers: frames read from the port
+    skuhus/<project>/<site>/<station>/<device>/tx               senders -> agent: bytes to write to the port
+    skuhus/<project>/<site>/<station>/<device>/status           agent -> consumers: device events, tx results
+    skuhus/<project>/<site>/<station>/agent/<instance>/status   agent -> consumers: keepalives, offline messages
+    skuhus/<project>/group/<group>/tx                           senders -> agents: a tx for each device in a project's group
+    skuhus/<project>/<site>/group/<group>/tx                    the same, for a site's group
+    skuhus/<project>/<site>/<station>/group/<group>/tx          the same, for a station's group
+    ```
+
+    Every level taken from configuration matches `[a-z0-9-]+`. No device is
+    called `agent`, the level of the agent's own topics, and no station is
+    called `group`, which would give a station's device tx topics the shape of
+    a site's group tx topics.
+
+    A consumer at a station subscribes to:
+
+    - `skuhus/<project>/<site>/<station>/+/rx` for every device's readings;
+    - `skuhus/<project>/<site>/<station>/+/status` for every device's events
+      and tx results. It does not match the agents' status topics, which are
+      one level deeper;
+    - `skuhus/<project>/<site>/<station>/agent/+/status` for every agent's
+      keepalives and offline messages.
+
+    ## Messages
+
+    Every message is one JSON object in UTF-8, published with the MQTT content
+    type `application/json`. Field names are snake_case. Every message from the
+    agent carries `schema`, `kind`, a fresh `id`, the station's identity and
+    the agent's version; a status topic carries two kinds, and `kind` says
+    which. At QoS 1 a message can arrive twice, and a consumer that has seen
+    the `id` drops the copy.
+
+    Nothing is retained. A consumer learns an agent's state, and every
+    device's, from the next keepalive, within one interval.
+
+    ## Liveness
+
+    The agent publishes a keepalive every `interval_s`, and as soon as its
+    broker connection comes up, once the broker has answered its
+    subscriptions. A consumer treats the agent as gone after `gone_after_s`
+    without one. When the agent stops cleanly it publishes an offline message
+    with `reason` `shutdown`. On every connection it registers an offline
+    message with `reason` `will` as its will, with no delay, which the broker
+    publishes when the connection is lost without a disconnect. A will says
+    that a connection was lost, not that the agent stopped: an agent can
+    reconnect a second later and go on publishing. Liveness comes from the
+    keepalive.
+
+    ## Versions
+
+    `info.version` is the protocol's version, in semantic versioning:
+
+    - **major** is the `schema` field of every message, and changes only with a
+      breaking change: a field removed, renamed or retyped, a topic changed, or
+      a meaning changed;
+    - **minor** adds: a field, a value, a message kind, a topic;
+    - **patch** changes text only.
+
+    A consumer ignores a field it does not know, and handles a value it does
+    not know, such as a new event code: the schemas of the agent's messages
+    accept both, so a consumer built for one minor version reads the next. A
+    field added after 2.0.0 is not required, and its description says since
+    when it is sent; a message without it comes from an older agent. From 2.2.0
+    the keepalive says which version the agent speaks, in `protocol_version`.
+
+    A tx is the other way round: the agent refuses any field it does not know,
+    so that a sender's mistake gets a failed result instead of being ignored. A
+    tx field added in a later minor version works only with agents that speak
+    that version.
+  license:
+    name: MIT
+    url: https://github.com/skuhus/device-agent/blob/master/LICENSE
+  externalDocs:
+    description: The agent's repository, with its design document, DESIGN-V2.md
+    url: https://github.com/skuhus/device-agent
+
+defaultContentType: application/json
+
+channels:
+  deviceRx:
+    address: skuhus/{project}/{site}/{station}/{device}/rx
+    title: A device's readings
+    description: One message per frame read from the device's port.
+    parameters:
+      project:
+        $ref: '#/components/parameters/project'
+      site:
+        $ref: '#/components/parameters/site'
+      station:
+        $ref: '#/components/parameters/station'
+      device:
+        $ref: '#/components/parameters/device'
+    messages:
+      rx:
+        $ref: '#/components/messages/rx'
+
+  deviceStatus:
+    address: skuhus/{project}/{site}/{station}/{device}/status
+    title: A device's events and tx results
+    description: |
+      What happens to the device's port, and what became of each tx that
+      reached the device. `kind` tells the two apart.
+    parameters:
+      project:
+        $ref: '#/components/parameters/project'
+      site:
+        $ref: '#/components/parameters/site'
+      station:
+        $ref: '#/components/parameters/station'
+      device:
+        $ref: '#/components/parameters/device'
+    messages:
+      event:
+        $ref: '#/components/messages/event'
+      tx_result:
+        $ref: '#/components/messages/tx_result'
+
+  deviceTx:
+    address: skuhus/{project}/{site}/{station}/{device}/tx
+    title: Bytes for a device
+    description: A tx published here is written to this one device.
+    parameters:
+      project:
+        $ref: '#/components/parameters/project'
+      site:
+        $ref: '#/components/parameters/site'
+      station:
+        $ref: '#/components/parameters/station'
+      device:
+        $ref: '#/components/parameters/device'
+    messages:
+      tx:
+        $ref: '#/components/messages/tx'
+
+  agentStatus:
+    address: skuhus/{project}/{site}/{station}/agent/{instance}/status
+    title: An agent's keepalives and offline messages
+    description: |
+      The agent's own topic, one per agent instance, and the topic of its
+      will. `kind` tells a keepalive from an offline message.
+    parameters:
+      project:
+        $ref: '#/components/parameters/project'
+      site:
+        $ref: '#/components/parameters/site'
+      station:
+        $ref: '#/components/parameters/station'
+      instance:
+        $ref: '#/components/parameters/instance'
+    messages:
+      keepalive:
+        $ref: '#/components/messages/keepalive'
+      offline:
+        $ref: '#/components/messages/offline'
+
+  projectGroupTx:
+    address: skuhus/{project}/group/{group}/tx
+    title: Bytes for every device in a project's broadcast group
+    description: |
+      A tx published here is written to every device that declares the group
+      under `broadcast_groups.project` in its agent's configuration.
+    parameters:
+      project:
+        $ref: '#/components/parameters/project'
+      group:
+        $ref: '#/components/parameters/group'
+    messages:
+      tx:
+        $ref: '#/components/messages/tx'
+
+  siteGroupTx:
+    address: skuhus/{project}/{site}/group/{group}/tx
+    title: Bytes for every device in a site's broadcast group
+    description: |
+      A tx published here is written to every device at the site that
+      declares the group under `broadcast_groups.site`.
+    parameters:
+      project:
+        $ref: '#/components/parameters/project'
+      site:
+        $ref: '#/components/parameters/site'
+      group:
+        $ref: '#/components/parameters/group'
+    messages:
+      tx:
+        $ref: '#/components/messages/tx'
+
+  stationGroupTx:
+    address: skuhus/{project}/{site}/{station}/group/{group}/tx
+    title: Bytes for every device in a station's broadcast group
+    description: |
+      A tx published here is written to every device at the station that
+      declares the group under `broadcast_groups.station`.
+    parameters:
+      project:
+        $ref: '#/components/parameters/project'
+      site:
+        $ref: '#/components/parameters/site'
+      station:
+        $ref: '#/components/parameters/station'
+      group:
+        $ref: '#/components/parameters/group'
+    messages:
+      tx:
+        $ref: '#/components/messages/tx'
+
+operations:
+  sendRx:
+    action: send
+    channel:
+      $ref: '#/channels/deviceRx'
+    title: Publish a reading
+    description: |
+      Published at QoS 1 with the device's message expiry, `message_expiry_s`
+      in its status messages, so the broker discards a reading that outlived
+      it. A reading does not wait for the broker: one read while the connection
+      is down is not published.
+    bindings:
+      mqtt:
+        qos: 1
+        retain: false
+        bindingVersion: 0.2.0
+    messages:
+      - $ref: '#/channels/deviceRx/messages/rx'
+
+  sendEvent:
+    action: send
+    channel:
+      $ref: '#/channels/deviceStatus'
+    title: Publish a device event
+    description: |
+      Published at QoS 1 with the device's message expiry. A device's events
+      are published in the order they happened, with `agent_ts` the time they
+      happened. An event that happens while the broker connection is down
+      waits, and is published once the connection is up with what remains of
+      its expiry. Each device keeps only its most recent events, so a long
+      outage does not end in a flood, and an event older than the expiry by
+      then is dropped. The keepalive counts every event, published or not.
+    bindings:
+      mqtt:
+        qos: 1
+        retain: false
+        bindingVersion: 0.2.0
+    messages:
+      - $ref: '#/channels/deviceStatus/messages/event'
+
+  sendTxResult:
+    action: send
+    channel:
+      $ref: '#/channels/deviceStatus'
+    title: Publish a tx result
+    description: |
+      Published at QoS 1 with the device's message expiry, and kept through
+      an outage as events are.
+    bindings:
+      mqtt:
+        qos: 1
+        retain: false
+        bindingVersion: 0.2.0
+    messages:
+      - $ref: '#/channels/deviceStatus/messages/tx_result'
+
+  sendKeepalive:
+    action: send
+    channel:
+      $ref: '#/channels/agentStatus'
+    title: Publish a keepalive
+    description: |
+      Published at QoS 0, since the next one is an interval away, with a
+      message expiry of `gone_after_s`: a keepalive older than that says
+      nothing true.
+    bindings:
+      mqtt:
+        qos: 0
+        retain: false
+        bindingVersion: 0.2.0
+    messages:
+      - $ref: '#/channels/agentStatus/messages/keepalive'
+
+  sendOffline:
+    action: send
+    channel:
+      $ref: '#/channels/agentStatus'
+    title: Publish an offline message, or register it as the will
+    description: |
+      Published at QoS 1 with no message expiry, as the last thing before a
+      clean disconnect. The will is the same message at QoS 1, with `reason`
+      `will` and no will delay.
+    bindings:
+      mqtt:
+        qos: 1
+        retain: false
+        bindingVersion: 0.2.0
+    messages:
+      - $ref: '#/channels/agentStatus/messages/offline'
+
+  receiveTx:
+    action: receive
+    channel:
+      $ref: '#/channels/deviceTx'
+    title: Take a tx for one device
+    description: |
+      The agent subscribes at QoS 1, and senders publish at QoS 1 with a
+      message expiry. The agent answers each tx on the device's status topic.
+
+      - A tx the agent can read gets `accepted`, then `written` or `failed`.
+      - A tx it cannot read, or whose id is not a UUID, gets `failed` alone.
+      - A tx whose id belongs to a tx still queued or being written gets
+        `rejected` alone, with where that one stands and since when, and the
+        earlier one carries on.
+      - A tx whose id was written recently gets `already_written` alone, and
+        is not written again.
+
+      A device's tx are written one at a time, whole, in the order they
+      arrived. No attempt is made once the tx's message expiry has passed.
+      Once writing has started nothing is retried.
+
+      The contract names no time. A sender sets its own timeouts, for
+      `accepted` and then for `written` or `failed`, and treats a tx with no
+      result by then as not written. A tx published while the agent is
+      disconnected is lost and never gets a result. Sending the same tx again,
+      with the same id, is how a sender asks where it stands. The agent keeps
+      no record of ids beyond what the running agent holds, and a restart
+      forgets them. Only a written tx is remembered: one that failed is
+      written again if it is sent again.
+
+      `accepted` says the tx reached the agent. Only `written` says the bytes
+      reached the port, and it says nothing about the device.
+    bindings:
+      mqtt:
+        qos: 1
+        bindingVersion: 0.2.0
+    messages:
+      - $ref: '#/channels/deviceTx/messages/tx'
+    reply:
+      channel:
+        $ref: '#/channels/deviceStatus'
+      messages:
+        - $ref: '#/channels/deviceStatus/messages/tx_result'
+
+  receiveProjectGroupTx:
+    action: receive
+    channel:
+      $ref: '#/channels/projectGroupTx'
+    title: Take a tx for every device in a project's broadcast group
+    description: &groupTx |
+      A tx on a group's topic reaches the devices in the group whose agents
+      are connected, as if it had been sent to each on its own topic. The agent
+      subscribes to a group's topic once, however many of its devices are in
+      the group, and hands the tx to each of them. Each device takes it once
+      and answers on its own status topic, all with the same `tx_id`, as
+      `receiveTx` describes. A resend is answered by each device for itself,
+      and so is the same tx reaching a device through two of its groups.
+
+      The station's broker user must be allowed to read the group's topic. A
+      broker that refuses the subscription may close the connection over it,
+      as RabbitMQ 4.3.5 does, which takes the agent off the broker until the
+      permission is granted. Each keepalive lists every topic that reaches a
+      device in `tx_topics`, with the broker's answer to the subscription.
+    bindings:
+      mqtt:
+        qos: 1
+        bindingVersion: 0.2.0
+    messages:
+      - $ref: '#/channels/projectGroupTx/messages/tx'
+    reply:
+      channel:
+        $ref: '#/channels/deviceStatus'
+      messages:
+        - $ref: '#/channels/deviceStatus/messages/tx_result'
+
+  receiveSiteGroupTx:
+    action: receive
+    channel:
+      $ref: '#/channels/siteGroupTx'
+    title: Take a tx for every device in a site's broadcast group
+    description: *groupTx
+    bindings:
+      mqtt:
+        qos: 1
+        bindingVersion: 0.2.0
+    messages:
+      - $ref: '#/channels/siteGroupTx/messages/tx'
+    reply:
+      channel:
+        $ref: '#/channels/deviceStatus'
+      messages:
+        - $ref: '#/channels/deviceStatus/messages/tx_result'
+
+  receiveStationGroupTx:
+    action: receive
+    channel:
+      $ref: '#/channels/stationGroupTx'
+    title: Take a tx for every device in a station's broadcast group
+    description: *groupTx
+    bindings:
+      mqtt:
+        qos: 1
+        bindingVersion: 0.2.0
+    messages:
+      - $ref: '#/channels/stationGroupTx/messages/tx'
+    reply:
+      channel:
+        $ref: '#/channels/deviceStatus'
+      messages:
+        - $ref: '#/channels/deviceStatus/messages/tx_result'
+
+components:
+  parameters:
+    project:
+      description: The project, a topic level matching `[a-z0-9-]+`.
+      examples: [acme]
+    site:
+      description: The site, a topic level matching `[a-z0-9-]+`.
+      examples: [vasby]
+    station:
+      description: The station, a topic level matching `[a-z0-9-]+`. Never `group`.
+      examples: [pack-03]
+    device:
+      description: The device's id, a topic level matching `[a-z0-9-]+`. Never `agent`.
+      examples: [scanner-1, printer-1]
+    instance:
+      description: |
+        The agent instance's id, a topic level matching `[a-z0-9-]+`, and the
+        agent's MQTT client id. It is the station's id unless configured.
+      examples: [pack-03]
+    group:
+      description: A broadcast group's name, a topic level matching `[a-z0-9-]+`.
+      examples: [printers, scales]
+
+  messageBindings:
+    fromAgent:
+      mqtt:
+        contentType: application/json
+        bindingVersion: 0.2.0
+
+  messages:
+    rx:
+      name: rx
+      title: Reading
+      summary: One frame read from a device's port.
+      contentType: application/json
+      payload:
+        schemaFormat: application/schema+json;version=draft-07
+        schema:
+          $ref: './messages.schema.json#/definitions/rx'
+      bindings:
+        $ref: '#/components/messageBindings/fromAgent'
+      examples:
+        - name: scan
+          summary: A barcode, valid UTF-8.
+          payload:
+            schema: 2
+            kind: rx
+            id: 5b7b4f6e-2f0a-4c1e-9d3a-8f6e1c2b7a90
+            project: acme
+            site: vasby
+            station: pack-03
+            instance_id: pack-03
+            agent_version: 2.2.0
+            agent_ts: '2026-09-29T08:00:00.123Z'
+            device_id: scanner-1
+            device_type: symbol-05e0-1701
+            seq: 1042
+            raw_b64: NzMxMDQyNTAxMjM0NQ==
+            text: '7310425012345'
+            text_valid: true
+
+    event:
+      name: event
+      title: Device event
+      summary: Something that happened to a device's port.
+      contentType: application/json
+      payload:
+        schemaFormat: application/schema+json;version=draft-07
+        schema:
+          $ref: './messages.schema.json#/definitions/event'
+      bindings:
+        $ref: '#/components/messageBindings/fromAgent'
+      examples:
+        - name: port_lost
+          summary: A scanner unplugged while its port was open.
+          payload:
+            schema: 2
+            kind: event
+            id: c3a1e2d4-5f60-4b7a-8c9d-0e1f2a3b4c5d
+            project: acme
+            site: vasby
+            station: pack-03
+            instance_id: pack-03
+            agent_version: 2.2.0
+            agent_ts: '2026-09-29T08:00:00.123Z'
+            device_id: scanner-1
+            device_type: symbol-05e0-1701
+            device_open: false
+            message_expiry_s: 30
+            code: port_lost
+            text: 'port lost: read /dev/serial/by-id/usb-Symbol_Technologies-if00: input/output error (disconnected)'
+            detail:
+              error: 'read /dev/serial/by-id/usb-Symbol_Technologies-if00: input/output error'
+              error_class: disconnected
+              path: /dev/serial/by-id/usb-Symbol_Technologies-if00
+
+    tx:
+      name: tx
+      title: Tx
+      summary: Bytes a sender wants written to a device, or to each device in a broadcast group.
+      contentType: application/json
+      payload:
+        schemaFormat: application/schema+json;version=draft-07
+        schema:
+          $ref: './messages.schema.json#/definitions/tx'
+      examples:
+        - name: label
+          summary: A ZPL label for a printer.
+          payload:
+            schema: 2
+            id: 0192a3b4-c5d6-7e8f-9a0b-1c2d3e4f5a6b
+            sender: label-service
+            raw_b64: XlhBXkZEU0tVLTEwNDJeRlNeWFo=
+
+    tx_result:
+      name: tx_result
+      title: Tx result
+      summary: What happened to one tx at one device.
+      contentType: application/json
+      payload:
+        schemaFormat: application/schema+json;version=draft-07
+        schema:
+          $ref: './messages.schema.json#/definitions/tx_result'
+      bindings:
+        $ref: '#/components/messageBindings/fromAgent'
+      examples:
+        - name: port_unavailable
+          summary: The printer's port was busy on every attempt.
+          payload:
+            schema: 2
+            kind: tx_result
+            id: 7e6d5c4b-3a29-4817-9f6e-5d4c3b2a1f0e
+            project: acme
+            site: vasby
+            station: pack-03
+            instance_id: pack-03
+            agent_version: 2.2.0
+            agent_ts: '2026-09-29T08:00:00.123Z'
+            device_id: printer-1
+            device_type: zebra-zt410
+            device_open: false
+            message_expiry_s: 30
+            tx_id: 0192a3b4-c5d6-7e8f-9a0b-1c2d3e4f5a6b
+            sender: label-service
+            state: failed
+            code: port_unavailable
+            text: 'the port could not be opened in 3 attempts: open /dev/serial/by-id/usb-Zebra_ZT410-if00: device or resource busy (busy)'
+            detail:
+              error: 'open /dev/serial/by-id/usb-Zebra_ZT410-if00: device or resource busy'
+              error_class: busy
+              open_attempts: 3
+        - name: in_progress
+          summary: A resend while the earlier tx with the same id is being written.
+          payload:
+            schema: 2
+            kind: tx_result
+            id: 2d3c4b5a-6978-4e5f-8a1b-0c9d8e7f6a5b
+            project: acme
+            site: vasby
+            station: pack-03
+            instance_id: pack-03
+            agent_version: 2.2.0
+            agent_ts: '2026-09-29T08:00:00.123Z'
+            device_id: printer-1
+            device_type: zebra-zt410
+            device_open: true
+            message_expiry_s: 30
+            tx_id: 0192a3b4-c5d6-7e8f-9a0b-1c2d3e4f5a6b
+            sender: label-service
+            state: rejected
+            code: in_progress
+            text: 'a tx with this id is being written since 2026-09-29T07:58:30.123Z, 61440 bytes so far; this one was not taken'
+            detail:
+              bytes_written: 61440
+              since: '2026-09-29T07:58:30.123Z'
+              stage: writing
+
+    keepalive:
+      name: keepalive
+      title: Keepalive
+      summary: The agent is alive, with every device's state and counters.
+      contentType: application/json
+      payload:
+        schemaFormat: application/schema+json;version=draft-07
+        schema:
+          $ref: './messages.schema.json#/definitions/keepalive'
+      bindings:
+        $ref: '#/components/messageBindings/fromAgent'
+      examples:
+        - name: scanner_and_printer
+          summary: A scanner, and a printer in a site's broadcast group whose port was busy.
+          payload:
+            schema: 2
+            kind: keepalive
+            id: 9f8e7d6c-5b4a-4392-8170-6f5e4d3c2b1a
+            project: acme
+            site: vasby
+            station: pack-03
+            instance_id: pack-03
+            agent_version: 2.2.0
+            agent_ts: '2026-09-29T08:00:00.123Z'
+            protocol_version: 2.2.0
+            uptime_s: 3600
+            interval_s: 15
+            gone_after_s: 45
+            devices:
+              - device_id: scanner-1
+                device_type: symbol-05e0-1701
+                device_open: true
+                message_expiry_s: 30
+                tx_topics:
+                  - topic: skuhus/acme/vasby/pack-03/scanner-1/tx
+                    scope: device
+                    group: null
+                    suback: 1
+                rx_frames: 1042
+                rx_bytes: 15656
+                discards:
+                  oversize: 0
+                  inter_char_timeout: 2
+                  resync: 0
+                  empty_frame: 0
+                failed_opens:
+                  absent: 0
+                  busy: 0
+                  permission_denied: 0
+                  read_only: 0
+                  disconnected: 0
+                  port_error: 0
+                  unknown: 0
+                publish_failures: 0
+                tx_written: 0
+                tx_failed: 0
+                buffer_depth: 0
+              - device_id: printer-1
+                device_type: zebra-zt410
+                device_open: false
+                message_expiry_s: 30
+                tx_topics:
+                  - topic: skuhus/acme/vasby/pack-03/printer-1/tx
+                    scope: device
+                    group: null
+                    suback: 1
+                  - topic: skuhus/acme/vasby/group/printers/tx
+                    scope: site
+                    group: printers
+                    suback: 1
+                rx_frames: 0
+                rx_bytes: 0
+                discards:
+                  oversize: 0
+                  inter_char_timeout: 0
+                  resync: 0
+                  empty_frame: 0
+                failed_opens:
+                  absent: 0
+                  busy: 3
+                  permission_denied: 0
+                  read_only: 0
+                  disconnected: 0
+                  port_error: 0
+                  unknown: 0
+                publish_failures: 0
+                tx_written: 0
+                tx_failed: 1
+                buffer_depth: 0
+
+    offline:
+      name: offline
+      title: Offline
+      summary: The agent stopped, or its connection was lost.
+      contentType: application/json
+      payload:
+        schemaFormat: application/schema+json;version=draft-07
+        schema:
+          $ref: './messages.schema.json#/definitions/offline'
+      bindings:
+        $ref: '#/components/messageBindings/fromAgent'
+      examples:
+        - name: will
+          summary: The will, published by the broker after the connection was lost.
+          payload:
+            schema: 2
+            kind: offline
+            id: 1a2b3c4d-5e6f-4a0b-9c8d-7e6f5a4b3c2d
+            project: acme
+            site: vasby
+            station: pack-03
+            instance_id: pack-03
+            agent_version: 2.2.0
+            agent_ts: '2026-09-29T08:00:00.123Z'
+            reason: will

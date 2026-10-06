@@ -1,7 +1,7 @@
 // Package wire is the agent's contract with everything on the other side of
 // the broker: the topics it publishes and listens on, and the JSON of every
-// message. DESIGN-V2.md, "Message formats", is the same contract in prose, and
-// the tests fail when the two disagree.
+// message. protocol/asyncapi.yaml and protocol/messages.schema.json publish the
+// same contract, and the tests fail when they and this package disagree.
 package wire
 
 import (
