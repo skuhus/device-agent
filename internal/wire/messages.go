@@ -9,6 +9,8 @@ import (
 	"io"
 	"maps"
 	"slices"
+	"strconv"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -307,10 +309,19 @@ func ReadTx(payload []byte) (TxRef, []byte, *TxProblem) {
 		target any
 	}
 	fields := []txField{{"schema", &schema}, {"id", &id}, {"sender", &sender}, {"raw_b64", &rawB64}}
+	// Every unknown name is reported, so that a sender fixes them all at once.
+	var unknown []string
 	for _, name := range slices.Sorted(maps.Keys(names)) {
 		if !slices.ContainsFunc(fields, func(field txField) bool { return field.name == name }) {
-			return invalid("unknown field %q; a tx has exactly schema, id, sender and raw_b64", name)
+			unknown = append(unknown, strconv.Quote(name))
 		}
+	}
+	if len(unknown) > 0 {
+		noun := "field"
+		if len(unknown) > 1 {
+			noun = "fields"
+		}
+		return invalid("unknown %s %s; a tx has exactly schema, id, sender and raw_b64", noun, strings.Join(unknown, ", "))
 	}
 	var missing []string
 	for _, field := range fields {

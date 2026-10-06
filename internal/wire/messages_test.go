@@ -322,13 +322,23 @@ func TestReadTx(t *testing.T) {
 	}
 }
 
-// A field name in another case is refused by name, so that the sender sees
-// which one; encoding/json alone would take it for the field (#47).
-func TestReadTxNamesAFieldInAnotherCase(t *testing.T) {
-	_, _, problem := ReadTx([]byte(`{"schema":2,"ID":"0192a3b4-c5d6-7e8f-9a0b-1c2d3e4f5a6b","sender":"s","raw_b64":"AA=="}`))
-	want := `unknown field "ID"; a tx has exactly schema, id, sender and raw_b64`
-	if problem == nil || problem.Code != TxCodeInvalidMessage || problem.Text != want {
-		t.Errorf("problem = %+v, want invalid_message: %s", problem, want)
+// A field name in another case is refused by name, every one of them, so that
+// the sender sees which; encoding/json alone would take each for its field
+// (#47).
+func TestReadTxNamesEveryUnknownField(t *testing.T) {
+	const id = "0192a3b4-c5d6-7e8f-9a0b-1c2d3e4f5a6b"
+	for _, check := range []struct {
+		payload, want string
+	}{
+		{`{"schema":2,"ID":"` + id + `","sender":"s","raw_b64":"AA=="}`,
+			`unknown field "ID"; a tx has exactly schema, id, sender and raw_b64`},
+		{`{"SCHEMA":2,"ID":"` + id + `","Sender":"s","Raw_B64":"AA=="}`,
+			`unknown fields "ID", "Raw_B64", "SCHEMA", "Sender"; a tx has exactly schema, id, sender and raw_b64`},
+	} {
+		_, _, problem := ReadTx([]byte(check.payload))
+		if problem == nil || problem.Code != TxCodeInvalidMessage || problem.Text != check.want {
+			t.Errorf("%s: problem = %+v, want invalid_message: %s", check.payload, problem, check.want)
+		}
 	}
 }
 
