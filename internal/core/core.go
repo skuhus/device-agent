@@ -277,11 +277,12 @@ func (core *Core) Run(ctx context.Context) error {
 			}
 			core.log.Info("device reader stopped", "device_id", reader.ID())
 		}(line)
-		publishers.Add(2)
+		publishers.Add(1)
 		go func(line *pipeline) {
 			defer publishers.Done()
 			core.publishFrames(line)
 		}(line)
+		publishers.Add(1)
 		go func(line *pipeline) {
 			defer publishers.Done()
 			core.publishStatusMessages(line, drained)

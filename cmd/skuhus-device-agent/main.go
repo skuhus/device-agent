@@ -41,11 +41,18 @@ variables, then the config file, then defaults. Broker credentials are never
 accepted as CLI arguments, because ps exposes them to every user on the host.
 `
 
-// errUsage means the command line itself was wrong, which exits 2.
+// The exit codes: a failure, and a command line that is itself wrong, as the
+// flag package and most commands use them.
+const (
+	exitFailure = 1
+	exitUsage   = 2
+)
+
+// errUsage means the command line itself was wrong, which exits exitUsage.
 var errUsage = errors.New("usage")
 
 // errReported means the command has already printed why it failed, so main
-// exits 1 without repeating it.
+// exits exitFailure without repeating it.
 var errReported = errors.New("reported")
 
 func main() {
@@ -53,7 +60,7 @@ func main() {
 
 	if len(os.Args) < 2 {
 		fmt.Fprint(os.Stderr, usage)
-		os.Exit(2)
+		os.Exit(exitUsage)
 	}
 
 	var err error
@@ -72,7 +79,7 @@ func main() {
 		return
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %q\n\n%s", os.Args[1], usage)
-		os.Exit(2)
+		os.Exit(exitUsage)
 	}
 
 	if err != nil {
@@ -80,12 +87,12 @@ func main() {
 			return
 		}
 		if errors.Is(err, errReported) {
-			os.Exit(1)
+			os.Exit(exitFailure)
 		}
 		fmt.Fprintln(os.Stderr, "error: "+err.Error())
 		if errors.Is(err, errUsage) {
-			os.Exit(2)
+			os.Exit(exitUsage)
 		}
-		os.Exit(1)
+		os.Exit(exitFailure)
 	}
 }
