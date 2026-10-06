@@ -274,7 +274,7 @@ func listDevices(out io.Writer) error {
 	}
 	for _, portName := range ports {
 		note := ""
-		if strings.HasPrefix(portName, "/dev/tty.") {
+		if config.IsCallinDevice(portName) {
 			note = "  [unusable: macOS callin device, opening it blocks on carrier detect; use the /dev/cu.* twin]"
 		}
 		fmt.Fprintf(out, "  %s%s\n", portName, note)

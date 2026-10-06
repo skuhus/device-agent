@@ -358,13 +358,18 @@ func wholeSeconds(field string, value Duration, why string) []error {
 	return nil
 }
 
+// IsCallinDevice reports whether path is a macOS callin device, /dev/tty.*.
+// Opening one blocks on carrier detect forever; its /dev/cu.* twin, the callout
+// device, is the one to use. Validation refuses it, and probe --list marks it.
+func IsCallinDevice(path string) bool { return strings.HasPrefix(path, "/dev/tty.") }
+
 func validateDevicePath(where, path string) ([]error, []Warning) {
 	switch {
 	case path == "":
 		return []error{fmt.Errorf("%s.path is required", where)}, nil
 	case !filepath.IsAbs(path):
 		return []error{fmt.Errorf("%s.path %q must be absolute", where, path)}, nil
-	case strings.HasPrefix(path, "/dev/tty."):
+	case IsCallinDevice(path):
 		return []error{fmt.Errorf(
 			"%s.path %q is a macOS callin device; opening it blocks on carrier detect forever. Use the matching /dev/cu.* callout device", where, path)}, nil
 	case unstableDevPath.MatchString(path):
