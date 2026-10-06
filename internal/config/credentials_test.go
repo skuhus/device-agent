@@ -126,3 +126,22 @@ func TestLoadCredentialsMissingFile(t *testing.T) {
 		t.Errorf("error = %v, want it to name the field", err)
 	}
 }
+
+// A missing username or password is reported with the places it can be set:
+// the credentials file only when one is configured, so that the message never
+// names an empty file.
+func TestLoadCredentialsNamesWhereToSetWhatIsMissing(t *testing.T) {
+	_, err := LoadCredentials(Broker{}, map[string]string{EnvMQTTPassword: "s3cret"})
+	if err == nil || !strings.Contains(err.Error(), "no broker username: set "+EnvMQTTUsername+";") || strings.Contains(err.Error(), "  ") {
+		t.Errorf("without a file: err = %v, want the variable alone named", err)
+	}
+	path := writeCredentials(t, "password=s3cret\n")
+	_, err = LoadCredentials(Broker{CredentialsFile: path}, nil)
+	if err == nil || !strings.Contains(err.Error(), "no broker username: set it in "+path+" or set "+EnvMQTTUsername+";") {
+		t.Errorf("with a file: err = %v, want the file and the variable named", err)
+	}
+	_, err = LoadCredentials(Broker{}, map[string]string{EnvMQTTUsername: "station-pack-03"})
+	if err == nil || err.Error() != "no broker password: set "+EnvMQTTPassword {
+		t.Errorf("no password, no file: err = %v, want the variable alone named", err)
+	}
+}

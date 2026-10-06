@@ -40,15 +40,23 @@ func LoadCredentials(broker Broker, env map[string]string) (Credentials, error) 
 		credentials.Password = password
 	}
 	if credentials.Password == "" {
-		return Credentials{}, fmt.Errorf(
-			"no broker password: set it in %s or in %s", broker.CredentialsFile, EnvMQTTPassword)
+		return Credentials{}, fmt.Errorf("no broker password: %s", whereToSet(broker.CredentialsFile, EnvMQTTPassword))
 	}
 	if credentials.Username == "" {
 		return Credentials{}, fmt.Errorf(
-			"no broker username: set it in %s or in %s; section 8 requires per-station credentials, so there is no anonymous fallback",
-			broker.CredentialsFile, EnvMQTTUsername)
+			"no broker username: %s; section 8 requires per-station credentials, so there is no anonymous fallback",
+			whereToSet(broker.CredentialsFile, EnvMQTTUsername))
 	}
 	return credentials, nil
+}
+
+// whereToSet names where a missing credential can be set: the credentials
+// file, when one is configured, and the environment variable.
+func whereToSet(file, variable string) string {
+	if file == "" {
+		return "set " + variable
+	}
+	return "set it in " + file + " or set " + variable
 }
 
 // readCredentialsFile parses key=value lines. The format is key=value rather
